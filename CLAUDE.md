@@ -46,7 +46,7 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 ### 1-setup-windows.bat
 Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, and Node.js LTS via nvm.
 
-**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, Steam, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, Streamlabs OBS, Prism Launcher, Temurin JDK 17/8, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN
+**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, Steam, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, Streamlabs OBS, Prism Launcher, Temurin JDK 17/8, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard
 
 ### 2-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
@@ -78,6 +78,9 @@ Work environment setup. Installs work-related applications via Chocolatey and Wi
 
 ### optional/move-downloads-folder.bat
 Relocates the Windows Downloads folder to a different drive (default: Z:). Separated from the main profile folders script for users who prefer Downloads on the system drive.
+
+### optional/setup-start-menu.bat
+Backup and restore tool for Windows 11 Start Menu pinned apps layout. Option [1] backs up your current Start Menu layout to `start-menu-backup.bin` in the same folder. Option [2] restores the layout from the backup file. Use this to preserve your pinned apps arrangement across Windows reinstalls.
 
 ## Uninstall Scripts (`uninstall/`)
 
