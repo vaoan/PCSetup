@@ -18,4 +18,10 @@ reg delete "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenPowerShellAdmin" /f
 reg delete "HKEY_CLASSES_ROOT\Directory\shell\OpenPowerShellAdmin" /f 2>nul
 reg delete "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin" /f 2>nul
 
+echo Removing "Open Git Bash here as Administrator" from context menu...
+
+reg delete "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenGitBashAdmin" /f 2>nul
+reg delete "HKEY_CLASSES_ROOT\Directory\shell\OpenGitBashAdmin" /f 2>nul
+reg delete "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin" /f 2>nul
+
 echo Done!

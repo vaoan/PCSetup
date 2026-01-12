@@ -40,4 +40,21 @@ reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin" /ve /d "Open in Powe
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin" /v "Icon" /d "powershell.exe" /f
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process powershell -ArgumentList '-NoExit -Command cd ''\"\"%%V\"\"''' -Verb RunAs\"" /f
 
+echo Adding "Open Git Bash here as Administrator" to context menu...
+
+:: Git Bash - Directory Background
+reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenGitBashAdmin" /ve /d "Open Git Bash here as Administrator" /f
+reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenGitBashAdmin" /v "Icon" /d "C:\\Program Files\\Git\\git-bash.exe" /f
+reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenGitBashAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process 'C:\\Program Files\\Git\\git-bash.exe' -ArgumentList '--cd=\"\"%%V\"\"' -Verb RunAs\"" /f
+
+:: Git Bash - Directory
+reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenGitBashAdmin" /ve /d "Open Git Bash here as Administrator" /f
+reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenGitBashAdmin" /v "Icon" /d "C:\\Program Files\\Git\\git-bash.exe" /f
+reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenGitBashAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process 'C:\\Program Files\\Git\\git-bash.exe' -ArgumentList '--cd=\"\"%%V\"\"' -Verb RunAs\"" /f
+
+:: Git Bash - Drive
+reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin" /ve /d "Open Git Bash here as Administrator" /f
+reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin" /v "Icon" /d "C:\\Program Files\\Git\\git-bash.exe" /f
+reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process 'C:\\Program Files\\Git\\git-bash.exe' -ArgumentList '--cd=\"\"%%V\"\"' -Verb RunAs\"" /f
+
 echo Done!

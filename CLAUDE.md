@@ -55,7 +55,7 @@ Sets PowerShell execution policy to `RemoteSigned` for the current user, allowin
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
 ### 5-context-menu-terminal-install.bat
-Adds "Open in Terminal as Administrator" and "Open in PowerShell as Administrator" to the Windows Explorer context menu (right-click menu) for directories, directory backgrounds, and drives.
+Adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the Windows Explorer context menu (right-click menu) for directories, directory backgrounds, and drives.
 
 ### 6-fix-steam-icons.bat
 Fixes broken Steam game shortcut icons on the desktop. Scans for Steam URL shortcuts, downloads missing icons from Steam CDN, and clears the Windows icon cache. Run after Steam games are installed and shortcuts created.
@@ -89,3 +89,13 @@ Removes the context menu entries added by `5-context-menu-terminal-install.bat`.
 
 ### uninstall/context-menu-take-ownership.bat
 Removes the "Take Ownership" context menu entries added by `8-context-menu-take-ownership.bat`.
+
+## Source Files (`sources/`)
+
+Backup registry files that can be imported directly if the batch scripts don't work.
+
+### sources/Add_Take_Ownership_to_context_menu.reg
+Original Take Ownership registry file. Double-click to import if `8-context-menu-take-ownership.bat` fails.
+
+### sources/Longpath.reg
+Enables Windows long paths support. Already handled by `8-context-menu-take-ownership.bat`.
