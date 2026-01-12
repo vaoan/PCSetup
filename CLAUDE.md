@@ -36,6 +36,11 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 - Numbered prefix (`1-`, `2-`, etc.) indicates execution order after fresh Windows install
 - Utility scripts have no number prefix (run as needed)
 
+## Run All Scripts
+
+### run-all.bat
+Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
+
 ## Setup Scripts (Run in Order)
 
 ### 1-setup-windows.bat
@@ -49,11 +54,6 @@ Sets PowerShell execution policy to `RemoteSigned` for the current user, allowin
 ### 3-move-profile-folders.bat
 Relocates Windows user profile folders (Desktop, Documents, Downloads, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files.
 
-### 4-setup-work.bat
-Work environment setup. Installs work-related applications via Chocolatey and Winget.
-
-**Installed packages:** Slack, AWS CLI, Linear, Figma
-
 ### 5-context-menu-terminal-install.bat
 Adds "Open in Terminal as Administrator" and "Open in PowerShell as Administrator" to the Windows Explorer context menu (right-click menu) for directories, directory backgrounds, and drives.
 
@@ -65,6 +65,13 @@ Recursively finds and deletes all `node_modules` folders on the drive where the 
 
 ### 8-context-menu-take-ownership.bat
 Enables Windows long paths support and adds "Take Ownership" to the context menu for files, folders, and drives. Useful for fixing permission issues on files/folders you can't access.
+
+## Optional Scripts (`optional/`)
+
+### optional/setup-work.bat
+Work environment setup. Installs work-related applications via Chocolatey and Winget.
+
+**Installed packages:** Slack, AWS CLI, Linear, Figma
 
 ## Uninstall Scripts (`uninstall/`)
 
