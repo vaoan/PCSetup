@@ -46,7 +46,7 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 ### 1-setup-windows.bat
 Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, and Node.js LTS via nvm.
 
-**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, Steam, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, Streamlabs OBS, Prism Launcher, Temurin JDK 17/8, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard
+**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, Steam, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, Streamlabs OBS, Prism Launcher, Temurin JDK 17/8, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard, Claude Desktop
 
 ### 2-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
