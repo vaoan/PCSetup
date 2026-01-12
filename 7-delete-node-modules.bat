@@ -6,20 +6,22 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-:: Get the drive letter where this script is located
-set "drive=%~d0"
-
-echo Deleting all node_modules folders on %drive%\
+echo Deleting all node_modules folders on all drives...
 echo This may take a while...
 echo.
 
-for /d /r "%drive%\" %%d in (node_modules) do (
-    if exist "%%d" (
-        echo Deleting: %%d
-        rmdir /s /q "%%d"
+for /f "tokens=*" %%x in ('powershell -NoProfile -Command "(Get-PSDrive -PSProvider FileSystem).Root"') do (
+    if exist "%%x" (
+        echo.
+        echo Scanning drive %%x
+        for /d /r "%%x" %%d in (node_modules) do (
+            if exist "%%d" (
+                echo Deleting: %%d
+                rmdir /s /q "%%d"
+            )
+        )
     )
 )
 
 echo.
 echo Done!
-pause

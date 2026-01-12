@@ -43,8 +43,6 @@ echo if (Get-Command wsl -ErrorAction SilentlyContinue) { Write-Host "WSL alread
 echo     Write-Host "Installing WSL..." -ForegroundColor Cyan>>"%SCRIPT%"
 echo     wsl --install --no-launch>>"%SCRIPT%"
 echo }>>"%SCRIPT%"
-echo Write-Host "Removing Windows AI features..." -ForegroundColor Cyan>>"%SCRIPT%"
-echo ^& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/zoicware/RemoveWindowsAI/main/RemoveWindowsAi.ps1")))>>"%SCRIPT%"
 echo Write-Host "`n All done! Restart your computer if WSL was installed." -ForegroundColor Green>>"%SCRIPT%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%"
 ENDLOCAL

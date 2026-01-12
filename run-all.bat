@@ -11,15 +11,17 @@ cd /d "%~dp0"
 echo Running all numbered setup scripts in order...
 echo.
 
-for /f "tokens=*" %%f in ('dir /b /on [0-9]-*.bat [0-9][0-9]-*.bat 2^>nul') do (
-    echo ========================================
-    echo Running: %%f
-    echo ========================================
-    call "%%f"
-    if %errorlevel% neq 0 (
-        echo.
-        echo WARNING: %%f exited with error code %errorlevel%
-        echo.
+for %%n in (1 2 3 4 5 6 7 8 9) do (
+    for /f "tokens=*" %%f in ('dir /b %%n-*.bat 2^>nul') do (
+        echo ========================================
+        echo Running: %%f
+        echo ========================================
+        call "%%f"
+        if errorlevel 1 (
+            echo.
+            echo WARNING: %%f exited with error code %errorlevel%
+            echo.
+        )
     )
 )
 
@@ -27,4 +29,3 @@ echo.
 echo ========================================
 echo All scripts completed.
 echo ========================================
-pause

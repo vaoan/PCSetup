@@ -41,4 +41,3 @@ reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin" /v "Icon" /d "powers
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process powershell -ArgumentList '-NoExit -Command cd ''\"\"%%V\"\"''' -Verb RunAs\"" /f
 
 echo Done!
-pause

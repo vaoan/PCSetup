@@ -28,7 +28,6 @@ echo.
 echo Creating target folders...
 if not exist "%TARGET_BASE%\Desktop" mkdir "%TARGET_BASE%\Desktop"
 if not exist "%TARGET_BASE%\Documents" mkdir "%TARGET_BASE%\Documents"
-if not exist "%TARGET_BASE%\Downloads" mkdir "%TARGET_BASE%\Downloads"
 if not exist "%TARGET_BASE%\Music" mkdir "%TARGET_BASE%\Music"
 if not exist "%TARGET_BASE%\Pictures" mkdir "%TARGET_BASE%\Pictures"
 if not exist "%TARGET_BASE%\Videos" mkdir "%TARGET_BASE%\Videos"
@@ -48,7 +47,6 @@ if "%MOVE_FILES%"=="1" (
 
     robocopy "%USERPROFILE%\Desktop" "%TARGET_BASE%\Desktop" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
     robocopy "%USERPROFILE%\Documents" "%TARGET_BASE%\Documents" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Downloads" "%TARGET_BASE%\Downloads" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
     robocopy "%USERPROFILE%\Music" "%TARGET_BASE%\Music" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
     robocopy "%USERPROFILE%\Pictures" "%TARGET_BASE%\Pictures" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
     robocopy "%USERPROFILE%\Videos" "%TARGET_BASE%\Videos" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
@@ -69,7 +67,6 @@ echo Updating registry...
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "Desktop" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Desktop" /f
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "Personal" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Documents" /f
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "{F42EE2D3-909F-4907-8871-4C22FC0BF756}" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Documents" /f
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "{374DE290-123F-4565-9164-39C4925E467B}" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Downloads" /f
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "My Music" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Music" /f
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "My Pictures" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Pictures" /f
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "My Video" /t REG_EXPAND_SZ /d "%TARGET_BASE%\Videos" /f
@@ -96,7 +93,6 @@ echo.
 echo New locations:
 echo   Desktop:     %TARGET_BASE%\Desktop
 echo   Documents:   %TARGET_BASE%\Documents
-echo   Downloads:   %TARGET_BASE%\Downloads
 echo   Music:       %TARGET_BASE%\Music
 echo   Pictures:    %TARGET_BASE%\Pictures
 echo   Videos:      %TARGET_BASE%\Videos

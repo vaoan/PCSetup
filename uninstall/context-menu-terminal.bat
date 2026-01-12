@@ -19,4 +19,3 @@ reg delete "HKEY_CLASSES_ROOT\Directory\shell\OpenPowerShellAdmin" /f 2>nul
 reg delete "HKEY_CLASSES_ROOT\Drive\shell\OpenPowerShellAdmin" /f 2>nul
 
 echo Done!
-pause
