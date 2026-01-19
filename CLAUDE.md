@@ -27,7 +27,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 ## Checklist
 - [x] Every script must auto-elevate to admin
 - [x] Scripts must be unattended (no pauses) - they should close automatically when finished
-- [x] Use Chocolatey and npm for package installations
+- [x] Use Chocolatey, winget, and npm for package installations
 
 ## Naming Convention
 
@@ -46,7 +46,7 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 ### 1-setup-windows.bat
 Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, and Node.js LTS via nvm.
 
-**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, Streamlabs OBS, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard, Claude Desktop
+**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, WizTree, Streamlabs OBS, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, GitHub CLI, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard, Claude Desktop, Claude Code, OpenAI Codex CLI, GitHub Copilot CLI
 
 ### 2-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
@@ -60,7 +60,7 @@ Game-related applications setup. Installs gaming platforms, launchers, and tools
 **Installed packages:** Steam, Epic Games Launcher, Prism Launcher, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), FFLogs Uploader
 
 ### 5-context-menu-terminal-install.bat
-Adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the Windows Explorer context menu (right-click menu) for directories, directory backgrounds, and drives.
+Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the context menu for directories, directory backgrounds, and drives.
 
 ### 6-fix-steam-icons.bat
 Fixes broken Steam game shortcut icons on the desktop. Scans for Steam URL shortcuts, downloads missing icons from Steam CDN, and clears the Windows icon cache. Run after Steam games are installed and shortcuts created.
