@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
 :: CONFIGURATION - Change these as needed
 :: ============================================
 set "TARGET_DRIVE=Z:"
-set "TARGET_BASE=%TARGET_DRIVE%\Users\%USERNAME%"
+set "TARGET_BASE=%TARGET_DRIVE%"
 :: Set to 1 to move existing files, 0 to just change registry
 set "MOVE_FILES=1"
 :: ============================================

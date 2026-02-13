@@ -20,33 +20,25 @@ echo.
 echo # Install game platforms and Java via Chocolatey
 echo choco install steam epicgameslauncher prismlauncher temurin17 temurin8 -y
 echo.
-echo # XIVLauncher ^(Custom FFXIV Launcher^)
-echo if ^(Test-Path "$env:LOCALAPPDATA\XIVLauncher"^) {
-echo     Write-Host "XIVLauncher already installed, skipping..." -ForegroundColor Yellow
-echo } else {
-echo     Write-Host "Installing XIVLauncher..." -ForegroundColor Cyan
-echo     $xivRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/goatcorp/FFXIVQuickLauncher/releases/latest"
-echo     $xivAsset = $xivRelease.assets ^| Where-Object { $_.name -like "*Setup.exe" } ^| Select-Object -First 1
-echo     $xivInstaller = "$env:TEMP\XIVLauncher-Setup.exe"
-echo     Invoke-WebRequest -Uri $xivAsset.browser_download_url -OutFile $xivInstaller
-echo     Start-Process -FilePath $xivInstaller -ArgumentList "/S" -Wait
-echo     Write-Host "XIVLauncher installed!" -ForegroundColor Green
-echo }
+echo # XIVLauncher via winget ^(auto-skips if installed^)
+echo winget install --id goatcorp.XIVLauncher -e --accept-package-agreements --accept-source-agreements
 echo.
-echo # FFLogs Uploader
-echo $fflogsPath1 = "$env:LOCALAPPDATA\FFLogs"
-echo $fflogsPath2 = "$env:LOCALAPPDATA\Programs\fflogs"
-echo if ^(^(Test-Path $fflogsPath1^) -or ^(Test-Path $fflogsPath2^)^) {
-echo     Write-Host "FFLogs already installed, skipping..." -ForegroundColor Yellow
-echo } else {
+echo # FFXIV TexTools ^(Modding Tool^) - not on any package manager
+echo $ttPath = "$env:LOCALAPPDATA\TexTools"
+echo if ^(-not ^(Test-Path $ttPath^)^) {
+echo     Write-Host "Installing TexTools..." -ForegroundColor Cyan
+echo     $ttAsset = ^(Invoke-RestMethod "https://api.github.com/repos/TexTools/FFXIV_TexTools_UI/releases/latest"^).assets ^| Where-Object { $_.name -like "Install_TexTools*" } ^| Select-Object -First 1
+echo     curl.exe -L --progress-bar -o "$env:TEMP\Install_TexTools.exe" $ttAsset.browser_download_url
+echo     Start-Process "$env:TEMP\Install_TexTools.exe" -ArgumentList "/S" -Wait
+echo } else { Write-Host "TexTools already installed, skipping..." -ForegroundColor Yellow }
+echo.
+echo # FFLogs Uploader - not on any package manager
+echo if ^(-not ^(^(Test-Path "$env:LOCALAPPDATA\FFLogs"^) -or ^(Test-Path "$env:LOCALAPPDATA\Programs\fflogs"^)^)^) {
 echo     Write-Host "Installing FFLogs Uploader..." -ForegroundColor Cyan
-echo     $fflogsRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/RPGLogs/Uploaders-fflogs/releases/latest"
-echo     $fflogsAsset = $fflogsRelease.assets ^| Where-Object { $_.name -like "*.exe" } ^| Select-Object -First 1
-echo     $fflogsInstaller = "$env:TEMP\FFLogs-Setup.exe"
-echo     Invoke-WebRequest -Uri $fflogsAsset.browser_download_url -OutFile $fflogsInstaller
-echo     Start-Process -FilePath $fflogsInstaller -ArgumentList "/S" -Wait
-echo     Write-Host "FFLogs Uploader installed!" -ForegroundColor Green
-echo }
+echo     $ffAsset = ^(Invoke-RestMethod "https://api.github.com/repos/RPGLogs/Uploaders-fflogs/releases/latest"^).assets ^| Where-Object { $_.name -like "*.exe" } ^| Select-Object -First 1
+echo     curl.exe -L --progress-bar -o "$env:TEMP\FFLogs-Setup.exe" $ffAsset.browser_download_url
+echo     Start-Process "$env:TEMP\FFLogs-Setup.exe" -ArgumentList "/S" -Wait
+echo } else { Write-Host "FFLogs already installed, skipping..." -ForegroundColor Yellow }
 echo.
 echo Write-Host ""
 echo Write-Host "Game setup complete!" -ForegroundColor Green

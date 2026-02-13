@@ -57,7 +57,7 @@ Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Vid
 ### 4-setup-games.bat
 Game-related applications setup. Installs gaming platforms, launchers, and tools. Checks if XIVLauncher and FFLogs are already installed before downloading.
 
-**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), FFLogs Uploader
+**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
 
 ### 5-context-menu-terminal-install.bat
 Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the context menu for directories, directory backgrounds, and drives.
@@ -86,6 +86,11 @@ Relocates the Windows Downloads folder to a different drive (default: Z:). Separ
 
 ### optional/setup-start-menu.bat
 Backup and restore tool for Windows 11 Start Menu pinned apps layout. Option [1] backs up your current Start Menu layout to `start-menu-backup.bin` in the same folder. Option [2] restores the layout from the backup file. Use this to preserve your pinned apps arrangement across Windows reinstalls.
+
+### optional/setup-makeplace.bat
+Downloads and installs Re:MakePlace (community-maintained fork) directly from GitHub. Re:MakePlace is a standalone FFXIV housing layout preview/editor tool that lets you design and share housing layouts. Installs to `%LOCALAPPDATA%\ReMakePlace` since the app requires write permissions. Downloads 7-Zip portable if not already installed. Does not require Chocolatey. Launches the app after installation.
+
+**Installed packages:** Re:MakePlace (from GitHub), 7-Zip (signed installer, if needed)
 
 ## Uninstall Scripts (`uninstall/`)
 
