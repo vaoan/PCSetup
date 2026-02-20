@@ -9,7 +9,7 @@ if %errorlevel% neq 0 (
 cd /d "%~dp0"
 
 set "REPO_ZIP=https://github.com/vaoan/PCSetup/archive/refs/heads/main.zip"
-set "VERSION_URL=https://raw.githubusercontent.com/vaoan/PCSetup/main/version.txt"
+set "VERSION_URL=https://raw.githubusercontent.com/vaoan/PCSetup/main/.v"
 
 :: Check if numbered scripts exist
 set "MISSING_SCRIPTS=1"
@@ -30,7 +30,7 @@ for /f "usebackq" %%v in ("%TEMP%\pcsetup-ver.txt") do set "REMOTE_VER=%%v"
 del "%TEMP%\pcsetup-ver.txt" >nul 2>&1
 
 set "LOCAL_VER=0"
-if exist "version.txt" for /f "usebackq" %%v in ("version.txt") do set "LOCAL_VER=%%v"
+if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
 
 if "%REMOTE_VER%"=="0" (
     echo Could not reach GitHub. Running local scripts ^(version %LOCAL_VER%^).
