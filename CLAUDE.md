@@ -28,7 +28,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 - [x] Every script must auto-elevate to admin
 - [x] Scripts must be unattended (no pauses) - they should close automatically when finished
 - [x] Use Chocolatey, winget, and npm for package installations
-- [x] **Always update `.v`** with the current UTC timestamp in ISO 8601 format (e.g. `2026-02-19T14:30:52.123Z`) whenever any file in the repo is modified. Generate it with: `powershell -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')"`
+- [x] **`.v` is auto-updated** by the pre-commit git hook — no manual action needed
 
 ## Naming Convention
 

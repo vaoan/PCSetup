@@ -1,0 +1,4 @@
+#!/bin/sh
+# Auto-update .v with current UTC timestamp before every commit
+timestamp=$(powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')" 2>/dev/null)
+[ -n "$timestamp" ] && echo "$timestamp" > .v && git add .v
