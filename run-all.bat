@@ -8,6 +8,17 @@ if %errorlevel% neq 0 (
 
 cd /d "%~dp0"
 
+set "LOCAL_VER=0"
+if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
+
+:: Format timestamp: yyyyMMddHHmmssfff -> yyyy-MM-dd HH:mm:ss.fff
+set "VER_DISPLAY=%LOCAL_VER:~0,4%-%LOCAL_VER:~4,2%-%LOCAL_VER:~6,2% %LOCAL_VER:~8,2%:%LOCAL_VER:~10,2%:%LOCAL_VER:~12,2%.%LOCAL_VER:~14,3%"
+
+echo ========================================
+echo   PCSetup  %VER_DISPLAY%
+echo ========================================
+echo.
+
 set "REPO_ZIP=https://github.com/vaoan/PCSetup/archive/refs/heads/main.zip"
 set "VERSION_URL=https://raw.githubusercontent.com/vaoan/PCSetup/main/.v"
 
@@ -29,22 +40,23 @@ set "REMOTE_VER=0"
 for /f "usebackq" %%v in ("%TEMP%\pcsetup-ver.txt") do set "REMOTE_VER=%%v"
 del "%TEMP%\pcsetup-ver.txt" >nul 2>&1
 
-set "LOCAL_VER=0"
-if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
-
 if "%REMOTE_VER%"=="0" (
-    echo Could not reach GitHub. Running local scripts ^(version %LOCAL_VER%^).
+    echo Could not reach GitHub. Running local scripts.
     echo.
     goto :run_scripts
 )
 
-if %REMOTE_VER% GTR %LOCAL_VER% (
-    echo Update available ^(local: v%LOCAL_VER%, remote: v%REMOTE_VER%^). Updating...
+:: Use PowerShell for comparison — timestamps overflow CMD's 32-bit GTR
+set "NEEDS_UPDATE=0"
+for /f %%r in ('powershell -NoProfile -Command "if('%REMOTE_VER%' -gt '%LOCAL_VER%'){'1'}else{'0'}"') do set "NEEDS_UPDATE=%%r"
+
+if "%NEEDS_UPDATE%"=="1" (
+    echo Update available. Downloading latest scripts...
     echo.
     goto :fetch
 )
 
-echo Scripts are up to date ^(version %LOCAL_VER%^).
+echo Scripts are up to date.
 echo.
 goto :run_scripts
 
