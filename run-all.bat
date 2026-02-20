@@ -72,16 +72,17 @@ if errorlevel 1 (
 )
 
 echo Copying files...
-robocopy "%TEMP%\PCSetup-ext\PCSetup-main" "%~dp0." /E /IS /IT /XF run-all.bat /NFL /NDL /NJH /NJS /NC /NS
-if %errorlevel% GEQ 4 (
-    echo ERROR: Failed to copy files.
+robocopy "%TEMP%\PCSetup-ext\PCSetup-main" "%~dp0." /E /IS /IT /NFL /NDL /NJH /NJS /NC /NS
+if %errorlevel% GEQ 16 (
+    echo ERROR: Fatal copy failure.
     exit /b 1
 )
 
 rd /s /q "%TEMP%\PCSetup-ext" >nul 2>&1
 del /q "%TEMP%\PCSetup.zip" >nul 2>&1
-echo Done.
-echo.
+echo Done. Relaunching...
+start "" cmd /c ""%~f0""
+exit /b
 
 :run_scripts
 echo Running all numbered setup scripts in order...
