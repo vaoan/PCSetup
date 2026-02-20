@@ -11,11 +11,8 @@ cd /d "%~dp0"
 set "LOCAL_VER=0"
 if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
 
-:: Format timestamp: yyyyMMddHHmmssfff -> yyyy-MM-dd HH:mm:ss.fff
-set "VER_DISPLAY=%LOCAL_VER:~0,4%-%LOCAL_VER:~4,2%-%LOCAL_VER:~6,2% %LOCAL_VER:~8,2%:%LOCAL_VER:~10,2%:%LOCAL_VER:~12,2%.%LOCAL_VER:~14,3%"
-
 echo ========================================
-echo   PCSetup  %VER_DISPLAY%
+echo   PCSetup  %LOCAL_VER%
 echo ========================================
 echo.
 

@@ -28,7 +28,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 - [x] Every script must auto-elevate to admin
 - [x] Scripts must be unattended (no pauses) - they should close automatically when finished
 - [x] Use Chocolatey, winget, and npm for package installations
-- [x] **Always update `.v`** with the current timestamp (`yyyyMMddHHmmssfff` format, e.g. `20260219143052123`) whenever any file in the repo is modified. Generate it with: `powershell -Command "Get-Date -Format 'yyyyMMddHHmmssfff'"`
+- [x] **Always update `.v`** with the current UTC timestamp in ISO 8601 format (e.g. `2026-02-19T14:30:52.123Z`) whenever any file in the repo is modified. Generate it with: `powershell -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')"`
 
 ## Naming Convention
 
@@ -46,7 +46,7 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 - If no numbered scripts are found → downloads the full repo ZIP from GitHub, extracts it, copies all files into the **same folder as `run-all.bat`**, then runs.
 - If scripts exist → fetches `.v` from GitHub raw and compares to local `.v`. If remote version is higher, re-downloads and updates all scripts. If offline or same version, runs as-is.
 
-**To release an update:** update `.v` with the current timestamp (`yyyyMMddHHmmssfff`) and push. Users will auto-update next time they run `run-all.bat`. Comparison uses PowerShell's `-gt` string operator (not CMD's `GTR`) since 17-digit timestamps overflow CMD's 32-bit integer comparison.
+**To release an update:** update `.v` with the current UTC ISO 8601 timestamp and push. Users will auto-update next time they run `run-all.bat`. Comparison uses PowerShell's `-gt` string operator (not CMD's `GTR`) — ISO 8601 strings are lexicographically sortable so this works correctly.
 
 > **Important for editing:** When writing the download logic, use a single inline PowerShell `-Command` string — do NOT use grouped `echo` blocks or `^` line continuations to build a temp `.ps1` file. Parentheses in echoed PS code (`if (...)`, `try {`) break CMD's block parser. The inline approach avoids all quoting issues and has no moving parts.
 >
