@@ -61,11 +61,11 @@ goto :run_scripts
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$z='%TEMP%\PCSetup.zip';$e='%TEMP%\PCSetup-ext';$d='%~dp0';Write-Host 'Downloading...';Invoke-WebRequest '%REPO_ZIP%' -OutFile $z -UseBasicParsing;Write-Host 'Extracting...';Expand-Archive $z $e -Force;Write-Host 'Copying files...';Copy-Item \"$e\PCSetup-main\*\" $d -Recurse -Force;Remove-Item $z,$e -Recurse -Force;Write-Host 'Done.'"
 if errorlevel 1 (
     echo ERROR: Failed to download. Check your internet connection.
-    pause
     exit /b 1
 )
-echo Relaunching...
-powershell -Command "Start-Process '%~f0' -Verb RunAs"
+echo Relaunching with updated scripts...
+echo.
+call "%~f0"
 exit /b
 
 :run_scripts
