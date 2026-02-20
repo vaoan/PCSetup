@@ -41,6 +41,12 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 ### run-all.bat
 Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
 
+**Auto-download:** If no numbered scripts are found in the same folder as `run-all.bat`, it automatically downloads the full repo from GitHub as a ZIP (no Git required — uses PowerShell's `Invoke-WebRequest`), extracts it, and copies all files into the **same folder as `run-all.bat`**. It then continues running the scripts immediately without relaunching. This means you can run `run-all.bat` standalone on a fresh machine and it will self-bootstrap.
+
+> **Important for editing:** When writing the download logic, use a single inline PowerShell `-Command` string — do NOT use grouped `echo` blocks or `^` line continuations to build a temp `.ps1` file. Parentheses in echoed PS code (`if (...)`, `try {`) break CMD's block parser. The inline approach avoids all quoting issues and has no moving parts.
+>
+> The `Copy-Item` call uses `-Exclude 'run-all.bat'` to skip overwriting the currently running script. Without this, CMD's internal file position pointer gets corrupted when the file is replaced mid-execution, causing execution to silently stop. By excluding it, the script falls through naturally to `:run_scripts` after the download. Do NOT use `start "" cmd /c` to relaunch — `start` from an elevated process does not inherit elevation (uses ShellExecute, not CreateProcess), which triggers UAC again and causes the window to flash and close.
+
 ## Setup Scripts (Run in Order)
 
 ### 1-setup-windows.bat
