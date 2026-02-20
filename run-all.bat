@@ -8,22 +8,53 @@ if %errorlevel% neq 0 (
 
 cd /d "%~dp0"
 
-:: Check if numbered scripts exist; if not, download from GitHub
 set "REPO_ZIP=https://github.com/vaoan/PCSetup/archive/refs/heads/main.zip"
+set "VERSION_URL=https://raw.githubusercontent.com/vaoan/PCSetup/main/version.txt"
+
+:: Check if numbered scripts exist
 set "MISSING_SCRIPTS=1"
 for %%f in (1-*.bat 2-*.bat) do set "MISSING_SCRIPTS=0"
 
-if "%MISSING_SCRIPTS%"=="0" goto :run_scripts
+if "%MISSING_SCRIPTS%"=="1" (
+    echo No setup scripts found. Downloading from GitHub...
+    echo.
+    goto :fetch
+)
 
-echo No setup scripts found. Downloading from GitHub...
+:: Scripts exist — check remote version
+echo Checking for updates...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try{(Invoke-WebRequest '%VERSION_URL%' -UseBasicParsing -TimeoutSec 5).Content.Trim() | Set-Content '%TEMP%\pcsetup-ver.txt' -Encoding UTF8}catch{Set-Content '%TEMP%\pcsetup-ver.txt' '0'}"
+
+set "REMOTE_VER=0"
+for /f "usebackq" %%v in ("%TEMP%\pcsetup-ver.txt") do set "REMOTE_VER=%%v"
+del "%TEMP%\pcsetup-ver.txt" >nul 2>&1
+
+set "LOCAL_VER=0"
+if exist "version.txt" for /f "usebackq" %%v in ("version.txt") do set "LOCAL_VER=%%v"
+
+if "%REMOTE_VER%"=="0" (
+    echo Could not reach GitHub. Running local scripts ^(version %LOCAL_VER%^).
+    echo.
+    goto :run_scripts
+)
+
+if %REMOTE_VER% GTR %LOCAL_VER% (
+    echo Update available ^(local: v%LOCAL_VER%, remote: v%REMOTE_VER%^). Updating...
+    echo.
+    goto :fetch
+)
+
+echo Scripts are up to date ^(version %LOCAL_VER%^).
 echo.
+goto :run_scripts
+
+:fetch
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$z='%TEMP%\PCSetup.zip';$e='%TEMP%\PCSetup-ext';$d='%~dp0';Write-Host 'Downloading...';Invoke-WebRequest '%REPO_ZIP%' -OutFile $z -UseBasicParsing;Write-Host 'Extracting...';Expand-Archive $z $e -Force;Write-Host 'Copying files...';Copy-Item \"$e\PCSetup-main\*\" $d -Recurse -Force -Exclude 'run-all.bat';Remove-Item $z,$e -Recurse -Force;Write-Host 'Done.'"
 if errorlevel 1 (
     echo ERROR: Failed to download. Check your internet connection.
     pause
     exit /b 1
 )
-echo Files downloaded successfully.
 echo.
 
 :run_scripts

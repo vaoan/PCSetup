@@ -28,6 +28,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 - [x] Every script must auto-elevate to admin
 - [x] Scripts must be unattended (no pauses) - they should close automatically when finished
 - [x] Use Chocolatey, winget, and npm for package installations
+- [x] **Always bump `version.txt`** (increment the integer by 1) whenever any file in the repo is modified
 
 ## Naming Convention
 
@@ -41,7 +42,11 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 ### run-all.bat
 Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
 
-**Auto-download:** If no numbered scripts are found in the same folder as `run-all.bat`, it automatically downloads the full repo from GitHub as a ZIP (no Git required — uses PowerShell's `Invoke-WebRequest`), extracts it, and copies all files into the **same folder as `run-all.bat`**. It then continues running the scripts immediately without relaunching. This means you can run `run-all.bat` standalone on a fresh machine and it will self-bootstrap.
+**Auto-download & version check:** On each run, `run-all.bat` does the following (no Git required — uses PowerShell's `Invoke-WebRequest` only):
+- If no numbered scripts are found → downloads the full repo ZIP from GitHub, extracts it, copies all files into the **same folder as `run-all.bat`**, then runs.
+- If scripts exist → fetches `version.txt` from GitHub raw and compares to local `version.txt`. If remote version is higher, re-downloads and updates all scripts. If offline or same version, runs as-is.
+
+**To release an update:** increment the integer in `version.txt` and push. Users will auto-update next time they run `run-all.bat`.
 
 > **Important for editing:** When writing the download logic, use a single inline PowerShell `-Command` string — do NOT use grouped `echo` blocks or `^` line continuations to build a temp `.ps1` file. Parentheses in echoed PS code (`if (...)`, `try {`) break CMD's block parser. The inline approach avoids all quoting issues and has no moving parts.
 >
