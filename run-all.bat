@@ -81,7 +81,7 @@ if %errorlevel% GEQ 16 (
 rd /s /q "%TEMP%\PCSetup-ext" >nul 2>&1
 del /q "%TEMP%\PCSetup.zip" >nul 2>&1
 echo Done. Relaunching...
-cmd /c ""%~f0""
+powershell -Command "Start-Process '%~f0' -Verb RunAs"
 exit /b
 
 :run_scripts
