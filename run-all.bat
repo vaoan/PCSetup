@@ -43,7 +43,6 @@ if "%REMOTE_VER%"=="0" (
     goto :run_scripts
 )
 
-:: Use PowerShell for comparison — timestamps overflow CMD's 32-bit GTR
 set "NEEDS_UPDATE=0"
 for /f %%r in ('powershell -NoProfile -Command "if('%REMOTE_VER%' -gt '%LOCAL_VER%'){'1'}else{'0'}"') do set "NEEDS_UPDATE=%%r"
 
@@ -58,15 +57,31 @@ echo.
 goto :run_scripts
 
 :fetch
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$z='%TEMP%\PCSetup.zip';$e='%TEMP%\PCSetup-ext';$d='%~dp0';Write-Host 'Downloading...';Invoke-WebRequest '%REPO_ZIP%' -OutFile $z -UseBasicParsing;Write-Host 'Extracting...';Expand-Archive $z $e -Force;Write-Host 'Copying files...';Copy-Item \"$e\PCSetup-main\*\" $d -Recurse -Force;Remove-Item $z,$e -Recurse -Force;Write-Host 'Done.'"
+echo Downloading...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest '%REPO_ZIP%' -OutFile '%TEMP%\PCSetup.zip' -UseBasicParsing"
 if errorlevel 1 (
-    echo ERROR: Failed to download. Check your internet connection.
+    echo ERROR: Download failed. Check your internet connection.
     exit /b 1
 )
-echo Relaunching with updated scripts...
+
+echo Extracting...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%TEMP%\PCSetup-ext') { Remove-Item '%TEMP%\PCSetup-ext' -Recurse -Force }; Expand-Archive '%TEMP%\PCSetup.zip' -DestinationPath '%TEMP%\PCSetup-ext' -Force"
+if errorlevel 1 (
+    echo ERROR: Extraction failed.
+    exit /b 1
+)
+
+echo Copying files...
+robocopy "%TEMP%\PCSetup-ext\PCSetup-main" "%~dp0." /E /IS /IT /XF run-all.bat /NFL /NDL /NJH /NJS /NC /NS
+if %errorlevel% GEQ 4 (
+    echo ERROR: Failed to copy files.
+    exit /b 1
+)
+
+rd /s /q "%TEMP%\PCSetup-ext" >nul 2>&1
+del /q "%TEMP%\PCSetup.zip" >nul 2>&1
+echo Done.
 echo.
-call "%~f0"
-exit /b
 
 :run_scripts
 echo Running all numbered setup scripts in order...
