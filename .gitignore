@@ -1,2 +1,12 @@
 tmpclaude-*
 nul
+.claude/.personality_migration
+.claude/auth.json
+.claude/history.jsonl
+/.claude/log
+.claude/models_cache.json
+/.claude/sessions
+/.claude/skills/.system
+.claude/tmp/arg0/codex-arg0HLLJ1f/.lock
+/.claude/tmp
+.claude/version.json

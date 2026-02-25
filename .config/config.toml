@@ -1,0 +1,11 @@
+[projects.'\\?\Z:\Users\Heiner\Documents\PCSetup']
+trust_level = "trusted"
+
+[windows]
+sandbox = "elevated"
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+
+[sandbox_workspace_write]
+network_access = true
