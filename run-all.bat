@@ -79,6 +79,9 @@ if %errorlevel% GEQ 16 (
     echo ERROR: Fatal copy failure.
     exit /b 1
 )
+if defined REMOTE_VER if not "%REMOTE_VER%"=="0" (
+    >"%~dp0.v" echo %REMOTE_VER%
+)
 
 rd /s /q "%TEMP%\PCSetup-ext" >nul 2>&1
 del /q "%TEMP%\PCSetup.zip" >nul 2>&1

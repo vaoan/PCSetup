@@ -33,6 +33,9 @@ $repoZip = "https://github.com/vaoan/PCSetup/archive/refs/heads/main.zip"
 $versionUrl = "https://raw.githubusercontent.com/vaoan/PCSetup/main/.v"
 
 function Invoke-FetchAndRelaunch {
+    param(
+        [string]$ExpectedVersion = ""
+    )
     Write-Host "Downloading..."
     $zipPath = Join-Path $env:TEMP "PCSetup.zip"
     $extractPath = Join-Path $env:TEMP "PCSetup-ext"
@@ -52,6 +55,10 @@ function Invoke-FetchAndRelaunch {
     ) -Wait -PassThru -NoNewWindow
     if ($copyProc.ExitCode -ge 16) {
         throw "Fatal copy failure (robocopy exit code $($copyProc.ExitCode))."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $ExpectedVersion -ne "0") {
+        Set-Content -Path (Join-Path $ScriptRoot ".v") -Value $ExpectedVersion -Encoding UTF8
     }
 
     Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -91,7 +98,7 @@ if ($remoteVer -eq "0") {
     if ($needsUpdate) {
         Write-Host "Update available. Downloading latest scripts..."
         Write-Host ""
-        Invoke-FetchAndRelaunch
+        Invoke-FetchAndRelaunch -ExpectedVersion $remoteVer
     }
     Write-Host "Scripts are up to date."
     Write-Host ""
