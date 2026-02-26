@@ -90,7 +90,7 @@ Adds Windows Security (Defender) folder exclusions to prevent false positives an
 ### 10-setup-win11debloat.bat
 Runs Win11Debloat in unattended mode to apply default tweaks and remove common optional apps (OneDrive, Phone Link, Camera, Photos, Media Player, Remote Desktop, Whiteboard).
 
-### 11-remove-windows-ai.bat
+### 99-remove-windows-ai.bat
 Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
 
 ## Optional Scripts (`optional/`)
