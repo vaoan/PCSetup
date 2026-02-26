@@ -109,17 +109,15 @@ if %errorlevel% GEQ 8 (
 )
 
 pushd "%STAGE_DIR%"
-for %%n in (1 2 3 4 5 6 7 8 9 10) do (
-    for /f "tokens=*" %%f in ('dir /b %%n-*.bat 2^>nul') do (
-        echo ========================================
-        echo Running: %%f
-        echo ========================================
-        call "%%f"
-        if errorlevel 1 (
-            echo.
-            echo WARNING: %%f exited with error code %errorlevel%
-            echo.
-        )
+for /f "usebackq delims=" %%f in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Filter '*-*.bat' | Sort-Object { [int]($_.BaseName -split '-')[0] } | ForEach-Object { $_.Name }"`) do (
+    echo ========================================
+    echo Running: %%f
+    echo ========================================
+    call "%%f"
+    if errorlevel 1 (
+        echo.
+        echo WARNING: %%f exited with error code %errorlevel%
+        echo.
     )
 )
 popd
