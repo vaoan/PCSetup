@@ -82,13 +82,16 @@ Recursively finds and deletes all `node_modules` folders on all fixed hard drive
 ### 8-context-menu-take-ownership.bat
 Enables Windows long paths support and adds "Take Ownership" to the context menu for files, folders, and drives. Useful for fixing permission issues on files/folders you can't access.
 
-### 9-remove-windows-ai.bat
-Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
-
-### 10-setup-exclusions.bat
+### 9-setup-exclusions.bat
 Adds Windows Security (Defender) folder exclusions to prevent false positives and DLL blocking for trusted applications. Run after installing applications that need exclusions.
 
 **Exclusions added:** XIVLauncher/Dalamud (`%APPDATA%\XIVLauncher`), FINAL FANTASY XIV game folder
+
+### 10-setup-win11debloat.bat
+Runs Win11Debloat in unattended mode to apply default tweaks and remove common optional apps (OneDrive, Phone Link, Camera, Photos, Media Player, Remote Desktop, Whiteboard).
+
+### 11-remove-windows-ai.bat
+Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
 
 ## Optional Scripts (`optional/`)
 
