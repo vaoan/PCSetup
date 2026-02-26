@@ -61,6 +61,19 @@ if not exist "%TARGET_BASE%\Links" mkdir "%TARGET_BASE%\Links"
 if not exist "%TARGET_BASE%\Saved Games" mkdir "%TARGET_BASE%\Saved Games"
 if not exist "%TARGET_BASE%\Searches" mkdir "%TARGET_BASE%\Searches"
 
+:: Detect current source folders from registry (with %USERPROFILE% fallback)
+call :GetShellPath "Desktop" "%USERPROFILE%\Desktop" SRC_DESKTOP
+call :GetShellPath "Personal" "%USERPROFILE%\Documents" SRC_DOCUMENTS
+call :GetShellPath "My Music" "%USERPROFILE%\Music" SRC_MUSIC
+call :GetShellPath "My Pictures" "%USERPROFILE%\Pictures" SRC_PICTURES
+call :GetShellPath "My Video" "%USERPROFILE%\Videos" SRC_VIDEOS
+call :GetShellPath "{31C0DD25-9439-4F12-BF41-7FF4EDA38722}" "%USERPROFILE%\3D Objects" SRC_3DOBJECTS
+call :GetShellPath "Favorites" "%USERPROFILE%\Favorites" SRC_FAVORITES
+call :GetShellPath "{56784854-C6CB-462B-8169-88E350ACB882}" "%USERPROFILE%\Contacts" SRC_CONTACTS
+call :GetShellPath "{BFB9D5E0-C6A9-404C-B2B2-AE6DB6AF4968}" "%USERPROFILE%\Links" SRC_LINKS
+call :GetShellPath "{4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}" "%USERPROFILE%\Saved Games" SRC_SAVEDGAMES
+call :GetShellPath "{7D1D3A04-DEBB-4115-95CF-2F29DA2920DA}" "%USERPROFILE%\Searches" SRC_SEARCHES
+
 :: Move files if enabled
 if "%MOVE_FILES%"=="1" (
     echo.
@@ -68,17 +81,17 @@ if "%MOVE_FILES%"=="1" (
     echo This may take a while depending on file sizes...
     echo.
 
-    robocopy "%USERPROFILE%\Desktop" "%TARGET_BASE%\Desktop" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Documents" "%TARGET_BASE%\Documents" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Music" "%TARGET_BASE%\Music" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Pictures" "%TARGET_BASE%\Pictures" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Videos" "%TARGET_BASE%\Videos" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\3D Objects" "%TARGET_BASE%\3D Objects" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Favorites" "%TARGET_BASE%\Favorites" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Contacts" "%TARGET_BASE%\Contacts" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Links" "%TARGET_BASE%\Links" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Saved Games" "%TARGET_BASE%\Saved Games" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
-    robocopy "%USERPROFILE%\Searches" "%TARGET_BASE%\Searches" /E /MOVE /R:1 /W:1 /NP /NFL /NDL 2>nul
+    call :MoveKnownFolder "!SRC_DESKTOP!" "%TARGET_BASE%\Desktop" "Desktop"
+    call :MoveKnownFolder "!SRC_DOCUMENTS!" "%TARGET_BASE%\Documents" "Documents"
+    call :MoveKnownFolder "!SRC_MUSIC!" "%TARGET_BASE%\Music" "Music"
+    call :MoveKnownFolder "!SRC_PICTURES!" "%TARGET_BASE%\Pictures" "Pictures"
+    call :MoveKnownFolder "!SRC_VIDEOS!" "%TARGET_BASE%\Videos" "Videos"
+    call :MoveKnownFolder "!SRC_3DOBJECTS!" "%TARGET_BASE%\3D Objects" "3D Objects"
+    call :MoveKnownFolder "!SRC_FAVORITES!" "%TARGET_BASE%\Favorites" "Favorites"
+    call :MoveKnownFolder "!SRC_CONTACTS!" "%TARGET_BASE%\Contacts" "Contacts"
+    call :MoveKnownFolder "!SRC_LINKS!" "%TARGET_BASE%\Links" "Links"
+    call :MoveKnownFolder "!SRC_SAVEDGAMES!" "%TARGET_BASE%\Saved Games" "Saved Games"
+    call :MoveKnownFolder "!SRC_SEARCHES!" "%TARGET_BASE%\Searches" "Searches"
 
     echo Files moved.
 )
@@ -133,3 +146,35 @@ start explorer.exe
 echo.
 echo Done! If some apps still show old paths, restart them or log out/in.
 echo.
+goto :eof
+
+:GetShellPath
+setlocal EnableDelayedExpansion
+set "valueName=%~1"
+set "fallbackPath=%~2"
+set "resolvedPath="
+for /f "tokens=1,2,*" %%A in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v "%valueName%" 2^>nul ^| findstr /I /R "REG_"') do (
+    set "resolvedPath=%%C"
+)
+if not defined resolvedPath set "resolvedPath=%fallbackPath%"
+call set "resolvedPath=%%resolvedPath%%"
+if not defined resolvedPath set "resolvedPath=%fallbackPath%"
+endlocal & set "%~3=%resolvedPath%"
+exit /b 0
+
+:MoveKnownFolder
+setlocal
+set "src=%~1"
+set "dst=%~2"
+set "label=%~3"
+if /I "%src%"=="%dst%" (
+    echo   Skipping %label%: source already matches target.
+    endlocal & exit /b 0
+)
+if not exist "%src%" (
+    echo   Skipping %label%: source path not found - "%src%"
+    endlocal & exit /b 0
+)
+if not exist "%dst%" mkdir "%dst%" >nul 2>&1
+robocopy "%src%" "%dst%" /E /MOVE /R:1 /W:1 /NP /NFL /NDL >nul 2>nul
+endlocal & exit /b 0

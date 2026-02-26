@@ -8,7 +8,7 @@ if %errorlevel% neq 0 (
 
 cd /d "%~dp0"
 
-set "LOCAL_VER=0"
+set "LOCAL_VER="
 if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
 
 echo ========================================
@@ -43,8 +43,10 @@ if "%REMOTE_VER%"=="0" (
     goto :run_scripts
 )
 
-set "NEEDS_UPDATE=0"
-for /f %%r in ('powershell -NoProfile -Command "if('%REMOTE_VER%' -gt '%LOCAL_VER%'){'1'}else{'0'}"') do set "NEEDS_UPDATE=%%r"
+set "NEEDS_UPDATE=1"
+if not "%LOCAL_VER%"=="" (
+    for /f %%r in ('powershell -NoProfile -Command "if('%REMOTE_VER%' -ne '%LOCAL_VER%'){'1'}else{'0'}"') do set "NEEDS_UPDATE=%%r"
+)
 
 if "%NEEDS_UPDATE%"=="1" (
     echo Update available. Downloading latest scripts...
@@ -88,6 +90,22 @@ exit /b
 echo Running all numbered setup scripts in order...
 echo.
 
+set "STAGE_DIR=%TEMP%\PCSetup-run-%RANDOM%-%RANDOM%"
+echo Staging scripts in: %STAGE_DIR%
+mkdir "%STAGE_DIR%" >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Unable to create staging directory.
+    exit /b 1
+)
+
+robocopy "%~dp0." "%STAGE_DIR%" *.bat *.config .v /R:1 /W:1 /NFL /NDL /NJH /NJS /NC /NS >nul
+if %errorlevel% GEQ 8 (
+    echo ERROR: Failed to stage scripts to temp.
+    rd /s /q "%STAGE_DIR%" >nul 2>&1
+    exit /b 1
+)
+
+pushd "%STAGE_DIR%"
 for %%n in (1 2 3 4 5 6 7 8 9 10) do (
     for /f "tokens=*" %%f in ('dir /b %%n-*.bat 2^>nul') do (
         echo ========================================
@@ -101,6 +119,8 @@ for %%n in (1 2 3 4 5 6 7 8 9 10) do (
         )
     )
 )
+popd
+rd /s /q "%STAGE_DIR%" >nul 2>&1
 
 echo.
 echo ========================================
