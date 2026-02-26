@@ -129,3 +129,5 @@ echo.
 echo ========================================
 echo All scripts completed.
 echo ========================================
+echo Opening download folder...
+explorer.exe "%~dp0"
