@@ -120,20 +120,20 @@ if ($copyStageProc.ExitCode -ge 8) {
 
 Push-Location $stageDir
 try {
-    foreach ($n in 1..10) {
-        $pattern = "{0}-*.bat" -f $n
-        $files = Get-ChildItem -Path $stageDir -Filter $pattern -File -ErrorAction SilentlyContinue | Sort-Object Name
-        foreach ($file in $files) {
-            Write-Host "========================================"
-            Write-Host "Running: $($file.Name)"
-            Write-Host "========================================"
+    $files = Get-ChildItem -Path $stageDir -Filter "*-*.bat" -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.BaseName -match '^\d+-' } |
+        Sort-Object @{ Expression = { [int](($_.BaseName -split '-', 2)[0]) } }, Name
 
-            $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$($file.FullName)`"" -Wait -PassThru -NoNewWindow
-            if ($proc.ExitCode -ne 0) {
-                Write-Host ""
-                Write-Host "WARNING: $($file.Name) exited with error code $($proc.ExitCode)"
-                Write-Host ""
-            }
+    foreach ($file in $files) {
+        Write-Host "========================================"
+        Write-Host "Running: $($file.Name)"
+        Write-Host "========================================"
+
+        $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$($file.FullName)`"" -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -ne 0) {
+            Write-Host ""
+            Write-Host "WARNING: $($file.Name) exited with error code $($proc.ExitCode)"
+            Write-Host ""
         }
     }
 } finally {
@@ -145,3 +145,5 @@ Write-Host ""
 Write-Host "========================================"
 Write-Host "All scripts completed."
 Write-Host "========================================"
+Write-Host "Opening download folder..."
+Start-Process explorer.exe -ArgumentList "`"$ScriptRoot`""
