@@ -1,4 +1,6 @@
 $ErrorActionPreference = "Stop"
+$ScriptRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { (Get-Location).Path } else { $PSScriptRoot }
+$ScriptPath = if ([string]::IsNullOrWhiteSpace($PSCommandPath)) { Join-Path $ScriptRoot "run-all.ps1" } else { $PSCommandPath }
 
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -10,12 +12,12 @@ if (-not (Test-IsAdmin)) {
     Start-Process powershell.exe -Verb RunAs -ArgumentList @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", "`"$PSCommandPath`""
+        "-File", "`"$ScriptPath`""
     )
     exit
 }
 
-Set-Location -Path $PSScriptRoot
+Set-Location -Path $ScriptRoot
 
 $localVer = ""
 if (Test-Path ".v") {
@@ -46,7 +48,7 @@ function Invoke-FetchAndRelaunch {
     Write-Host "Copying files..."
     $sourcePath = Join-Path $extractPath "PCSetup-main"
     $copyProc = Start-Process -FilePath "robocopy.exe" -ArgumentList @(
-        $sourcePath, $PSScriptRoot, "/E", "/IS", "/IT", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS"
+        $sourcePath, $ScriptRoot, "/E", "/IS", "/IT", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS"
     ) -Wait -PassThru -NoNewWindow
     if ($copyProc.ExitCode -ge 16) {
         throw "Fatal copy failure (robocopy exit code $($copyProc.ExitCode))."
@@ -59,13 +61,13 @@ function Invoke-FetchAndRelaunch {
     Start-Process powershell.exe -Verb RunAs -ArgumentList @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", "`"$PSCommandPath`""
+        "-File", "`"$ScriptPath`""
     )
     exit
 }
 
-$missingScripts = -not (Get-ChildItem -Path $PSScriptRoot -Filter "1-*.bat" -ErrorAction SilentlyContinue) -or
-                  -not (Get-ChildItem -Path $PSScriptRoot -Filter "2-*.bat" -ErrorAction SilentlyContinue)
+$missingScripts = -not (Get-ChildItem -Path $ScriptRoot -Filter "1-*.bat" -ErrorAction SilentlyContinue) -or
+                  -not (Get-ChildItem -Path $ScriptRoot -Filter "2-*.bat" -ErrorAction SilentlyContinue)
 
 if ($missingScripts) {
     Write-Host "No setup scripts found. Downloading from GitHub..."
@@ -103,7 +105,7 @@ Write-Host "Staging scripts in: $stageDir"
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
 $copyStageProc = Start-Process -FilePath "robocopy.exe" -ArgumentList @(
-    $PSScriptRoot, $stageDir, "*.bat", "*.config", ".v", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS"
+    $ScriptRoot, $stageDir, "*.bat", "*.config", ".v", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS"
 ) -Wait -PassThru -NoNewWindow
 if ($copyStageProc.ExitCode -ge 8) {
     throw "Failed to stage scripts to temp (robocopy exit code $($copyStageProc.ExitCode))."
