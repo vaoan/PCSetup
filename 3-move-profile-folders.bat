@@ -5,14 +5,34 @@ if %errorlevel% neq 0 (
     powershell -Command "Start-Process '%~f0' -Verb RunAs"
     exit /b
 )
+setlocal EnableExtensions EnableDelayedExpansion
 
 :: ============================================
-:: CONFIGURATION - Change these as needed
+:: CONFIGURATION
+:: Loaded from profile-folders.config (next to this script)
 :: ============================================
 set "TARGET_DRIVE=Z:"
-set "TARGET_BASE=%TARGET_DRIVE%\Users\%USERNAME%"
+set "TARGET_PROFILE_FOLDER=%USERNAME%"
 :: Set to 1 to move existing files, 0 to just change registry
 set "MOVE_FILES=1"
+
+set "CONFIG_FILE=%~dp0profile-folders.config"
+if exist "%CONFIG_FILE%" (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%CONFIG_FILE%") do (
+        set "CFG_KEY=%%~A"
+        set "CFG_VALUE=%%~B"
+        if /I "!CFG_KEY!"=="TARGET_DRIVE" set "TARGET_DRIVE=!CFG_VALUE!"
+        if /I "!CFG_KEY!"=="TARGET_PROFILE_FOLDER" set "TARGET_PROFILE_FOLDER=!CFG_VALUE!"
+        if /I "!CFG_KEY!"=="MOVE_FILES" set "MOVE_FILES=!CFG_VALUE!"
+    )
+)
+
+if "%TARGET_DRIVE%"=="" set "TARGET_DRIVE=Z:"
+if "%TARGET_PROFILE_FOLDER%"=="" set "TARGET_PROFILE_FOLDER=%USERNAME%"
+if /I "%TARGET_PROFILE_FOLDER%"=="AUTO" set "TARGET_PROFILE_FOLDER=%USERNAME%"
+if "%MOVE_FILES%"=="" set "MOVE_FILES=1"
+if not "%TARGET_DRIVE:~-1%"==":" set "TARGET_DRIVE=%TARGET_DRIVE%:"
+set "TARGET_BASE=%TARGET_DRIVE%\Users\%TARGET_PROFILE_FOLDER%"
 :: ============================================
 
 echo.
@@ -20,6 +40,9 @@ echo =============================================
 echo   Windows Profile Folders Relocation Script
 echo =============================================
 echo.
+echo Config file: %CONFIG_FILE%
+echo Target drive: %TARGET_DRIVE%
+echo Target profile folder: %TARGET_PROFILE_FOLDER%
 echo Target location: %TARGET_BASE%
 echo Move existing files: %MOVE_FILES%
 echo.
