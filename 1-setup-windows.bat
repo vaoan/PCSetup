@@ -203,6 +203,5 @@ if %errorLevel% neq 0 (
     echo.
     echo Setup failed with exit code %errorLevel%.
     echo Generated script: %SCRIPT%
-    pause
 )
 ENDLOCAL
