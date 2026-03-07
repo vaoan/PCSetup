@@ -15,6 +15,7 @@ echo.
 
 powershell -NoProfile -Command ^
     "$skip = @(%SKIP_DRIVES%);" ^
+    "$excludePaths = @('C:\Program Files\Microsoft VS Code', 'C:\Program Files (x86)\Microsoft VS Code', \"$env:LOCALAPPDATA\Streamlabs OBS\", 'C:\Program Files\Slack');" ^
     "$drives = (Get-PSDrive -PSProvider FileSystem).Root;" ^
     "foreach ($drive in $drives) {" ^
     "    if ($skip -contains $drive.Substring(0,1)) { Write-Host \"`nSkipping drive $drive\"; continue };" ^
@@ -22,6 +23,7 @@ powershell -NoProfile -Command ^
     "        Write-Host \"`nScanning drive $drive\";" ^
     "        Get-ChildItem -Path $drive -Directory -Filter 'node_modules' -Recurse -ErrorAction SilentlyContinue | " ^
     "        Where-Object { $_.FullName -notmatch '\\node_modules\\.*\\node_modules' } | " ^
+    "        Where-Object { $path = $_.FullName; -not ($excludePaths | Where-Object { $path -like \"$_*\" }) } | " ^
     "        ForEach-Object {" ^
     "            Write-Host \"Deleting: $($_.FullName)\";" ^
     "            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue" ^
