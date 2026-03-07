@@ -54,30 +54,30 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 
 ## Setup Scripts (Run in Order)
 
-### 1-setup-windows.bat
+### 1-delete-node-modules.bat
+Recursively finds and deletes all `node_modules` folders on all fixed hard drives. Useful for reclaiming disk space.
+
+### 2-setup-windows.bat
 Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, and Node.js LTS via nvm.
 
 **Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, WizTree, Streamlabs OBS, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, GitHub CLI, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard, Claude Desktop, Claude Code, OpenAI Codex CLI, GitHub Copilot CLI
 
-### 2-fix-execution-policy.bat
+### 3-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
 
-### 3-move-profile-folders.bat
+### 4-move-profile-folders.bat
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
-### 4-setup-games.bat
+### 5-setup-games.bat
 Game-related applications setup. Installs gaming platforms, launchers, and tools. Checks if XIVLauncher and FFLogs are already installed before downloading.
 
 **Installed packages:** Steam, Epic Games Launcher, Prism Launcher, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
 
-### 5-context-menu-terminal-install.bat
+### 6-context-menu-terminal-install.bat
 Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the context menu for directories, directory backgrounds, and drives.
 
-### 6-fix-steam-icons.bat
+### 7-fix-steam-icons.bat
 Fixes broken Steam game shortcut icons on the desktop. Scans for Steam URL shortcuts, downloads missing icons from Steam CDN, and clears the Windows icon cache. Run after Steam games are installed and shortcuts created.
-
-### 7-delete-node-modules.bat
-Recursively finds and deletes all `node_modules` folders on all fixed hard drives. Useful for reclaiming disk space.
 
 ### 8-context-menu-take-ownership.bat
 Enables Windows long paths support and adds "Take Ownership" to the context menu for files, folders, and drives. Useful for fixing permission issues on files/folders you can't access.
@@ -114,7 +114,7 @@ Downloads and installs Re:MakePlace (community-maintained fork) directly from Gi
 ## Uninstall Scripts (`uninstall/`)
 
 ### uninstall/context-menu-terminal.bat
-Removes the context menu entries added by `5-context-menu-terminal-install.bat`.
+Removes the context menu entries added by `6-context-menu-terminal-install.bat`.
 
 ### uninstall/context-menu-take-ownership.bat
 Removes the "Take Ownership" context menu entries added by `8-context-menu-take-ownership.bat`.
