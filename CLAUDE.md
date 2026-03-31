@@ -71,7 +71,7 @@ Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Vid
 ### 5-setup-games.bat
 Game-related applications setup. Installs gaming platforms, launchers, and tools. Checks if XIVLauncher and FFLogs are already installed before downloading.
 
-**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
+**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
 
 ### 6-context-menu-terminal-install.bat
 Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the context menu for directories, directory backgrounds, and drives.

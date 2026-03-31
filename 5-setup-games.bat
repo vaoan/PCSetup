@@ -18,7 +18,7 @@ echo Write-Host "Installing game-related applications..." -ForegroundColor Cyan
 echo Write-Host ""
 echo.
 echo # Install game platforms and Java via Chocolatey
-echo choco install steam epicgameslauncher prismlauncher temurin17 temurin8 -y
+echo choco install steam epicgameslauncher prismlauncher curseforge-installer temurin17 temurin8 -y
 echo.
 echo # XIVLauncher via winget ^(auto-skips if installed^)
 echo winget install --id goatcorp.XIVLauncher -e --accept-package-agreements --accept-source-agreements
