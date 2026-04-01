@@ -25,6 +25,8 @@ echo.
 echo Installing Winget packages...
 winget install LinearOrbit.Linear --silent --accept-package-agreements --accept-source-agreements
 winget install Figma.Figma --silent --accept-package-agreements --accept-source-agreements
+winget install Docker.DockerDesktop --silent --accept-package-agreements --accept-source-agreements
+winget install Codeium.Windsurf --silent --accept-package-agreements --accept-source-agreements
 
 :: Refresh environment variables
 echo.
@@ -38,3 +40,5 @@ echo   - Slack
 echo   - AWS CLI
 echo   - Linear
 echo   - Figma
+echo   - Docker Desktop
+echo   - Windsurf

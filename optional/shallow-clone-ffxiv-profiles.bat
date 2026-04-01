@@ -99,7 +99,6 @@ exit /b 0
 
 :end_error
 echo.
-pause
 exit /b 1
 
 :end_ok
