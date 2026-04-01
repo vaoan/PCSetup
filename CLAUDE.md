@@ -39,6 +39,9 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 
 ## Run All Scripts
 
+### remote-call.ps1
+Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`, and `.v` files into a temporary folder under `%TEMP%`, writes a source manifest there, executes `run-all.bat` from that isolated temp workspace, and cleans up afterward. Use this when you want the latest remote setup flow without depending on the current local repo folder.
+
 ### run-all.bat
 Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
 
@@ -58,37 +61,42 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 Recursively finds and deletes all `node_modules` folders on all fixed hard drives. Useful for reclaiming disk space.
 
 ### 2-setup-windows.bat
-Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, and Node.js LTS via nvm.
+Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, Claude Code, and the main Windows runtimes.
 
-**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, WizTree, Streamlabs OBS, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, GitHub CLI, OnTopReplica, OnlyOffice, nvm, NVIDIA App, VC++ Redistributables, .NET runtimes, Driver Booster, ProtonVPN, 2FAGuard, Claude Desktop, Claude Code, OpenAI Codex CLI, GitHub Copilot CLI
+**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, WizTree, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, GitHub CLI, OnTopReplica, OnlyOffice, NVIDIA App, VC++ Redistributables, .NET runtimes, Streamlabs OBS, ProtonVPN, 2FAGuard, Claude Desktop, Claude Code
 
-### 3-fix-execution-policy.bat
+### 3-setup-node.bat
+Dedicated Node.js setup step. Refreshes environment variables before and after installing `nvm`, installs Node.js LTS with `nvm`, refreshes the environment again after `nvm use lts`, then installs npm-based CLI tools.
+
+**Installed packages:** nvm, Node.js LTS, OpenAI Codex CLI, GitHub Copilot CLI, gh-copilot extension (when GitHub CLI is authenticated)
+
+### 4-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
 
-### 4-move-profile-folders.bat
+### 5-move-profile-folders.bat
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
-### 5-setup-games.bat
+### 6-setup-games.bat
 Game-related applications setup. Installs gaming platforms, launchers, and tools. Checks if XIVLauncher and FFLogs are already installed before downloading.
 
 **Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge (via winget), Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
 
-### 6-context-menu-terminal-install.bat
+### 7-context-menu-terminal-install.bat
 Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", and "Open Git Bash here as Administrator" to the context menu for directories, directory backgrounds, and drives.
 
-### 7-fix-steam-icons.bat
+### 8-fix-steam-icons.bat
 Fixes broken Steam game shortcut icons on the desktop. Scans for Steam URL shortcuts, downloads missing icons from Steam CDN, and clears the Windows icon cache. Run after Steam games are installed and shortcuts created.
 
-### 8-context-menu-take-ownership.bat
+### 9-context-menu-take-ownership.bat
 Enables Windows long paths support and adds "Take Ownership" to the context menu for files, folders, and drives. Useful for fixing permission issues on files/folders you can't access.
 
-### 9-setup-exclusions.bat
+### 10-setup-exclusions.bat
 Adds Windows Security (Defender) folder exclusions to prevent false positives and DLL blocking for trusted applications. Run after installing applications that need exclusions.
 
 **Exclusions added:** XIVLauncher/Dalamud (`%APPDATA%\XIVLauncher`), FINAL FANTASY XIV game folder
 
-### 10-setup-win11debloat.bat
-Runs Win11Debloat in unattended mode to apply default tweaks and remove common optional apps (OneDrive, Phone Link, Camera, Photos, Media Player, Remote Desktop, Whiteboard).
+### 11-setup-win11debloat.bat
+Runs Win11Debloat in unattended mode to apply default tweaks and remove common optional apps (OneDrive, Phone Link, Camera, Photos, Media Player, Remote Desktop, Whiteboard). It also runs OneDrive's built-in uninstaller, removes its startup entry, disables reinstallation via policy, and deletes leftover local OneDrive folders.
 
 ### 99-remove-windows-ai.bat
 Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
@@ -114,17 +122,17 @@ Downloads and installs Re:MakePlace (community-maintained fork) directly from Gi
 ## Uninstall Scripts (`uninstall/`)
 
 ### uninstall/context-menu-terminal.bat
-Removes the context menu entries added by `6-context-menu-terminal-install.bat`.
+Removes the context menu entries added by `7-context-menu-terminal-install.bat`.
 
 ### uninstall/context-menu-take-ownership.bat
-Removes the "Take Ownership" context menu entries added by `8-context-menu-take-ownership.bat`.
+Removes the "Take Ownership" context menu entries added by `9-context-menu-take-ownership.bat`.
 
 ## Source Files (`sources/`)
 
 Backup registry files that can be imported directly if the batch scripts don't work.
 
 ### sources/Add_Take_Ownership_to_context_menu.reg
-Original Take Ownership registry file. Double-click to import if `8-context-menu-take-ownership.bat` fails.
+Original Take Ownership registry file. Double-click to import if `9-context-menu-take-ownership.bat` fails.
 
 ### sources/Longpath.reg
-Enables Windows long paths support. Already handled by `8-context-menu-take-ownership.bat`.
+Enables Windows long paths support. Already handled by `9-context-menu-take-ownership.bat`.

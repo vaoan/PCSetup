@@ -127,5 +127,9 @@ echo.
 echo ========================================
 echo All scripts completed.
 echo ========================================
+if /I "%PCSETUP_REMOTE_CALL%"=="1" (
+    echo Remote call mode detected. Skipping workspace folder open.
+    exit /b
+)
 echo Opening download folder...
 explorer.exe "%~dp0"
