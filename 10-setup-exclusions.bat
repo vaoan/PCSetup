@@ -16,7 +16,7 @@ powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '%APPDATA%\XIVLa
 :: FINAL FANTASY XIV
 powershell -NoProfile -Command "Add-MpPreference -ExclusionPath 'C:\Program Files (x86)\SquareEnix\FINAL FANTASY XIV - A Realm Reborn'"
 :: WezTerm (GPU acceleration DLLs can be flagged by Defender)
-powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '$env:LOCALAPPDATA\Programs\WezTerm'"
+powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '%LOCALAPPDATA%\Programs\WezTerm'"
 
 :: Disable Smart App Control (blocks Dalamud/Reloaded.Hooks DLLs with "can't confirm publisher")
 :: 0 = Off, 1 = Evaluation, 2 = On
