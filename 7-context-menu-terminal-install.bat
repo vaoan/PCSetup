@@ -65,6 +65,11 @@ reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin" /ve /d "Open Git Bash h
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin" /v "Icon" /d "C:\\Program Files\\Git\\git-bash.exe" /f
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenGitBashAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process 'C:\\Program Files\\Git\\git-bash.exe' -ArgumentList '--cd=\"\"%%V\"\"' -Verb RunAs\"" /f
 
+echo Removing WezTerm installer default entries (non-admin)...
+reg delete "HKEY_CLASSES_ROOT\Directory\Background\shell\Open WezTerm here" /f 2>nul
+reg delete "HKEY_CLASSES_ROOT\Directory\shell\Open WezTerm here" /f 2>nul
+reg delete "HKEY_CLASSES_ROOT\Drive\shell\Open WezTerm here" /f 2>nul
+
 echo Adding "Open in WezTerm as Administrator" to context menu...
 
 :: WezTerm - Directory Background
