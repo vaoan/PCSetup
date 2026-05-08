@@ -69,18 +69,18 @@ echo Adding "Open in WezTerm as Administrator" to context menu...
 
 :: WezTerm - Directory Background
 reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenWezTermAdmin" /ve /d "Open in WezTerm as Administrator" /f
-reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenWezTermAdmin" /v "Icon" /d "%LOCALAPPDATA%\Programs\WezTerm\wezterm-gui.exe" /f
-reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%LOCALAPPDATA%\\Programs\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
+reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenWezTermAdmin" /v "Icon" /d "%PROGRAMFILES%\WezTerm\wezterm-gui.exe" /f
+reg add "HKEY_CLASSES_ROOT\Directory\Background\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%PROGRAMFILES%\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
 
 :: WezTerm - Directory
 reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenWezTermAdmin" /ve /d "Open in WezTerm as Administrator" /f
-reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenWezTermAdmin" /v "Icon" /d "%LOCALAPPDATA%\Programs\WezTerm\wezterm-gui.exe" /f
-reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%LOCALAPPDATA%\\Programs\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
+reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenWezTermAdmin" /v "Icon" /d "%PROGRAMFILES%\WezTerm\wezterm-gui.exe" /f
+reg add "HKEY_CLASSES_ROOT\Directory\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%PROGRAMFILES%\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
 
 :: WezTerm - Drive
 reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenWezTermAdmin" /ve /d "Open in WezTerm as Administrator" /f
-reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenWezTermAdmin" /v "Icon" /d "%LOCALAPPDATA%\Programs\WezTerm\wezterm-gui.exe" /f
-reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%LOCALAPPDATA%\\Programs\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
+reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenWezTermAdmin" /v "Icon" /d "%PROGRAMFILES%\WezTerm\wezterm-gui.exe" /f
+reg add "HKEY_CLASSES_ROOT\Drive\shell\OpenWezTermAdmin\command" /ve /d "powershell -WindowStyle Hidden -Command \"Start-Process '%PROGRAMFILES%\\WezTerm\\wezterm-gui.exe' -ArgumentList 'start --cwd \"\"%%V\"\"' -Verb RunAs\"" /f
 
 echo Restarting Explorer...
 powershell -Command "Stop-Process -Name explorer -Force; Start-Process explorer" >nul 2>&1

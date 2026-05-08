@@ -95,11 +95,11 @@ Enables Windows long paths support and adds "Take Ownership" to the context menu
 ### 10-setup-exclusions.bat
 Adds Windows Security (Defender) folder exclusions to prevent false positives and DLL blocking for trusted applications. Run after installing applications that need exclusions.
 
-**Exclusions added:** XIVLauncher/Dalamud (`%APPDATA%\XIVLauncher`), FINAL FANTASY XIV game folder, WezTerm (`%LOCALAPPDATA%\Programs\WezTerm`)
+**Exclusions added:** XIVLauncher/Dalamud (`%APPDATA%\XIVLauncher`), FINAL FANTASY XIV game folder, WezTerm (`%PROGRAMFILES%\WezTerm`)
 
 ### WezTerm configuration
 
-WezTerm is installed by `2-setup-windows.bat`. Its config lives at `%USERPROFILE%\.wezterm.lua` and is deployed by the same script (only if the file doesn't already exist).
+WezTerm is installed by `2-setup-windows.bat` via winget to `%PROGRAMFILES%\WezTerm\` (system-wide, since setup runs as admin). Its config lives at `%USERPROFILE%\.wezterm.lua` and is deployed by the same script (only if the file doesn't already exist).
 
 **Profiles available** (launch menu via `Ctrl+Shift+L` or right-click the `+` button):
 - PowerShell 7 (default)

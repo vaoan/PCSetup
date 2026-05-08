@@ -7,7 +7,7 @@ if %errorlevel% neq 0 (
 )
 
 :: Drives to skip (comma-separated, e.g. 'P','Q')
-set "SKIP_DRIVES='P'"
+set "SKIP_DRIVES='P','C','I'"
 
 echo Deleting all node_modules folders on all drives (skipping: %SKIP_DRIVES%)...
 echo This may take a while...
