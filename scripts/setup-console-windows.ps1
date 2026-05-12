@@ -30,7 +30,7 @@ $certPem          = "$cfDir\cert.pem"
 $devConfigPath    = "$cfDir\dev-config.yml"
 $tunnelName       = 'dev-console'
 $distro           = 'Ubuntu-24.04'
-$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','zellij.ffxivbe.org')
+$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org')
 
 function Write-Log { param([string]$msg) Write-Host "[setup-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[setup-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
@@ -100,8 +100,6 @@ ingress:
     service: ssh://localhost:22
   - hostname: code.ffxivbe.org
     service: http://localhost:8080
-  - hostname: zellij.ffxivbe.org
-    service: http://localhost:7683
   - service: http_status:404
 "@
 [IO.File]::WriteAllText($devConfigPath, $devConfig, [Text.Encoding]::UTF8)
@@ -194,9 +192,7 @@ if (`$wslIp) {
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=2222 connectaddress=`$wslIp connectport=22
     netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=8080 2>`$null | Out-Null
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=`$wslIp connectport=8080
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7683 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7683 connectaddress=`$wslIp connectport=7683
-    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-zellij 2>/dev/null || true" | Out-Null
+    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root 2>/dev/null || true" | Out-Null
 }
 "@
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
