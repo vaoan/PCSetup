@@ -109,8 +109,15 @@ function Get-EncryptedArtifact { param([string]$runId)
 
 function Expand-Secrets { param([string]$encPath, [string]$passphrase, [string]$openssl)
     Write-Log "Decrypting secrets..."
-    $passphrase | & $openssl aes-256-cbc -d -pbkdf2 -iter 600000 -in $encPath -out $decryptTmp -pass stdin
-    $opensslExit = $LASTEXITCODE
+    $tempPassFile = Join-Path $env:TEMP 'pcsetup-pass.tmp'
+    $opensslExit = 1
+    try {
+        [IO.File]::WriteAllText($tempPassFile, $passphrase, [Text.Encoding]::ASCII)
+        & $openssl aes-256-cbc -d -pbkdf2 -iter 600000 -in $encPath -out $decryptTmp -pass "file:$tempPassFile"
+        $opensslExit = $LASTEXITCODE
+    } finally {
+        if (Test-Path $tempPassFile) { Remove-Item $tempPassFile -Force }
+    }
     Remove-Item $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
     if ($opensslExit -ne 0) {
         if (Test-Path $decryptTmp) { Remove-Item $decryptTmp -Force }
