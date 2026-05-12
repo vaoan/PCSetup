@@ -99,7 +99,7 @@ const HTML = `<!DOCTYPE html>
       <span class="name">SSH</span>
       <span class="desc">Direct SSH to WSL</span>
     </a>
-    <a class="card git" href="https://git.ffxivbe.org/" target="_blank" rel="noopener">
+    <a class="card git" href="https://git.ffxivbe.org/repos" target="_blank" rel="noopener">
       <span class="icon">⎇</span>
       <span class="name">Git</span>
       <span class="desc">Visual branch browser</span>

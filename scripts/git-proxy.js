@@ -58,9 +58,12 @@ function landingPage() {
     .name { font-size: 0.95rem; font-weight: 700; color: #fab387;
             text-align: center; word-break: break-all; }
     .empty { color: #6c7086; font-size: 0.9rem; }
+    .back { font-size: 0.8rem; color: #6c7086; text-decoration: none; align-self: flex-start; }
+    .back:active { color: #cdd6f4; }
   </style>
 </head>
 <body>
+  <a class="back" href="https://tools.ffxivbe.org">← tools</a>
   <h1>Git Repos</h1>
   <div class="grid">${cards}</div>
 </body>
@@ -69,12 +72,12 @@ function landingPage() {
 
 // nosemgrep - listens on 127.0.0.1 only, TLS terminated by Cloudflare tunnel upstream
 const server = http.createServer((req, res) => { // nosemgrep
-  if (req.url === '/' || req.url === '') {
+  if (req.url === '/repos' || req.url === '/repos/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(landingPage());
     return;
   }
-  // proxy everything else to ungit
+  // proxy everything else (including /) to ungit so hash routing works
   const opts = { hostname: '127.0.0.1', port: UNGIT_PORT, path: req.url, // nosemgrep - localhost only, TLS terminated by Cloudflare
                  method: req.method, headers: req.headers };
   const proxy = http.request(opts, r => { // nosemgrep - localhost only, TLS terminated by Cloudflare
