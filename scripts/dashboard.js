@@ -3,63 +3,122 @@ const http = require('http');
 
 const FAVICON = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="bz" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#eae6de"/><stop offset="100%" stop-color="#b8b4ac"/></linearGradient>
-    <linearGradient id="sk" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7dcef8"/><stop offset="100%" stop-color="#2e88d0"/></linearGradient>
-    <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6ed42a"/><stop offset="100%" stop-color="#3a9010"/></linearGradient>
-    <linearGradient id="wr" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffc84a"/><stop offset="100%" stop-color="#d06a08"/></linearGradient>
-    <linearGradient id="st" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#c0bcb4"/><stop offset="40%" stop-color="#dedad2"/><stop offset="100%" stop-color="#b0aca4"/></linearGradient>
+    <linearGradient id="bz" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8f4ec"/><stop offset="35%" stop-color="#e4e0d8"/>
+      <stop offset="70%" stop-color="#ccc8c0"/><stop offset="100%" stop-color="#a4a09a"/>
+    </linearGradient>
+    <linearGradient id="xpbar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1c6cd8"/><stop offset="50%" stop-color="#0e50b4"/>
+      <stop offset="100%" stop-color="#0a3e96"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a8e4ff"/><stop offset="50%" stop-color="#48aaee"/>
+      <stop offset="100%" stop-color="#1870cc"/>
+    </linearGradient>
+    <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7ee830"/><stop offset="100%" stop-color="#2e8808"/>
+    </linearGradient>
+    <linearGradient id="tb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3484dc"/><stop offset="100%" stop-color="#0c3080"/>
+    </linearGradient>
+    <linearGradient id="sb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#68d040"/><stop offset="50%" stop-color="#30960c"/>
+      <stop offset="100%" stop-color="#1e7004"/>
+    </linearGradient>
+    <linearGradient id="wr" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe060"/><stop offset="40%" stop-color="#f08818"/>
+      <stop offset="100%" stop-color="#a84800"/>
+    </linearGradient>
+    <linearGradient id="st" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#aaa8a0"/><stop offset="35%" stop-color="#dedad2"/>
+      <stop offset="100%" stop-color="#a8a49c"/>
+    </linearGradient>
   </defs>
-  <!-- drop shadow -->
-  <rect x="8" y="10" width="88" height="68" rx="6" fill="black" opacity="0.18"/>
-  <!-- bezel -->
-  <rect x="4" y="6" width="88" height="68" rx="6" fill="url(#bz)"/>
-  <!-- bezel top highlight -->
-  <rect x="4" y="6" width="88" height="6" rx="6" fill="white" opacity="0.25"/>
+
+  <!-- shadow -->
+  <rect x="9" y="11" width="88" height="70" rx="7" fill="black" opacity="0.22"/>
+
+  <!-- Luna silver bezel -->
+  <rect x="4" y="6" width="88" height="70" rx="7" fill="url(#bz)"/>
+  <!-- bevel highlights -->
+  <rect x="4" y="6" width="88" height="3" rx="3" fill="white" opacity="0.55"/>
+  <rect x="4" y="6" width="3" height="70" rx="3" fill="white" opacity="0.35"/>
+  <rect x="4" y="73" width="88" height="3" rx="3" fill="black" opacity="0.18"/>
+
+  <!-- XP blue Luna stripe (title-bar feel) -->
+  <rect x="4" y="6" width="88" height="15" rx="7" fill="url(#xpbar)"/>
+  <rect x="4" y="14" width="88" height="7" fill="url(#xpbar)"/>
+  <rect x="4" y="6" width="88" height="5" rx="3" fill="white" opacity="0.22"/>
+  <rect x="4" y="20" width="88" height="1" fill="#0a3080" opacity="0.5"/>
+
+  <!-- XP 4-color flag on stripe -->
+  <rect x="9"  y="9"  width="6" height="4.5" rx="0.8" fill="#ef3030"/>
+  <rect x="16" y="9"  width="6" height="4.5" rx="0.8" fill="#30d830"/>
+  <rect x="9"  y="14" width="6" height="4.5" rx="0.8" fill="#2858f0"/>
+  <rect x="16" y="14" width="6" height="4.5" rx="0.8" fill="#f0d020"/>
+
   <!-- screen border -->
-  <rect x="12" y="13" width="72" height="52" rx="2" fill="#111"/>
+  <rect x="11" y="22" width="74" height="44" rx="2" fill="#0a0a14"/>
   <!-- sky -->
-  <rect x="13" y="14" width="70" height="50" fill="url(#sk)"/>
-  <!-- rolling hill -->
-  <ellipse cx="48" cy="64" rx="45" ry="16" fill="url(#hl)"/>
-  <ellipse cx="16" cy="64" rx="20" ry="12" fill="#4ab818"/>
+  <rect x="12" y="23" width="72" height="42" fill="url(#sky)"/>
+  <!-- sun -->
+  <circle cx="76" cy="27" r="7" fill="#fff4b0" opacity="0.5"/>
+  <circle cx="76" cy="27" r="4" fill="white" opacity="0.75"/>
+  <!-- hills -->
+  <ellipse cx="48" cy="65" rx="46" ry="16" fill="url(#hl)"/>
+  <ellipse cx="14" cy="65" rx="18" ry="12" fill="#52c416"/>
+  <ellipse cx="84" cy="65" rx="16" ry="10" fill="#48b810"/>
   <!-- cloud 1 -->
-  <ellipse cx="26" cy="24" rx="10" ry="6" fill="white" opacity="0.92"/>
-  <ellipse cx="33" cy="21" rx="9" ry="7" fill="white" opacity="0.92"/>
-  <ellipse cx="40" cy="24" rx="8" ry="5" fill="white" opacity="0.92"/>
+  <ellipse cx="24" cy="32" rx="10" ry="6"  fill="white" opacity="0.95"/>
+  <ellipse cx="31" cy="29" rx="9"  ry="7"  fill="white" opacity="0.95"/>
+  <ellipse cx="38" cy="32" rx="8"  ry="5"  fill="white" opacity="0.95"/>
   <!-- cloud 2 -->
-  <ellipse cx="60" cy="30" rx="7" ry="4" fill="white" opacity="0.72"/>
-  <ellipse cx="66" cy="28" rx="6" ry="5" fill="white" opacity="0.72"/>
+  <ellipse cx="58" cy="36" rx="7"  ry="4"  fill="white" opacity="0.72"/>
+  <ellipse cx="64" cy="34" rx="6"  ry="5"  fill="white" opacity="0.72"/>
+  <!-- glare -->
+  <path d="M12,23 L60,23 L54,31 L12,31Z" fill="white" opacity="0.055"/>
+
   <!-- XP taskbar -->
-  <rect x="13" y="56" width="70" height="8" fill="#1b5494"/>
-  <rect x="13" y="56" width="70" height="2" fill="#2d7fcc" opacity="0.6"/>
+  <rect x="12" y="57" width="72" height="8" fill="url(#tb)"/>
+  <rect x="12" y="57" width="72" height="2" fill="#60b0ff" opacity="0.45"/>
   <!-- start button -->
-  <rect x="14" y="57" width="16" height="6" rx="2" fill="#3c8a2e"/>
-  <rect x="14" y="57" width="16" height="3" rx="2" fill="#50b040" opacity="0.5"/>
-  <!-- screen glare -->
-  <rect x="13" y="14" width="70" height="8" fill="white" opacity="0.05"/>
-  <!-- power LED -->
-  <circle cx="87" cy="72" r="3.5" fill="#0050c8"/>
-  <circle cx="87" cy="72" r="2" fill="#4488ff"/>
+  <rect x="13" y="58" width="20" height="6" rx="2.5" fill="url(#sb)"/>
+  <rect x="13" y="58" width="20" height="3" rx="2.5" fill="white" opacity="0.2"/>
+  <!-- Windows flag on start button -->
+  <rect x="14.5" y="59.5" width="3"   height="2.2" rx="0.4" fill="#ff3030"/>
+  <rect x="18"   y="59.5" width="3"   height="2.2" rx="0.4" fill="#30e030"/>
+  <rect x="14.5" y="62"   width="3"   height="2.2" rx="0.4" fill="#3060f0"/>
+  <rect x="18"   y="62"   width="3"   height="2.2" rx="0.4" fill="#f0d020"/>
+  <!-- clock -->
+  <rect x="67" y="59" width="16" height="5" rx="1" fill="#0c2870" opacity="0.55"/>
+
+  <!-- power LED (XP blue glow) -->
+  <circle cx="85" cy="71" r="4"   fill="#0030a8"/>
+  <circle cx="85" cy="71" r="2.5" fill="#2060ff"/>
+  <circle cx="84" cy="70" r="1"   fill="white" opacity="0.7"/>
+
   <!-- stand neck -->
-  <rect x="40" y="74" width="16" height="13" rx="1" fill="url(#st)"/>
-  <rect x="40" y="74" width="4" height="13" fill="white" opacity="0.18"/>
+  <rect x="38" y="76" width="20" height="12" rx="1" fill="url(#st)"/>
+  <rect x="38" y="76" width="5"  height="12" fill="white" opacity="0.22"/>
   <!-- base -->
-  <rect x="22" y="87" width="52" height="11" rx="4" fill="url(#st)"/>
-  <rect x="22" y="87" width="52" height="3" rx="4" fill="white" opacity="0.22"/>
-  <!-- WRENCH — bottom-right, rotated -42deg -->
-  <g transform="translate(82,80) rotate(-42)">
-    <!-- head outer -->
-    <rect x="-11" y="-22" width="22" height="22" rx="5" fill="url(#wr)"/>
-    <!-- head cutout (box-end opening) -->
-    <rect x="-7" y="-22" width="14" height="15" rx="3" fill="#1a1a1a"/>
-    <!-- handle -->
-    <rect x="-10" y="0" width="20" height="50" rx="10" fill="url(#wr)"/>
-    <!-- grip lines -->
-    <rect x="-8" y="14" width="16" height="3" rx="1.5" fill="#7a3a00" opacity="0.35"/>
-    <rect x="-8" y="22" width="16" height="3" rx="1.5" fill="#7a3a00" opacity="0.35"/>
-    <rect x="-8" y="30" width="16" height="3" rx="1.5" fill="#7a3a00" opacity="0.35"/>
-    <!-- highlight -->
-    <rect x="-9" y="-22" width="5" height="72" rx="2.5" fill="white" opacity="0.22"/>
+  <rect x="18" y="88" width="60" height="10" rx="5" fill="url(#st)"/>
+  <rect x="18" y="88" width="60" height="3"  rx="5" fill="white" opacity="0.28"/>
+  <rect x="18" y="95" width="60" height="3"  rx="5" fill="black" opacity="0.08"/>
+
+  <!-- WRENCH — glossy amber, -42 deg, bottom-right -->
+  <g transform="translate(84,80) rotate(-42)">
+    <g transform="translate(4,4)" opacity="0.2">
+      <rect x="-12" y="-24" width="24" height="24" rx="5" fill="black"/>
+      <rect x="-11" y="0"   width="22" height="52" rx="11" fill="black"/>
+    </g>
+    <rect x="-12" y="-24" width="24" height="24" rx="5"  fill="url(#wr)"/>
+    <rect x="-8"  y="-24" width="16" height="17" rx="3"  fill="#181818"/>
+    <rect x="-11" y="0"   width="22" height="52" rx="11" fill="url(#wr)"/>
+    <rect x="-9"  y="15"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
+    <rect x="-9"  y="24"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
+    <rect x="-9"  y="33"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
+    <rect x="-11" y="-24" width="7"  height="76" rx="3.5" fill="white" opacity="0.28"/>
+    <rect x="-10" y="-22" width="3"  height="72" rx="1.5" fill="white" opacity="0.2"/>
   </g>
 </svg>`).toString('base64');
 
