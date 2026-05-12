@@ -57,6 +57,7 @@ Write-Log "scheduled tasks: removed"
 # -- 4. Remove portproxy rules -------------------------------------------------
 netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=2222 2>$null | Out-Null
 netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=8080 2>$null | Out-Null
+netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7683 2>$null | Out-Null
 Write-Log "portproxy: removed"
 
 # -- 5. Remove deployed files --------------------------------------------------
@@ -68,7 +69,7 @@ Remove-Item $devConfigPath                     -Force   -ErrorAction SilentlyCon
 Write-Log "deployed files: removed"
 
 # -- 6. Stop and disable WSL services (wetty, code-server) -------------------
-wsl -d $distro --user root -- bash -c "systemctl stop wetty code-server@root 2>/dev/null; systemctl disable wetty code-server@root 2>/dev/null; true"
+wsl -d $distro --user root -- bash -c "systemctl stop wetty code-server@root ttyd-zellij 2>/dev/null; systemctl disable wetty code-server@root ttyd-zellij 2>/dev/null; true"
 Write-Log "WSL wetty: stopped and disabled"
 
 # -- 7. Clean up Cloudflare DNS + tunnel via API ------------------------------
