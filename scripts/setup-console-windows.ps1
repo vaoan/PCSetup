@@ -5,30 +5,32 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # First-time setup for the web console on Windows.
-# Run AFTER: sync-secrets.bat (to populate .secrets), and 2-setup-windows.bat (for cloudflared + node).
+# Run AFTER: sync-secrets.bat (to populate .secrets), 2-setup-windows.bat (for cloudflared + node),
+#            and `cloudflared tunnel login` (creates cert.pem for API auth — one-time browser login).
 #
 # What this does:
 #   1. Creates %USERPROFILE%\Documents\Cloudflare\{sshwifty,launcher} dirs
 #   2. Writes sshwifty.conf.json from .secrets (SSHWIFTY_CONF_B64)
-#   3. Writes cloudflared tunnel credentials JSON from .secrets (CLOUDFLARE_DEV_CREDENTIALS_B64)
-#   4. Writes ~/.cloudflared/dev-config.yml
+#   3. Provisions Cloudflare tunnel 'dev-console' (creates if missing) + DNS records
+#   4. Writes ~/.cloudflared/dev-config.yml with the live tunnel ID
 #   5. Copies launcher scripts (console-proxy.js, console-launcher.js) from repo
 #   6. Creates CloudflaredDevTunnel scheduled task
 #   7. Creates UpdateWSLPortProxy scheduled task (runs at logon)
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot      = Split-Path -Parent $PSScriptRoot
-$secretsFile   = Join-Path $repoRoot '.secrets'
-$cloudflareDir = "$env:USERPROFILE\Documents\Cloudflare"
-$sshwiftyDir   = "$cloudflareDir\sshwifty"
-$launcherDir   = "$cloudflareDir\launcher"
-$cfDir         = "$env:USERPROFILE\.cloudflared"
-$cfExe         = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
-$devConfigPath = "$cfDir\dev-config.yml"
-$tunnelId      = 'c28375cb-0b8f-433b-aed6-48fb1d0090e9'
-$credPath      = "$cfDir\$tunnelId.json"
-$distro        = 'Ubuntu-24.04'
+$repoRoot         = Split-Path -Parent $PSScriptRoot
+$secretsFile      = Join-Path $repoRoot '.secrets'
+$cloudflareDir    = "$env:USERPROFILE\Documents\Cloudflare"
+$sshwiftyDir      = "$cloudflareDir\sshwifty"
+$launcherDir      = "$cloudflareDir\launcher"
+$cfDir            = "$env:USERPROFILE\.cloudflared"
+$cfExe            = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
+$certPem          = "$cfDir\cert.pem"
+$devConfigPath    = "$cfDir\dev-config.yml"
+$tunnelName       = 'dev-console'
+$distro           = 'Ubuntu-24.04'
+$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','zellij.ffxivbe.org')
 
 function Write-Log { param([string]$msg) Write-Host "[setup-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[setup-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
@@ -49,15 +51,39 @@ New-Item -ItemType Directory -Path $cfDir        -Force | Out-Null
 
 # -- 2. Write sshwifty.conf.json from .secrets --------------------------------
 Write-Log "Writing sshwifty.conf.json..."
-$sshwiftyConfB64 = Read-Secret 'SSHWIFTY_CONF_B64'
+$sshwiftyConfB64  = Read-Secret 'SSHWIFTY_CONF_B64'
 $sshwiftyConfJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sshwiftyConfB64))
 [IO.File]::WriteAllText("$sshwiftyDir\sshwifty.conf.json", $sshwiftyConfJson, [Text.Encoding]::UTF8)
 
-# -- 3. Write tunnel credentials JSON from .secrets ---------------------------
-Write-Log "Writing tunnel credentials..."
-$credB64 = Read-Secret 'CLOUDFLARE_DEV_CREDENTIALS_B64'
-$credJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($credB64))
-[IO.File]::WriteAllText($credPath, $credJson, [Text.Encoding]::UTF8)
+# -- 3. Provision Cloudflare tunnel + DNS records -----------------------------
+Write-Log "Provisioning Cloudflare dev tunnel..."
+if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
+if (-not (Test-Path $certPem)) { Fail "cloudflared not authenticated. Run: cloudflared tunnel login" }
+
+$tunnelId  = $null
+$createOut = & $cfExe tunnel --origincert $certPem create $tunnelName 2>&1
+if ($createOut -match 'Created tunnel .+ with id ([a-f0-9-]{36})') {
+    $tunnelId = $Matches[1]
+    Write-Log "Created tunnel: $tunnelName ($tunnelId)"
+} else {
+    # Tunnel already exists — look it up by name
+    $listOut  = (& $cfExe tunnel --origincert $certPem list --output json 2>&1) -join ''
+    $listOut  = $listOut -replace '^[^[]*',''  # strip any log prefix before the JSON array
+    if ($listOut -match '^\[') {
+        $tunnels  = $listOut | ConvertFrom-Json
+        $existing = $tunnels | Where-Object { $_.name -eq $tunnelName -and -not $_.deleted_at }
+        if ($existing) { $tunnelId = $existing[0].id; Write-Log "Reusing tunnel: $tunnelName ($tunnelId)" }
+    }
+    if (-not $tunnelId) { Fail "Failed to create or find tunnel '$tunnelName'. Output: $createOut" }
+}
+
+$credPath = "$cfDir\$tunnelId.json"
+
+# Create DNS routes (idempotent — cloudflared skips if record already exists)
+foreach ($h in $consoleHostnames) {
+    & $cfExe tunnel --origincert $certPem route dns $tunnelId $h 2>&1 | Out-Null
+    Write-Log "DNS route: $h -> $tunnelId"
+}
 
 # -- 4. Write dev-config.yml --------------------------------------------------
 Write-Log "Writing cloudflared dev-config.yml..."
@@ -94,16 +120,12 @@ if (-not (Test-Path $sshwiftyExe)) {
     Write-Host "  https://github.com/nirui/sshwifty/releases/tag/0.4.6-beta-release"
     Write-Host "  Place it at: $sshwiftyExe"
     Write-Host ""
-    Write-Host "  After placing the binary, run start-console.ps1 to launch everything."
+    Write-Host "  After placing the binary, run start-console.bat to launch everything."
     Write-Host ""
 }
 
 # -- 7. CloudflaredDevTunnel scheduled task -----------------------------------
 Write-Log "Creating CloudflaredDevTunnel scheduled task..."
-if (-not (Test-Path $cfExe)) {
-    Write-Host "[setup-console] WARNING: cloudflared.exe not found at $cfExe — task created but may fail until cloudflared is installed." -ForegroundColor Yellow
-}
-
 $taskName  = "CloudflaredDevTunnel"
 $taskArgs  = "tunnel --config `"$devConfigPath`" run"
 $action    = New-ScheduledTaskAction -Execute $cfExe -Argument $taskArgs
@@ -130,10 +152,10 @@ if (`$wslIp) {
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
 [IO.File]::WriteAllText($proxyScriptPath, $proxyScript, [Text.Encoding]::UTF8)
 
-$proxyAction   = New-ScheduledTaskAction -Execute 'powershell.exe' `
+$proxyAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$proxyScriptPath`""
-$proxyTrigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$proxySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$proxyTrigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$proxySettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $proxyPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
 Unregister-ScheduledTask -TaskName $proxyTaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -144,7 +166,10 @@ Write-Log "Scheduled task '$proxyTaskName' created (runs at logon, elevated)"
 # -- Done ----------------------------------------------------------------------
 Write-Host ""
 Write-Host "[setup-console] Setup complete." -ForegroundColor Green
-Write-Host "  Next: run start-console.ps1 (or start-console.bat) to launch the console."
+Write-Host "  Cloudflare tunnel: $tunnelName ($tunnelId)"
+Write-Host "  Hostnames: $($consoleHostnames -join ', ')"
+Write-Host ""
+Write-Host "  Next: run start-console.bat to launch the console."
 Write-Host "  Remote: https://console.ffxivbe.org"
 Write-Host ""
 Write-Host "  Files deployed to:"

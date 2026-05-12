@@ -190,13 +190,17 @@ Browser (Cloudflare Access auth)
    ```
    wsl -d Ubuntu-24.04 --user root bash /mnt/z/Users/Heiner/Documents/PCSetup/scripts/setup-console-wsl.sh
    ```
-2. **Populate secrets** — run `sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` and `CLOUDFLARE_DEV_CREDENTIALS_B64` in GitHub Secrets).
-3. **Download sshwifty binary** — `sshwifty_windows_amd64.exe` from GitHub releases v0.4.6-beta-release. Place at `%USERPROFILE%\Documents\Cloudflare\sshwifty\sshwifty_windows_amd64.exe`.
-4. **Run Windows setup:**
+2. **Authenticate cloudflared** (one-time, browser login):
+   ```
+   cloudflared tunnel login
+   ```
+3. **Populate secrets** — run `sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` in GitHub Secrets).
+4. **Download sshwifty binary** — `sshwifty_windows_amd64.exe` from GitHub releases v0.4.6-beta-release. Place at `%USERPROFILE%\Documents\Cloudflare\sshwifty\sshwifty_windows_amd64.exe`.
+5. **Run Windows setup** (creates tunnel + DNS automatically):
    ```
    scripts\setup-console-windows.ps1
    ```
-5. **Start the console:**
+6. **Start the console:**
    ```
    start-console.bat
    ```
@@ -211,17 +215,19 @@ Run `start-console.bat` after each login (or reboot) to refresh the WSL port-pro
 |---|---|
 | `start-console.bat` | One-click launcher (calls `scripts\start-console.ps1`) |
 | `scripts/start-console.ps1` | Updates portproxy, restarts sshwifty + proxy + cloudflared |
-| `scripts/setup-console-windows.ps1` | First-time Windows setup: writes configs, creates scheduled tasks |
+| `scripts/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
 | `scripts/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, mount script |
 | `scripts/console-proxy.js` | Node.js proxy (port 7681→7682) that injects the quick-connect panel |
 | `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
+| `uninstall/uninstall-console.bat` | Full teardown: kills services, removes tasks/files, deletes Cloudflare DNS + tunnel |
 
 ### Secrets required
 
 | Secret | Description | How to encode |
 |---|---|---|
 | `SSHWIFTY_CONF_B64` | `sshwifty.conf.json` (contains embedded SSH private keys) | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\Documents\Cloudflare\sshwifty\sshwifty.conf.json")) \| clip` |
-| `CLOUDFLARE_DEV_CREDENTIALS_B64` | Cloudflare tunnel credentials JSON | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.cloudflared\c28375cb-0b8f-433b-aed6-48fb1d0090e9.json")) \| clip` |
+
+Cloudflare tunnel credentials are **not stored in secrets** — `setup-console-windows.ps1` creates a fresh tunnel automatically using `cert.pem` from `cloudflared tunnel login`.
 
 ### Cloudflare tunnel routes (tunnel `c28375cb-0b8f-433b-aed6-48fb1d0090e9`)
 
