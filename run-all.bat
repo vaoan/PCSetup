@@ -93,7 +93,7 @@ exit /b
 echo Running all numbered setup scripts in order...
 echo.
 
-set "STAGE_DIR=%TEMP%\PCSetup-run-%RANDOM%-%RANDOM%"
+for /f %%g in ('powershell -NoProfile -Command "[guid]::NewGuid().ToString(\"n\")"') do set "STAGE_DIR=%TEMP%\PCSetup-run-%%g"
 echo Staging scripts in: %STAGE_DIR%
 mkdir "%STAGE_DIR%" >nul 2>&1
 if errorlevel 1 (

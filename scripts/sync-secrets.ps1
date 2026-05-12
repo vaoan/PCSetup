@@ -109,7 +109,7 @@ function Get-EncryptedArtifact { param([string]$runId)
 
 function Expand-Secrets { param([string]$encPath, [string]$passphrase, [string]$openssl)
     Write-Log "Decrypting secrets..."
-    $tempPassFile = Join-Path $env:TEMP 'pcsetup-pass.tmp'
+    $tempPassFile = [IO.Path]::GetTempFileName()
     $opensslExit = 1
     try {
         [IO.File]::WriteAllText($tempPassFile, $passphrase, [Text.Encoding]::ASCII)

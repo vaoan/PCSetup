@@ -33,7 +33,7 @@ try {
                 $relativePath = $entry.FullName.Substring($repoRootName.Length + 1)
                 $extension = [System.IO.Path]::GetExtension($relativePath)
                 if ($allowedExtensions -notcontains $extension) { continue }
-                if ($relativePath -like "*\*") { continue }
+                if ($relativePath -like "*\*" -or $relativePath -like "*/*" -or $relativePath -like "*..*") { continue }
 
                 $destinationPath = Join-Path $workDir $relativePath
                 $destinationDir = Split-Path $destinationPath -Parent
