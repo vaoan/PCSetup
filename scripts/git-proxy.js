@@ -21,7 +21,7 @@ function landingPage() {
   const repos = repoList();
   const cards = repos.length
     ? repos.map(name => `
-    <a class="card" href="/?path=${GITHUB_ROOT}/${name}">
+    <a class="card" href="/#/repository?path=${encodeURIComponent(GITHUB_ROOT + '/' + name)}">
       <span class="icon">⎇</span>
       <span class="name">${name}</span>
     </a>`).join('')
