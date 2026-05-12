@@ -109,7 +109,7 @@ function Get-EncryptedArtifact { param([string]$runId)
 
 function Expand-Secrets { param([string]$encPath, [string]$passphrase, [string]$openssl)
     Write-Log "Decrypting secrets..."
-    $passphrase | & $openssl aes-256-cbc -d -pbkdf2 -in $encPath -out $decryptTmp -pass stdin
+    $passphrase | & $openssl aes-256-cbc -d -pbkdf2 -iter 600000 -in $encPath -out $decryptTmp -pass stdin
     $opensslExit = $LASTEXITCODE
     Remove-Item $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
     if ($opensslExit -ne 0) {
