@@ -176,6 +176,7 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 
 | Hostname | Purpose |
 |---|---|
+| `tools.ffxivbe.org` | Dashboard — links to all dev tools |
 | `console.ffxivbe.org` | SSH web client (sshwifty) with 6 quick-connect presets |
 | `dev.ffxivbe.org` | Direct SSH to WSL (for native SSH clients) |
 | `code.ffxivbe.org` | VS Code in the browser (code-server) |
@@ -186,6 +187,10 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 ```
 Browser (Cloudflare Access auth)
   → Cloudflare tunnel
+      tools.ffxivbe.org → Windows:7686
+        → netsh portproxy (Windows:7686 → WSL IP:7686)
+          → WSL dashboard.js (Node.js, static HTML landing page)
+
       console.ffxivbe.org → Windows:7681
         → console-proxy.js (injects quick-connect panel)
           → sshwifty_windows_amd64.exe (Windows:7682, SSH client UI)
@@ -242,6 +247,7 @@ Run `start-console.bat` after each login (or reboot) to refresh all WSL portprox
 | `scripts/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
 | `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
 | `scripts/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
+| `scripts/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
 | `uninstall/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
 | `uninstall/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
 
@@ -250,6 +256,7 @@ Run `start-console.bat` after each login (or reboot) to refresh all WSL portprox
 | Service | Port | Description |
 |---|---|---|
 | `ssh` | 22 | OpenSSH server |
+| `dashboard` | 7686 | Dev Tools dashboard (tools.ffxivbe.org) |
 | `code-server@root` | 8080 | VS Code server |
 | `ttyd-proxy` | 7683 | Landing page + router for ttyd.ffxivbe.org |
 | `ttyd-persistent` | 7684 | ttyd → `tmux new-session -A -s phone` |

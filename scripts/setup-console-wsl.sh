@@ -170,10 +170,29 @@ systemctl daemon-reload
 echo "[setup-console-wsl] ttyd services configured (proxy:7683, persistent:7684, fresh:7685)"
 
 # -- 10. Start services -------------------------------------------------------
-systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true
+cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/dashboard.js /usr/local/bin/dashboard.js
+
+cat > /etc/systemd/system/dashboard.service << 'DASHSERVICE'
+[Unit]
+Description=Dev Tools dashboard
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /usr/local/bin/dashboard.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+DASHSERVICE
+systemctl daemon-reload
+echo "[setup-console-wsl] dashboard service configured (port 7686)"
+
+systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true
+systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true
 echo "[setup-console-wsl] code-server started (port 8080)"
 echo "[setup-console-wsl] ttyd started (proxy:7683, persistent:7684, fresh:7685)"
 

@@ -30,7 +30,7 @@ $certPem          = "$cfDir\cert.pem"
 $devConfigPath    = "$cfDir\dev-config.yml"
 $tunnelName       = 'dev-console'
 $distro           = 'Ubuntu-24.04'
-$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','ttyd.ffxivbe.org')
+$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','ttyd.ffxivbe.org','tools.ffxivbe.org')
 
 function Write-Log { param([string]$msg) Write-Host "[setup-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[setup-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
@@ -98,6 +98,8 @@ ingress:
     service: http://localhost:7681
   - hostname: dev.ffxivbe.org
     service: ssh://localhost:22
+  - hostname: tools.ffxivbe.org
+    service: http://localhost:7686
   - hostname: code.ffxivbe.org
     service: http://localhost:8080
   - hostname: ttyd.ffxivbe.org
@@ -196,7 +198,9 @@ if (`$wslIp) {
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=`$wslIp connectport=8080
     netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7683 2>`$null | Out-Null
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7683 connectaddress=`$wslIp connectport=7683
-    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true" | Out-Null
+    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7686 2>`$null | Out-Null
+    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7686 connectaddress=`$wslIp connectport=7686
+    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true" | Out-Null
 }
 "@
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
