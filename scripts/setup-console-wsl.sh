@@ -201,20 +201,38 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ungit --port 7687 --no-launchBrowser --ungitBindIp 0.0.0.0
+ExecStart=/usr/bin/ungit --port 7688 --no-launchBrowser --ungitBindIp 0.0.0.0
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 UNGITSERVICE
-systemctl daemon-reload
-echo "[setup-console-wsl] ungit service configured (port 7687)"
 
-systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true
+cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/git-proxy.js /usr/local/bin/git-proxy.js
+
+cat > /etc/systemd/system/git-proxy.service << 'GITPROXYSERVICE'
+[Unit]
+Description=Git repo browser proxy
+After=network.target ungit.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /usr/local/bin/git-proxy.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+GITPROXYSERVICE
+systemctl daemon-reload
+echo "[setup-console-wsl] ungit service configured (port 7688, internal)"
+echo "[setup-console-wsl] git-proxy service configured (port 7687, public)"
+
+systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true
+systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true
 echo "[setup-console-wsl] code-server started (port 8080)"
 echo "[setup-console-wsl] ttyd started (proxy:7683, persistent:7684, fresh:7685)"
 

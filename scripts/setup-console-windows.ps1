@@ -204,7 +204,7 @@ if (`$wslIp) {
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7686 connectaddress=`$wslIp connectport=7686
     netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7687 2>`$null | Out-Null
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7687 connectaddress=`$wslIp connectport=7687
-    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true" | Out-Null
+    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
 }
 "@
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
