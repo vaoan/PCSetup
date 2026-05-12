@@ -53,7 +53,7 @@ New-Item -ItemType Directory -Path $cfDir        -Force | Out-Null
 Write-Log "Writing sshwifty.conf.json..."
 $sshwiftyConfB64  = Read-Secret 'SSHWIFTY_CONF_B64'
 $sshwiftyConfJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sshwiftyConfB64))
-[IO.File]::WriteAllText("$sshwiftyDir\sshwifty.conf.json", $sshwiftyConfJson, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText("$sshwiftyDir\sshwifty.conf.json", $sshwiftyConfJson, (New-Object System.Text.UTF8Encoding $false))
 
 # -- 3. Provision Cloudflare tunnel + DNS records -----------------------------
 Write-Log "Provisioning Cloudflare dev tunnel..."
