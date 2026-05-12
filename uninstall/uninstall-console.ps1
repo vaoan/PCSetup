@@ -69,7 +69,7 @@ Remove-Item $devConfigPath                     -Force   -ErrorAction SilentlyCon
 Write-Log "deployed files: removed"
 
 # -- 6. Stop and disable WSL services (wetty, code-server) -------------------
-wsl -d $distro --user root -- bash -c "systemctl stop wetty code-server@root ttyd-console 2>/dev/null; systemctl disable wetty code-server@root ttyd-console 2>/dev/null; true"
+wsl -d $distro --user root -- bash -c "systemctl stop wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null; systemctl disable wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null; true"
 Write-Log "WSL wetty: stopped and disabled"
 
 # -- 7. Clean up Cloudflare DNS + tunnel via API ------------------------------

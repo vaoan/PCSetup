@@ -119,30 +119,63 @@ echo "[setup-console-wsl] code-server config written (port 8080, no auth)"
 grep -q "mouse on" /root/.tmux.conf 2>/dev/null || echo "set -g mouse on" >> /root/.tmux.conf
 echo "[setup-console-wsl] tmux mouse mode enabled"
 
-cat > /etc/systemd/system/ttyd-console.service << 'TTYDSERVICE'
+cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/ttyd-proxy.js /usr/local/bin/ttyd-proxy.js
+
+cat > /etc/systemd/system/ttyd-persistent.service << 'TTYDSERVICE'
 [Unit]
-Description=ttyd web terminal (tmux)
+Description=ttyd persistent terminal (tmux)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ttyd -p 7683 -W bash -l -c "tmux new-session -A -s phone"
+ExecStart=/usr/local/bin/ttyd -p 7684 -b /persistent -W bash -l -c "tmux new-session -A -s phone"
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 TTYDSERVICE
+
+cat > /etc/systemd/system/ttyd-fresh.service << 'TTYDSERVICE'
+[Unit]
+Description=ttyd fresh terminal (bash)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ttyd -p 7685 -b /fresh -W bash -l
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+TTYDSERVICE
+
+cat > /etc/systemd/system/ttyd-proxy.service << 'TTYDSERVICE'
+[Unit]
+Description=ttyd landing page proxy
+After=network.target ttyd-persistent.service ttyd-fresh.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /usr/local/bin/ttyd-proxy.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+TTYDSERVICE
+
 systemctl daemon-reload
-echo "[setup-console-wsl] ttyd-console service configured (port 7683)"
+echo "[setup-console-wsl] ttyd services configured (proxy:7683, persistent:7684, fresh:7685)"
 
 # -- 10. Start services -------------------------------------------------------
-systemctl enable ssh wetty code-server@root ttyd-console 2>/dev/null || true
+systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start code-server@root ttyd-console 2>/dev/null || true
+systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true
 echo "[setup-console-wsl] code-server started (port 8080)"
-echo "[setup-console-wsl] ttyd started (port 7683, tmux session 'phone')"
+echo "[setup-console-wsl] ttyd started (proxy:7683, persistent:7684, fresh:7685)"
 
 echo ""
 echo "[setup-console-wsl] WSL setup complete."

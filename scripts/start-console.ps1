@@ -53,7 +53,7 @@ Write-Log "portproxy: 127.0.0.1:7683 -> ${wslIp}:7683"
 wsl -d $distro --user root -- bash -c "service ssh start 2>/dev/null || true" | Out-Null
 Write-Log "WSL SSH: started"
 
-wsl -d $distro --user root -- bash -c "systemctl start code-server@root ttyd-console 2>/dev/null || true" | Out-Null
+wsl -d $distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy 2>/dev/null || true" | Out-Null
 Write-Log "WSL code-server + ttyd: started"
 
 # -- 3. Kill stale tmux console session so drives remount on next connect -----
