@@ -36,89 +36,89 @@ const FAVICON = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 
   </defs>
 
   <!-- shadow -->
-  <rect x="9" y="11" width="88" height="70" rx="7" fill="black" opacity="0.22"/>
+  <rect x="7" y="7" width="120" height="90" rx="10" fill="black" opacity="0.22"/>
 
   <!-- Luna silver bezel -->
-  <rect x="4" y="6" width="88" height="70" rx="7" fill="url(#bz)"/>
+  <rect x="2" y="2" width="120" height="90" rx="8" fill="url(#bz)"/>
   <!-- bevel highlights -->
-  <rect x="4" y="6" width="88" height="3" rx="3" fill="white" opacity="0.55"/>
-  <rect x="4" y="6" width="3" height="70" rx="3" fill="white" opacity="0.35"/>
-  <rect x="4" y="73" width="88" height="3" rx="3" fill="black" opacity="0.18"/>
+  <rect x="2" y="2" width="120" height="4" rx="4" fill="white" opacity="0.55"/>
+  <rect x="2" y="2" width="4" height="90" rx="4" fill="white" opacity="0.35"/>
+  <rect x="2" y="89" width="120" height="3" rx="3" fill="black" opacity="0.18"/>
 
   <!-- XP blue Luna stripe (title-bar feel) -->
-  <rect x="4" y="6" width="88" height="15" rx="7" fill="url(#xpbar)"/>
-  <rect x="4" y="14" width="88" height="7" fill="url(#xpbar)"/>
-  <rect x="4" y="6" width="88" height="5" rx="3" fill="white" opacity="0.22"/>
-  <rect x="4" y="20" width="88" height="1" fill="#0a3080" opacity="0.5"/>
+  <rect x="2" y="2" width="120" height="21" rx="8" fill="url(#xpbar)"/>
+  <rect x="2" y="14" width="120" height="9" fill="url(#xpbar)"/>
+  <rect x="2" y="2" width="120" height="6" rx="4" fill="white" opacity="0.22"/>
+  <rect x="2" y="22" width="120" height="1" fill="#0a3080" opacity="0.5"/>
 
   <!-- XP 4-color flag on stripe -->
-  <rect x="9"  y="9"  width="6" height="4.5" rx="0.8" fill="#ef3030"/>
-  <rect x="16" y="9"  width="6" height="4.5" rx="0.8" fill="#30d830"/>
-  <rect x="9"  y="14" width="6" height="4.5" rx="0.8" fill="#2858f0"/>
-  <rect x="16" y="14" width="6" height="4.5" rx="0.8" fill="#f0d020"/>
+  <rect x="10"  y="5"  width="8" height="6" rx="1" fill="#ef3030"/>
+  <rect x="19"  y="5"  width="8" height="6" rx="1" fill="#30d830"/>
+  <rect x="10"  y="12" width="8" height="6" rx="1" fill="#2858f0"/>
+  <rect x="19"  y="12" width="8" height="6" rx="1" fill="#f0d020"/>
 
   <!-- screen border -->
-  <rect x="11" y="22" width="74" height="44" rx="2" fill="#0a0a14"/>
+  <rect x="12" y="24" width="98" height="56" rx="2" fill="#0a0a14"/>
   <!-- sky -->
-  <rect x="12" y="23" width="72" height="42" fill="url(#sky)"/>
+  <rect x="13" y="25" width="96" height="54" fill="url(#sky)"/>
   <!-- sun -->
-  <circle cx="76" cy="27" r="7" fill="#fff4b0" opacity="0.5"/>
-  <circle cx="76" cy="27" r="4" fill="white" opacity="0.75"/>
+  <circle cx="97" cy="30" r="10" fill="#fff4b0" opacity="0.5"/>
+  <circle cx="97" cy="30" r="6"  fill="white" opacity="0.75"/>
   <!-- hills -->
-  <ellipse cx="48" cy="65" rx="46" ry="16" fill="url(#hl)"/>
-  <ellipse cx="14" cy="65" rx="18" ry="12" fill="#52c416"/>
-  <ellipse cx="84" cy="65" rx="16" ry="10" fill="#48b810"/>
+  <ellipse cx="61"  cy="79" rx="60" ry="20" fill="url(#hl)"/>
+  <ellipse cx="17"  cy="79" rx="22" ry="14" fill="#52c416"/>
+  <ellipse cx="107" cy="79" rx="20" ry="12" fill="#48b810"/>
   <!-- cloud 1 -->
-  <ellipse cx="24" cy="32" rx="10" ry="6"  fill="white" opacity="0.95"/>
-  <ellipse cx="31" cy="29" rx="9"  ry="7"  fill="white" opacity="0.95"/>
-  <ellipse cx="38" cy="32" rx="8"  ry="5"  fill="white" opacity="0.95"/>
+  <ellipse cx="30" cy="33" rx="14" ry="8"  fill="white" opacity="0.95"/>
+  <ellipse cx="42" cy="30" rx="12" ry="9"  fill="white" opacity="0.95"/>
+  <ellipse cx="52" cy="34" rx="11" ry="7"  fill="white" opacity="0.95"/>
   <!-- cloud 2 -->
-  <ellipse cx="58" cy="36" rx="7"  ry="4"  fill="white" opacity="0.72"/>
-  <ellipse cx="64" cy="34" rx="6"  ry="5"  fill="white" opacity="0.72"/>
+  <ellipse cx="74" cy="38" rx="10" ry="6"  fill="white" opacity="0.72"/>
+  <ellipse cx="84" cy="35" rx="8"  ry="7"  fill="white" opacity="0.72"/>
   <!-- glare -->
-  <path d="M12,23 L60,23 L54,31 L12,31Z" fill="white" opacity="0.055"/>
+  <path d="M13,25 L77,25 L69,37 L13,37Z" fill="white" opacity="0.055"/>
 
   <!-- XP taskbar -->
-  <rect x="12" y="57" width="72" height="8" fill="url(#tb)"/>
-  <rect x="12" y="57" width="72" height="2" fill="#60b0ff" opacity="0.45"/>
+  <rect x="13" y="69" width="96" height="10" fill="url(#tb)"/>
+  <rect x="13" y="69" width="96" height="3"  fill="#60b0ff" opacity="0.45"/>
   <!-- start button -->
-  <rect x="13" y="58" width="20" height="6" rx="2.5" fill="url(#sb)"/>
-  <rect x="13" y="58" width="20" height="3" rx="2.5" fill="white" opacity="0.2"/>
+  <rect x="14" y="70" width="27" height="8" rx="3" fill="url(#sb)"/>
+  <rect x="14" y="70" width="27" height="4" rx="3" fill="white" opacity="0.2"/>
   <!-- Windows flag on start button -->
-  <rect x="14.5" y="59.5" width="3"   height="2.2" rx="0.4" fill="#ff3030"/>
-  <rect x="18"   y="59.5" width="3"   height="2.2" rx="0.4" fill="#30e030"/>
-  <rect x="14.5" y="62"   width="3"   height="2.2" rx="0.4" fill="#3060f0"/>
-  <rect x="18"   y="62"   width="3"   height="2.2" rx="0.4" fill="#f0d020"/>
+  <rect x="16"   y="71.5" width="4.5" height="3"   rx="0.5" fill="#ff3030"/>
+  <rect x="21.5" y="71.5" width="4.5" height="3"   rx="0.5" fill="#30e030"/>
+  <rect x="16"   y="75.5" width="4.5" height="3"   rx="0.5" fill="#3060f0"/>
+  <rect x="21.5" y="75.5" width="4.5" height="3"   rx="0.5" fill="#f0d020"/>
   <!-- clock -->
-  <rect x="67" y="59" width="16" height="5" rx="1" fill="#0c2870" opacity="0.55"/>
+  <rect x="90" y="71" width="17" height="6" rx="1" fill="#0c2870" opacity="0.55"/>
 
   <!-- power LED (XP blue glow) -->
-  <circle cx="85" cy="71" r="4"   fill="#0030a8"/>
-  <circle cx="85" cy="71" r="2.5" fill="#2060ff"/>
-  <circle cx="84" cy="70" r="1"   fill="white" opacity="0.7"/>
+  <circle cx="116" cy="87" r="5"   fill="#0030a8"/>
+  <circle cx="116" cy="87" r="3"   fill="#2060ff"/>
+  <circle cx="115" cy="86" r="1.2" fill="white" opacity="0.7"/>
 
   <!-- stand neck -->
-  <rect x="38" y="76" width="20" height="12" rx="1" fill="url(#st)"/>
-  <rect x="38" y="76" width="5"  height="12" fill="white" opacity="0.22"/>
+  <rect x="48" y="92" width="28" height="14" rx="1" fill="url(#st)"/>
+  <rect x="48" y="92" width="7"  height="14" fill="white" opacity="0.22"/>
   <!-- base -->
-  <rect x="18" y="88" width="60" height="10" rx="5" fill="url(#st)"/>
-  <rect x="18" y="88" width="60" height="3"  rx="5" fill="white" opacity="0.28"/>
-  <rect x="18" y="95" width="60" height="3"  rx="5" fill="black" opacity="0.08"/>
+  <rect x="18" y="106" width="90" height="12" rx="6" fill="url(#st)"/>
+  <rect x="18" y="106" width="90" height="3"  rx="6" fill="white" opacity="0.28"/>
+  <rect x="18" y="115" width="90" height="3"  rx="6" fill="black" opacity="0.08"/>
 
   <!-- WRENCH — glossy amber, -42 deg, bottom-right -->
-  <g transform="translate(84,80) rotate(-42)">
-    <g transform="translate(4,4)" opacity="0.2">
-      <rect x="-12" y="-24" width="24" height="24" rx="5" fill="black"/>
-      <rect x="-11" y="0"   width="22" height="52" rx="11" fill="black"/>
+  <g transform="translate(80,87) rotate(-42)">
+    <g transform="translate(5,5)" opacity="0.2">
+      <rect x="-14" y="-28" width="28" height="28" rx="6" fill="black"/>
+      <rect x="-13" y="0"   width="26" height="56" rx="13" fill="black"/>
     </g>
-    <rect x="-12" y="-24" width="24" height="24" rx="5"  fill="url(#wr)"/>
-    <rect x="-8"  y="-24" width="16" height="17" rx="3"  fill="#181818"/>
-    <rect x="-11" y="0"   width="22" height="52" rx="11" fill="url(#wr)"/>
-    <rect x="-9"  y="15"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
-    <rect x="-9"  y="24"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
-    <rect x="-9"  y="33"  width="18" height="3.5" rx="1.8" fill="#6a3000" opacity="0.3"/>
-    <rect x="-11" y="-24" width="7"  height="76" rx="3.5" fill="white" opacity="0.28"/>
-    <rect x="-10" y="-22" width="3"  height="72" rx="1.5" fill="white" opacity="0.2"/>
+    <rect x="-14" y="-28" width="28" height="28" rx="6"  fill="url(#wr)"/>
+    <rect x="-9"  y="-28" width="18" height="20" rx="4"  fill="#181818"/>
+    <rect x="-13" y="0"   width="26" height="56" rx="13" fill="url(#wr)"/>
+    <rect x="-10" y="16"  width="20" height="4"  rx="2"  fill="#6a3000" opacity="0.3"/>
+    <rect x="-10" y="28"  width="20" height="4"  rx="2"  fill="#6a3000" opacity="0.3"/>
+    <rect x="-10" y="40"  width="20" height="4"  rx="2"  fill="#6a3000" opacity="0.3"/>
+    <rect x="-13" y="-28" width="8"  height="88" rx="4"  fill="white" opacity="0.28"/>
+    <rect x="-12" y="-26" width="3"  height="84" rx="1.5" fill="white" opacity="0.2"/>
   </g>
 </svg>`).toString('base64');
 
