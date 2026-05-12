@@ -141,10 +141,39 @@ if (-not (Test-Path $sshwiftyExe)) {
 }
 
 # -- 7. CloudflaredDevTunnel scheduled task -----------------------------------
+# At logon: runs cloudflared hidden via a small PS launcher so output is
+# captured to cloudflared-dev.log (same approach as start-console.ps1).
 Write-Log "Creating CloudflaredDevTunnel scheduled task..."
+
+$cfLog     = "$cfDir\cloudflared-dev.log"
+$cfPidFile = "$cfDir\cloudflared-dev.pid"
+
+$cfLauncherScript = @"
+`$cfExe     = '$cfExe'
+`$config    = '$devConfigPath'
+`$logFile   = '$cfLog'
+`$pidFile   = '$cfPidFile'
+
+# Kill any existing dev-tunnel process
+if (Test-Path `$pidFile) {
+    `$oldPid = (Get-Content `$pidFile -ErrorAction SilentlyContinue).Trim()
+    if (`$oldPid -match '^\d+`$') { Stop-Process -Id ([int]`$oldPid) -Force -ErrorAction SilentlyContinue }
+    Remove-Item `$pidFile -Force -ErrorAction SilentlyContinue
+}
+
+`$proc = Start-Process -FilePath `$cfExe ``
+    -ArgumentList 'tunnel', '--config', `$config, 'run' ``
+    -WindowStyle Hidden ``
+    -RedirectStandardError `$logFile ``
+    -PassThru
+`$proc.Id | Out-File -FilePath `$pidFile -Encoding utf8
+"@
+$cfLauncherPath = "$cfDir\start-dev-tunnel.ps1"
+[IO.File]::WriteAllText($cfLauncherPath, $cfLauncherScript, [Text.Encoding]::UTF8)
+
 $taskName  = "CloudflaredDevTunnel"
-$taskArgs  = "tunnel --config `"$devConfigPath`" run"
-$action    = New-ScheduledTaskAction -Execute $cfExe -Argument $taskArgs
+$taskArgs  = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$cfLauncherPath`""
+$action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs
 $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
@@ -152,7 +181,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
-Write-Log "Scheduled task '$taskName' created (runs at logon, elevated)"
+Write-Log "Scheduled task '$taskName' created (runs at logon, hidden, logs to $cfLog)"
 
 # -- 8. UpdateWSLPortProxy scheduled task -------------------------------------
 Write-Log "Creating UpdateWSLPortProxy scheduled task..."

@@ -16,13 +16,17 @@ $distro        = "Ubuntu-24.04"
 $cloudflareDir = "$env:USERPROFILE\Documents\Cloudflare"
 $sshwiftyDir   = "$cloudflareDir\sshwifty"
 $launcherDir   = "$cloudflareDir\launcher"
+$cfDir         = "$env:USERPROFILE\.cloudflared"
+$cfExe         = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
+$devConfigPath = "$cfDir\dev-config.yml"
 $sshwiftyExe   = "$sshwiftyDir\sshwifty_windows_amd64.exe"
 $sshwiftyConf  = "$sshwiftyDir\sshwifty.conf.json"
 $sshwiftyLog   = "$sshwiftyDir\sshwifty.log"
 $proxyScript   = "$launcherDir\console-proxy.js"
 $proxyLog      = "$launcherDir\proxy.log"
 $proxyPidFile  = "$launcherDir\proxy.pid"
-$cfTaskName    = "CloudflaredDevTunnel"
+$cfLog         = "$cfDir\cloudflared-dev.log"
+$cfPidFile     = "$cfDir\cloudflared-dev.pid"
 
 function Write-Log { param([string]$msg) Write-Host "[start-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[start-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
@@ -82,26 +86,36 @@ $proxyProc = Start-Process -FilePath $nodeExe `
 $proxyProc.Id | Out-File -FilePath $proxyPidFile -Encoding utf8
 Write-Log "Launcher proxy: started (PID $($proxyProc.Id)) -> 127.0.0.1:7681"
 
-# -- 6. Restart cloudflared via Scheduled Task --------------------------------
-$task = Get-ScheduledTask -TaskName $cfTaskName -ErrorAction SilentlyContinue
-if (-not $task) {
-    Write-Host "[start-console] WARNING: Scheduled Task '$cfTaskName' not found - run setup-console-windows.ps1" -ForegroundColor Yellow
-} else {
-    Get-Process cloudflared -ErrorAction SilentlyContinue | ForEach-Object {
-        $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
-        if ($cmd -like "*dev-config*") { Stop-Process -Id $_.Id -Force }
-    }
-    Start-Sleep -Milliseconds 500
-    Start-ScheduledTask -TaskName $cfTaskName
-    Write-Log "cloudflared: started via task '$cfTaskName'"
+# -- 6. Restart cloudflared (detached, hidden, logs to file) ------------------
+if (-not (Test-Path $cfExe))        { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
+if (-not (Test-Path $devConfigPath)) { Fail "dev-config.yml not found. Run setup-console-windows.ps1 first." }
+
+if (Test-Path $cfPidFile) {
+    $oldCfPidVal = (Get-Content $cfPidFile -ErrorAction SilentlyContinue).Trim()
+    if ($oldCfPidVal -match '^\d+$') { Stop-Process -Id ([int]$oldCfPidVal) -Force -ErrorAction SilentlyContinue }
+    Remove-Item $cfPidFile -Force -ErrorAction SilentlyContinue
 }
+Get-Process cloudflared -ErrorAction SilentlyContinue | ForEach-Object {
+    $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
+    if ($cmd -like "*dev-config*") { Stop-Process -Id $_.Id -Force }
+}
+Start-Sleep -Milliseconds 500
+
+$cfProc = Start-Process -FilePath $cfExe `
+    -ArgumentList "tunnel", "--config", $devConfigPath, "run" `
+    -WindowStyle Hidden `
+    -RedirectStandardError $cfLog `
+    -PassThru
+$cfProc.Id | Out-File -FilePath $cfPidFile -Encoding utf8
+Write-Log "cloudflared: started (PID $($cfProc.Id))"
+Write-Log "  log: $cfLog"
 
 # -- 7. Verify -----------------------------------------------------------------
 Start-Sleep -Seconds 5
 
 $sshwiftyOk = [bool](Get-Process -Name "sshwifty_windows_amd64" -ErrorAction SilentlyContinue)
 $proxyOk    = (Test-Path $proxyPidFile)
-$tunnelOk   = [bool](Get-Process cloudflared -ErrorAction SilentlyContinue)
+$tunnelOk   = (Test-Path $cfPidFile) -and [bool](Get-Process -Id ([int](Get-Content $cfPidFile -ErrorAction SilentlyContinue).Trim()) -ErrorAction SilentlyContinue)
 
 Write-Host ""
 if ($sshwiftyOk -and $proxyOk -and $tunnelOk) {
@@ -112,6 +126,9 @@ if ($sshwiftyOk -and $proxyOk -and $tunnelOk) {
     if (-not $sshwiftyOk) { Write-Host "[start-console] WARNING: SSHwifty is not running" -ForegroundColor Yellow }
     if (-not $proxyOk)    { Write-Host "[start-console] WARNING: Launcher proxy is not running" -ForegroundColor Yellow }
     if (-not $tunnelOk)   { Write-Host "[start-console] WARNING: cloudflared is not running" -ForegroundColor Yellow }
-    Write-Host "Check logs: $sshwiftyLog"
-    Write-Host "Check logs: $proxyLog"
+    Write-Host "  SSHwifty log:   $sshwiftyLog"
+    Write-Host "  Proxy log:      $proxyLog"
+    Write-Host "  Cloudflare log: $cfLog"
 }
+Write-Host ""
+Write-Host "  Live log: Get-Content -Wait '$cfLog'"
