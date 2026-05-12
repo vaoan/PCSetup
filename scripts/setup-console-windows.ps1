@@ -192,6 +192,9 @@ $proxyScript = @"
 if (`$wslIp) {
     netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=2222 2>`$null | Out-Null
     netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=2222 connectaddress=`$wslIp connectport=22
+    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=8080 2>`$null | Out-Null
+    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=`$wslIp connectport=8080
+    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root 2>/dev/null || true" | Out-Null
 }
 "@
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"

@@ -101,14 +101,31 @@ if ! grep -q "alias claude=" /root/.bashrc 2>/dev/null; then
     echo "alias claude='/mnt/c/Users/\$(cmd.exe /c \"echo %USERNAME%\" 2>/dev/null | tr -d \"\\\r\\\n\")/.local/bin/claude.exe'" >> /root/.bashrc
 fi
 
-# -- 8. Start services --------------------------------------------------------
-systemctl enable ssh wetty 2>/dev/null || true
+# -- 8. Install code-server if missing ----------------------------------------
+if ! command -v code-server &>/dev/null; then
+    echo "[setup-console-wsl] Installing code-server..."
+    curl -fsSL https://code-server.dev/install.sh | sh
+fi
+
+mkdir -p /root/.config/code-server
+cat > /root/.config/code-server/config.yaml << 'CODESERVERCONF'
+bind-addr: 0.0.0.0:8080
+auth: none
+cert: false
+CODESERVERCONF
+echo "[setup-console-wsl] code-server config written (port 8080, no auth)"
+
+# -- 9. Start services --------------------------------------------------------
+systemctl enable ssh wetty code-server@root 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
+systemctl start code-server@root 2>/dev/null || true
+echo "[setup-console-wsl] code-server started (port 8080)"
 
 echo ""
 echo "[setup-console-wsl] WSL setup complete."
 echo "  SSH listening on port 22 (exposed to Windows as localhost:2222 via portproxy)"
+echo "  code-server: port 8080 (exposed to Windows as localhost:8080 via portproxy)"
 echo "  Wetty fallback: port 7681 (systemd service)"
 echo "  6 console presets configured in authorized_keys"
 echo ""
