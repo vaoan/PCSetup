@@ -60,28 +60,29 @@ Write-Log "Provisioning Cloudflare dev tunnel..."
 if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
 if (-not (Test-Path $certPem)) { Fail "cloudflared not authenticated. Run: cloudflared tunnel login" }
 
-$tunnelId  = $null
-$createOut = & $cfExe tunnel --origincert $certPem create $tunnelName 2>&1
-if ($createOut -match 'Created tunnel .+ with id ([a-f0-9-]{36})') {
-    $tunnelId = $Matches[1]
-    Write-Log "Created tunnel: $tunnelName ($tunnelId)"
-} else {
-    # Tunnel already exists — look it up by name
-    $listOut  = (& $cfExe tunnel --origincert $certPem list --output json 2>&1) -join ''
-    $listOut  = $listOut -replace '^[^[]*',''  # strip any log prefix before the JSON array
-    if ($listOut -match '^\[') {
-        $tunnels  = $listOut | ConvertFrom-Json
-        $existing = $tunnels | Where-Object { $_.name -eq $tunnelName -and -not $_.deleted_at }
-        if ($existing) { $tunnelId = $existing[0].id; Write-Log "Reusing tunnel: $tunnelName ($tunnelId)" }
+$tunnelId = $null
+
+# Try to create — exit 0 = new, non-zero = already exists (both are fine)
+try { & $cfExe tunnel --origincert $certPem create $tunnelName 2>$null | Out-Null } catch { <# tunnel exists #> }
+
+# Always look up the tunnel by name in the list (handles both new and existing)
+$listJson = (& $cfExe tunnel --origincert $certPem list --output json 2>&1) -join "`n"
+if ($listJson -match '(?s)(\[.*\])') {
+    # deleted_at is '0001-01-01T00:00:00Z' (zero time) for active tunnels, a real date if deleted
+    $tunnels  = ($Matches[1] | ConvertFrom-Json)
+    $existing = @($tunnels | Where-Object { $_.name -eq $tunnelName -and $_.deleted_at -like '0001*' })
+    if ($existing.Count -gt 0) {
+        $tunnelId = $existing[0].id
+        Write-Log "Tunnel ready: $tunnelName ($tunnelId)"
     }
-    if (-not $tunnelId) { Fail "Failed to create or find tunnel '$tunnelName'. Output: $createOut" }
 }
+if (-not $tunnelId) { Fail "Failed to create or find tunnel '$tunnelName'." }
 
 $credPath = "$cfDir\$tunnelId.json"
 
 # Create DNS routes (idempotent — cloudflared skips if record already exists)
 foreach ($h in $consoleHostnames) {
-    & $cfExe tunnel --origincert $certPem route dns $tunnelId $h 2>&1 | Out-Null
+    try { & $cfExe tunnel --origincert $certPem route dns $tunnelId $h 2>$null | Out-Null } catch { <# record exists #> }
     Write-Log "DNS route: $h -> $tunnelId"
 }
 
