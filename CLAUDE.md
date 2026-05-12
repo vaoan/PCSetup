@@ -168,6 +168,85 @@ Removes the context menu entries added by `7-context-menu-terminal-install.bat`.
 ### uninstall/context-menu-take-ownership.bat
 Removes the "Take Ownership" context menu entries added by `9-context-menu-take-ownership.bat`.
 
+## Web Console (`console.ffxivbe.org`)
+
+Mobile-friendly SSH web console backed by sshwifty, a Cloudflare Zero Trust tunnel, and a Node.js proxy that injects a quick-connect panel. Six presets (WSL, Candystore, Eclipse-con × Persistent/Fresh) are accessible via a single click instead of the native 5-click flow.
+
+### Architecture
+
+```
+Browser (Cloudflare Access auth)
+  → Cloudflare tunnel (console.ffxivbe.org → localhost:7681)
+    → console-proxy.js (injects quick-connect panel into HTML)
+      → sshwifty_windows_amd64.exe (port 7682, SSH client UI)
+        → netsh portproxy (localhost:2222 → WSL IP:22)
+          → WSL Ubuntu-24.04 sshd (authorized_keys forced commands)
+            → tmux session (Persistent) or plain bash (Fresh)
+```
+
+### First-time setup (after a fresh Windows install)
+
+1. **Run WSL setup (once):**
+   ```
+   wsl -d Ubuntu-24.04 --user root bash /mnt/z/Users/Heiner/Documents/PCSetup/scripts/setup-console-wsl.sh
+   ```
+2. **Populate secrets** — run `sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` and `CLOUDFLARE_DEV_CREDENTIALS_B64` in GitHub Secrets).
+3. **Download sshwifty binary** — `sshwifty_windows_amd64.exe` from GitHub releases v0.4.6-beta-release. Place at `%USERPROFILE%\Documents\Cloudflare\sshwifty\sshwifty_windows_amd64.exe`.
+4. **Run Windows setup:**
+   ```
+   scripts\setup-console-windows.ps1
+   ```
+5. **Start the console:**
+   ```
+   start-console.bat
+   ```
+
+### Daily use
+
+Run `start-console.bat` after each login (or reboot) to refresh the WSL port-proxy and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
+
+### Console scripts
+
+| File | Purpose |
+|---|---|
+| `start-console.bat` | One-click launcher (calls `scripts\start-console.ps1`) |
+| `scripts/start-console.ps1` | Updates portproxy, restarts sshwifty + proxy + cloudflared |
+| `scripts/setup-console-windows.ps1` | First-time Windows setup: writes configs, creates scheduled tasks |
+| `scripts/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, mount script |
+| `scripts/console-proxy.js` | Node.js proxy (port 7681→7682) that injects the quick-connect panel |
+| `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
+
+### Secrets required
+
+| Secret | Description | How to encode |
+|---|---|---|
+| `SSHWIFTY_CONF_B64` | `sshwifty.conf.json` (contains embedded SSH private keys) | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\Documents\Cloudflare\sshwifty\sshwifty.conf.json")) \| clip` |
+| `CLOUDFLARE_DEV_CREDENTIALS_B64` | Cloudflare tunnel credentials JSON | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.cloudflared\c28375cb-0b8f-433b-aed6-48fb1d0090e9.json")) \| clip` |
+
+### Cloudflare tunnel routes (tunnel `c28375cb-0b8f-433b-aed6-48fb1d0090e9`)
+
+| Hostname | Target |
+|---|---|
+| `console.ffxivbe.org` | `localhost:7681` (sshwifty via proxy) |
+| `dev.ffxivbe.org` | `ssh://localhost:22` (WSL SSH direct) |
+| `code.ffxivbe.org` | `localhost:8080` (VS Code server) |
+| `zellij.ffxivbe.org` | `localhost:7683` (zellij web) |
+
+### SSH presets (authorized_keys forced commands)
+
+Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forced command determines the session type:
+
+| Preset | tmux session | Directory |
+|---|---|---|
+| WSL Persistent | `console` | `~` |
+| WSL Fresh | *(plain bash)* | `~` |
+| Candystore Persistent | `candystore` | `/mnt/z/Github/candystore` |
+| Candystore Fresh | *(plain bash)* | `/mnt/z/Github/candystore` |
+| Eclipse-con Persistent | `eclipse-con` | `/mnt/z/Github/eclipse-con` |
+| Eclipse-con Fresh | *(plain bash)* | `/mnt/z/Github/eclipse-con` |
+
+Persistent = `tmux new-session -A` (attach or create). Fresh = `exec bash -l` (new shell every time).
+
 ## Source Files (`sources/`)
 
 Backup registry files that can be imported directly if the batch scripts don't work.
