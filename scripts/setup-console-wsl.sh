@@ -201,7 +201,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ungit --port 7687 --no-launchBrowser --rootPath /mnt/z/Github --ungitBindIp 127.0.0.1
+ExecStart=/usr/bin/ungit --port 7687 --no-launchBrowser --rootPath /mnt/z/Github --ungitBindIp 0.0.0.0
 Restart=on-failure
 RestartSec=3
 
