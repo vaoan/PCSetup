@@ -115,17 +115,40 @@ cert: false
 CODESERVERCONF
 echo "[setup-console-wsl] code-server config written (port 8080, no auth)"
 
-# -- 9. Start services --------------------------------------------------------
-systemctl enable ssh wetty code-server@root 2>/dev/null || true
+# -- 9. Configure tmux mouse mode and ttyd-console service --------------------
+grep -q "mouse on" /root/.tmux.conf 2>/dev/null || echo "set -g mouse on" >> /root/.tmux.conf
+echo "[setup-console-wsl] tmux mouse mode enabled"
+
+cat > /etc/systemd/system/ttyd-console.service << 'TTYDSERVICE'
+[Unit]
+Description=ttyd web terminal (tmux)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ttyd -p 7683 -W bash -l -c "tmux new-session -A -s phone"
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+TTYDSERVICE
+systemctl daemon-reload
+echo "[setup-console-wsl] ttyd-console service configured (port 7683)"
+
+# -- 10. Start services -------------------------------------------------------
+systemctl enable ssh wetty code-server@root ttyd-console 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start code-server@root 2>/dev/null || true
+systemctl start code-server@root ttyd-console 2>/dev/null || true
 echo "[setup-console-wsl] code-server started (port 8080)"
+echo "[setup-console-wsl] ttyd started (port 7683, tmux session 'phone')"
 
 echo ""
 echo "[setup-console-wsl] WSL setup complete."
 echo "  SSH listening on port 22 (exposed to Windows as localhost:2222 via portproxy)"
 echo "  code-server: port 8080 (exposed to Windows as localhost:8080 via portproxy)"
+echo "  ttyd (tmux): port 7683 (exposed to Windows as localhost:7683 via portproxy)"
 echo "  Wetty fallback: port 7681 (systemd service)"
 echo "  6 console presets configured in authorized_keys"
 echo ""
