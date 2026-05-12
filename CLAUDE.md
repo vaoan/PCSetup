@@ -256,6 +256,10 @@ Run `start-console.bat` after each login (or reboot) to refresh all WSL portprox
 | `ttyd-fresh` | 7685 | ttyd → `bash -l` |
 | `wetty` | 7681 | Fallback web terminal (unused by default) |
 
+### Cloudflare tunnel
+
+Tunnel name: `dev-console` — ID: `9c355567-7511-43af-bfcd-25e765106b16`
+
 ### Secrets required
 
 | Secret | Description | How to encode |
