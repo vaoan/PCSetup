@@ -59,7 +59,7 @@ function Start-SyncWorkflow {
     if ($LASTEXITCODE -ne 0) { Fail "Failed to trigger workflow." }
 }
 
-function Wait-ForRun {
+function Wait-ForRun { param([string]$prevRunId)
     Write-Log "Waiting for workflow to complete..."
     Start-Sleep -Seconds 3
     $start = [DateTime]::UtcNow
@@ -70,6 +70,10 @@ function Wait-ForRun {
                 $runs = @($json | ConvertFrom-Json)
                 if ($runs.Count -gt 0) {
                     $run = $runs[0]
+                    if ("$($run.databaseId)" -eq $prevRunId) {
+                        Start-Sleep -Milliseconds $POLL_INTERVAL_MS
+                        continue
+                    }
                     if ($run.status -eq 'completed') {
                         if ($run.conclusion -eq 'success') {
                             Write-Log "Workflow completed (run $($run.databaseId))."
@@ -103,15 +107,18 @@ function Get-EncryptedArtifact { param([string]$runId)
 
 function Expand-Secrets { param([string]$encPath, [string]$passphrase, [string]$openssl)
     Write-Log "Decrypting secrets..."
-    & $openssl aes-256-cbc -d -pbkdf2 -in $encPath -out $decryptTmp -pass "pass:$passphrase"
+    $passphrase | & $openssl aes-256-cbc -d -pbkdf2 -in $encPath -out $decryptTmp -pass stdin
     Remove-Item $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) {
         if (Test-Path $decryptTmp) { Remove-Item $decryptTmp -Force }
         Fail "Decryption failed. Verify SYNC_PASSPHRASE in GitHub Secrets matches $env:USERPROFILE\.pcsetup-sync-passphrase."
     }
-    $content = [System.IO.File]::ReadAllText($decryptTmp)
-    [System.IO.File]::WriteAllText($secretsPath, $content, [System.Text.Encoding]::UTF8)
-    Remove-Item $decryptTmp -Force
+    try {
+        $content = [System.IO.File]::ReadAllText($decryptTmp)
+        [System.IO.File]::WriteAllText($secretsPath, $content, [System.Text.Encoding]::UTF8)
+    } finally {
+        if (Test-Path $decryptTmp) { Remove-Item $decryptTmp -Force }
+    }
     $count = ($content -split "`n" | Where-Object { $_ -match '^\s*[^#\s].*=' }).Count
     return $count
 }
@@ -124,8 +131,9 @@ $passphrase = Read-Passphrase
 Write-Log "Repository: $repo"
 Write-Log "openssl: $openssl"
 
+$prevRunId = (& gh run list --workflow $WORKFLOW_FILE --limit 1 --json databaseId -q '.[0].databaseId' 2>$null).Trim()
 Start-SyncWorkflow
-$runId      = Wait-ForRun
+$runId      = Wait-ForRun $prevRunId
 Write-Host ""
 $encPath    = Get-EncryptedArtifact $runId
 $count      = Expand-Secrets $encPath $passphrase $openssl
