@@ -112,17 +112,32 @@ Copy-Item "$PSScriptRoot\console-proxy.js"    "$launcherDir\console-proxy.js"   
 Copy-Item "$PSScriptRoot\console-launcher.js" "$launcherDir\console-launcher.js" -Force
 Copy-Item "$PSScriptRoot\start-console.ps1"   "$cloudflareDir\start-console.ps1" -Force
 
-# -- 6. Check sshwifty binary -------------------------------------------------
+# -- 6. Download sshwifty binary if missing -----------------------------------
 $sshwiftyExe = "$sshwiftyDir\sshwifty_windows_amd64.exe"
 if (-not (Test-Path $sshwiftyExe)) {
-    Write-Host ""
-    Write-Host "[setup-console] ACTION REQUIRED: SSHwifty binary not found." -ForegroundColor Yellow
-    Write-Host "  Download sshwifty_windows_amd64.exe from:"
-    Write-Host "  https://github.com/nirui/sshwifty/releases/tag/0.4.6-beta-release"
-    Write-Host "  Place it at: $sshwiftyExe"
-    Write-Host ""
-    Write-Host "  After placing the binary, run start-console.bat to launch everything."
-    Write-Host ""
+    Write-Log "Downloading sshwifty binary..."
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    $releases  = Invoke-RestMethod -Uri 'https://api.github.com/repos/nirui/sshwifty/releases' -UseBasicParsing
+    $asset     = $releases[0].assets | Where-Object { $_.name -like '*windows_amd64*' } | Select-Object -First 1
+    if (-not $asset) { Fail "Could not find sshwifty Windows AMD64 asset in latest release." }
+
+    $tarPath   = [IO.Path]::GetTempFileName() + '.tar.gz'
+    $extractDir= [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+    try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tarPath -UseBasicParsing
+        tar -xzf $tarPath -C $extractDir
+        $exeFile = Get-ChildItem -Path $extractDir -Filter '*.exe' -Recurse | Select-Object -First 1
+        if (-not $exeFile) { Fail "No .exe found in sshwifty archive." }
+        Move-Item $exeFile.FullName $sshwiftyExe -Force
+        Write-Log "sshwifty $($releases[0].tag_name) downloaded"
+    } finally {
+        Remove-Item $tarPath    -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Log "sshwifty binary already present"
 }
 
 # -- 7. CloudflaredDevTunnel scheduled task -----------------------------------

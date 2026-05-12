@@ -195,12 +195,11 @@ Browser (Cloudflare Access auth)
    cloudflared tunnel login
    ```
 3. **Populate secrets** — run `sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` in GitHub Secrets).
-4. **Download sshwifty binary** — `sshwifty_windows_amd64.exe` from GitHub releases v0.4.6-beta-release. Place at `%USERPROFILE%\Documents\Cloudflare\sshwifty\sshwifty_windows_amd64.exe`.
-5. **Run Windows setup** (creates tunnel + DNS automatically):
+4. **Run Windows setup** (creates tunnel, DNS, and downloads sshwifty automatically):
    ```
    scripts\setup-console-windows.ps1
    ```
-6. **Start the console:**
+5. **Start the console:**
    ```
    start-console.bat
    ```
