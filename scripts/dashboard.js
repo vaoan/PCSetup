@@ -72,6 +72,8 @@ const HTML = `<!DOCTYPE html>
     .terminal .icon, .terminal .name { color: #a6e3a1; }
     .ssh      { border-color: #f9e2af; }
     .ssh      .icon, .ssh      .name { color: #f9e2af; }
+    .git      { border-color: #fab387; }
+    .git      .icon, .git      .name { color: #fab387; }
   </style>
 </head>
 <body>
@@ -96,6 +98,11 @@ const HTML = `<!DOCTYPE html>
       <span class="icon">ssh</span>
       <span class="name">SSH</span>
       <span class="desc">Direct SSH to WSL</span>
+    </a>
+    <a class="card git" href="https://git.ffxivbe.org" target="_blank" rel="noopener">
+      <span class="icon">⎇</span>
+      <span class="name">Git</span>
+      <span class="desc">Visual branch browser</span>
     </a>
   </div>
 </body>

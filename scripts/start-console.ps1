@@ -53,11 +53,15 @@ netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7686 
 netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7686 connectaddress=$wslIp connectport=7686
 Write-Log "portproxy: 127.0.0.1:7686 -> ${wslIp}:7686"
 
+netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7687 2>$null | Out-Null
+netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7687 connectaddress=$wslIp connectport=7687
+Write-Log "portproxy: 127.0.0.1:7687 -> ${wslIp}:7687"
+
 # -- 2. Ensure SSH and WSL services are running -------------------------------
 wsl -d $distro --user root -- bash -c "service ssh start 2>/dev/null || true" | Out-Null
 Write-Log "WSL SSH: started"
 
-wsl -d $distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true" | Out-Null
+wsl -d $distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true" | Out-Null
 Write-Log "WSL services: started"
 
 # -- 3. Kill stale tmux console session so drives remount on next connect -----

@@ -181,6 +181,7 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 | `dev.ffxivbe.org` | Direct SSH to WSL (for native SSH clients) |
 | `code.ffxivbe.org` | VS Code in the browser (code-server) |
 | `ttyd.ffxivbe.org` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
+| `git.ffxivbe.org` | Ungit — visual web Git UI, shows all repos under `/mnt/z/Github` |
 
 ### Architecture
 
@@ -210,6 +211,10 @@ Browser (Cloudflare Access auth)
           → WSL ttyd-proxy.js (Node.js landing page)
               /persistent → WSL ttyd-persistent (7684) → tmux session 'phone'
               /fresh      → WSL ttyd-fresh (7685)      → bash -l
+
+      git.ffxivbe.org → Windows:7687
+        → netsh portproxy (Windows:7687 → WSL IP:7687)
+          → WSL ungit (systemd: ungit, rootPath /mnt/z/Github)
 ```
 
 ### First-time setup (after a fresh Windows install)
@@ -248,6 +253,7 @@ Run `start-console.bat` after each login (or reboot) to refresh all WSL portprox
 | `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
 | `scripts/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
 | `scripts/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
+| `scripts/ungit.service` | Managed via setup-console-wsl.sh — ungit web Git UI (WSL 7687) |
 | `uninstall/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
 | `uninstall/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
 
@@ -261,6 +267,7 @@ Run `start-console.bat` after each login (or reboot) to refresh all WSL portprox
 | `ttyd-proxy` | 7683 | Landing page + router for ttyd.ffxivbe.org |
 | `ttyd-persistent` | 7684 | ttyd → `tmux new-session -A -s phone` |
 | `ttyd-fresh` | 7685 | ttyd → `bash -l` |
+| `ungit` | 7687 | Ungit web Git UI (git.ffxivbe.org) |
 | `wetty` | 7681 | Fallback web terminal (unused by default) |
 
 ### Cloudflare tunnel

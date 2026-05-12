@@ -189,10 +189,32 @@ DASHSERVICE
 systemctl daemon-reload
 echo "[setup-console-wsl] dashboard service configured (port 7686)"
 
-systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true
+# Install ungit if missing
+if ! command -v ungit &>/dev/null; then
+    npm install -g ungit
+fi
+
+cat > /etc/systemd/system/ungit.service << 'UNGITSERVICE'
+[Unit]
+Description=Ungit web Git UI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ungit --port 7687 --no-launchBrowser --rootPath /mnt/z/Github --ungitBindIp 127.0.0.1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNGITSERVICE
+systemctl daemon-reload
+echo "[setup-console-wsl] ungit service configured (port 7687)"
+
+systemctl enable ssh wetty code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard 2>/dev/null || true
+systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit 2>/dev/null || true
 echo "[setup-console-wsl] code-server started (port 8080)"
 echo "[setup-console-wsl] ttyd started (proxy:7683, persistent:7684, fresh:7685)"
 
