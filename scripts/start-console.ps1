@@ -70,7 +70,8 @@ if (Test-Path $proxyPidFile) {
 }
 Start-Sleep -Milliseconds 300
 
-$nodeExe = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+$nodeExe = if ($nodeCmd) { $nodeCmd.Source } else { $null }
 if (-not $nodeExe) { Fail "node.exe not found. Run 3-setup-node.bat first." }
 
 $proxyProc = Start-Process -FilePath $nodeExe `
@@ -84,7 +85,7 @@ Write-Log "Launcher proxy: started (PID $($proxyProc.Id)) -> 127.0.0.1:7681"
 # -- 6. Restart cloudflared via Scheduled Task --------------------------------
 $task = Get-ScheduledTask -TaskName $cfTaskName -ErrorAction SilentlyContinue
 if (-not $task) {
-    Write-Host "[start-console] WARNING: Scheduled Task '$cfTaskName' not found — run setup-console-windows.ps1" -ForegroundColor Yellow
+    Write-Host "[start-console] WARNING: Scheduled Task '$cfTaskName' not found - run setup-console-windows.ps1" -ForegroundColor Yellow
 } else {
     Get-Process cloudflared -ErrorAction SilentlyContinue | ForEach-Object {
         $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine

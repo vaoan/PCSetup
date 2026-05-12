@@ -97,9 +97,9 @@ if ($tunnelId -and (Test-Path $certPem)) {
     Remove-Item "$cfDir\$tunnelId.json" -Force -ErrorAction SilentlyContinue
     Write-Log "Tunnel credentials: removed"
 } elseif (-not $tunnelId) {
-    Write-Log "No tunnel ID found in dev-config.yml — skipping Cloudflare API cleanup"
+    Write-Log "No tunnel ID found in dev-config.yml - skipping Cloudflare API cleanup"
 } else {
-    Write-Log "cert.pem not found — skipping Cloudflare API cleanup (delete tunnel manually)"
+    Write-Log "cert.pem not found - skipping Cloudflare API cleanup (delete tunnel manually)"
 }
 
 Write-Host ""
