@@ -10,3 +10,8 @@ nul
 .claude/tmp/arg0/codex-arg0HLLJ1f/.lock
 /.claude/tmp
 .claude/version.json
+
+# Secrets sync
+.secrets
+.secrets-download/
+.secrets-decrypted.tmp
