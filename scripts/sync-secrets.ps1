@@ -84,7 +84,9 @@ function Wait-ForRun { param([string]$prevRunId)
                     $elapsed = [int]([DateTime]::UtcNow - $start).TotalSeconds
                     Write-Host -NoNewline "`r[sync-secrets] Workflow $($run.status)... ($($elapsed)s)"
                 }
-            } catch {}
+            } catch {
+                Write-Log "Warning: failed to parse gh output - retrying"
+            }
         }
         Start-Sleep -Milliseconds $POLL_INTERVAL_MS
     }
@@ -108,11 +110,13 @@ function Get-EncryptedArtifact { param([string]$runId)
 function Expand-Secrets { param([string]$encPath, [string]$passphrase, [string]$openssl)
     Write-Log "Decrypting secrets..."
     $passphrase | & $openssl aes-256-cbc -d -pbkdf2 -in $encPath -out $decryptTmp -pass stdin
+    $opensslExit = $LASTEXITCODE
     Remove-Item $downloadDir -Recurse -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) {
+    if ($opensslExit -ne 0) {
         if (Test-Path $decryptTmp) { Remove-Item $decryptTmp -Force }
         Fail "Decryption failed. Verify SYNC_PASSPHRASE in GitHub Secrets matches $env:USERPROFILE\.pcsetup-sync-passphrase."
     }
+    $content = $null
     try {
         $content = [System.IO.File]::ReadAllText($decryptTmp)
         [System.IO.File]::WriteAllText($secretsPath, $content, [System.Text.Encoding]::UTF8)
