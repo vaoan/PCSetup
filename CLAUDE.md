@@ -55,6 +55,16 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 >
 > The `Copy-Item` call uses `-Exclude 'run-all.bat'` to skip overwriting the currently running script. Without this, CMD's internal file position pointer gets corrupted when the file is replaced mid-execution, causing execution to silently stop. By excluding it, the script falls through naturally to `:run_scripts` after the download. Do NOT use `start "" cmd /c` to relaunch — `start` from an elevated process does not inherit elevation (uses ShellExecute, not CreateProcess), which triggers UAC again and causes the window to flash and close.
 
+### sync-secrets.bat
+Pulls secrets from GitHub repository secrets to a local `.secrets` file (gitignored). Reads a decryption passphrase from `%USERPROFILE%\.pcsetup-sync-passphrase`, triggers `.github/workflows/sync-secrets.yml` via `gh workflow run`, waits for the workflow to complete, downloads the AES-256-CBC encrypted artifact, decrypts it with `openssl.exe` (bundled with Git for Windows), and writes `.secrets`.
+
+**Prerequisites:** `gh auth login` must have been run. Git for Windows must be installed. `%USERPROFILE%\.pcsetup-sync-passphrase` must exist (see `.secrets.example` first-time setup instructions).
+
+To add a new secret:
+1. Add it in GitHub → Settings → Secrets and variables → Actions
+2. Add it to the `env:` block and `run:` output section in `.github/workflows/sync-secrets.yml`
+3. Add a placeholder line to `.secrets.example`
+
 ## Setup Scripts (Run in Order)
 
 ### 1-delete-node-modules.bat
