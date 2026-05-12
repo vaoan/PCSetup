@@ -168,20 +168,43 @@ Removes the context menu entries added by `7-context-menu-terminal-install.bat`.
 ### uninstall/context-menu-take-ownership.bat
 Removes the "Take Ownership" context menu entries added by `9-context-menu-take-ownership.bat`.
 
-## Web Console (`console.ffxivbe.org`)
+## Web Console
 
-Mobile-friendly SSH web console backed by sshwifty, a Cloudflare Zero Trust tunnel, and a Node.js proxy that injects a quick-connect panel. Six presets (WSL, Candystore, Eclipse-con × Persistent/Fresh) are accessible via a single click instead of the native 5-click flow.
+Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiring Cloudflare Access authentication.
+
+### Hostnames
+
+| Hostname | Purpose |
+|---|---|
+| `console.ffxivbe.org` | SSH web client (sshwifty) with 6 quick-connect presets |
+| `dev.ffxivbe.org` | Direct SSH to WSL (for native SSH clients) |
+| `code.ffxivbe.org` | VS Code in the browser (code-server) |
+| `ttyd.ffxivbe.org` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
 
 ### Architecture
 
 ```
 Browser (Cloudflare Access auth)
-  → Cloudflare tunnel (console.ffxivbe.org → localhost:7681)
-    → console-proxy.js (injects quick-connect panel into HTML)
-      → sshwifty_windows_amd64.exe (port 7682, SSH client UI)
-        → netsh portproxy (localhost:2222 → WSL IP:22)
-          → WSL Ubuntu-24.04 sshd (authorized_keys forced commands)
-            → tmux session (Persistent) or plain bash (Fresh)
+  → Cloudflare tunnel
+      console.ffxivbe.org → Windows:7681
+        → console-proxy.js (injects quick-connect panel)
+          → sshwifty_windows_amd64.exe (Windows:7682, SSH client UI)
+            → netsh portproxy (Windows:2222 → WSL IP:22)
+              → WSL sshd (authorized_keys forced commands → tmux/bash)
+
+      dev.ffxivbe.org → ssh://Windows:22
+        → netsh portproxy (Windows:22 → WSL IP:22)
+          → WSL sshd
+
+      code.ffxivbe.org → Windows:8080
+        → netsh portproxy (Windows:8080 → WSL IP:8080)
+          → WSL code-server (systemd: code-server@root)
+
+      ttyd.ffxivbe.org → Windows:7683
+        → netsh portproxy (Windows:7683 → WSL IP:7683)
+          → WSL ttyd-proxy.js (Node.js landing page)
+              /persistent → WSL ttyd-persistent (7684) → tmux session 'phone'
+              /fresh      → WSL ttyd-fresh (7685)      → bash -l
 ```
 
 ### First-time setup (after a fresh Windows install)
@@ -206,19 +229,32 @@ Browser (Cloudflare Access auth)
 
 ### Daily use
 
-Run `start-console.bat` after each login (or reboot) to refresh the WSL port-proxy and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
+Run `start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
 
 ### Console scripts
 
 | File | Purpose |
 |---|---|
 | `start-console.bat` | One-click launcher (calls `scripts\start-console.ps1`) |
-| `scripts/start-console.ps1` | Updates portproxy, restarts sshwifty + proxy + cloudflared |
+| `scripts/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
 | `scripts/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
-| `scripts/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, mount script |
-| `scripts/console-proxy.js` | Node.js proxy (port 7681→7682) that injects the quick-connect panel |
+| `scripts/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
+| `scripts/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
 | `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
-| `uninstall/uninstall-console.bat` | Full teardown: kills services, removes tasks/files, deletes Cloudflare DNS + tunnel |
+| `scripts/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
+| `uninstall/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
+| `uninstall/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
+
+### WSL services
+
+| Service | Port | Description |
+|---|---|---|
+| `ssh` | 22 | OpenSSH server |
+| `code-server@root` | 8080 | VS Code server |
+| `ttyd-proxy` | 7683 | Landing page + router for ttyd.ffxivbe.org |
+| `ttyd-persistent` | 7684 | ttyd → `tmux new-session -A -s phone` |
+| `ttyd-fresh` | 7685 | ttyd → `bash -l` |
+| `wetty` | 7681 | Fallback web terminal (unused by default) |
 
 ### Secrets required
 
@@ -227,15 +263,6 @@ Run `start-console.bat` after each login (or reboot) to refresh the WSL port-pro
 | `SSHWIFTY_CONF_B64` | `sshwifty.conf.json` (contains embedded SSH private keys) | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\Documents\Cloudflare\sshwifty\sshwifty.conf.json")) \| clip` |
 
 Cloudflare tunnel credentials are **not stored in secrets** — `setup-console-windows.ps1` creates a fresh tunnel automatically using `cert.pem` from `cloudflared tunnel login`.
-
-### Cloudflare tunnel routes (tunnel `c28375cb-0b8f-433b-aed6-48fb1d0090e9`)
-
-| Hostname | Target |
-|---|---|
-| `console.ffxivbe.org` | `localhost:7681` (sshwifty via proxy) |
-| `dev.ffxivbe.org` | `ssh://localhost:22` (WSL SSH direct) |
-| `code.ffxivbe.org` | `localhost:8080` (VS Code server) |
-| `zellij.ffxivbe.org` | `localhost:7683` (zellij web) |
 
 ### SSH presets (authorized_keys forced commands)
 
