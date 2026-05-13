@@ -115,6 +115,49 @@ cert: false
 CODESERVERCONF
 echo "[setup-console-wsl] code-server config written (port 8080, no auth)"
 
+# -- 8b. Replace code-server icons with pink VS Code icon (transparent bg) ----
+apt-get install -y -q librsvg2-bin imagemagick
+MEDIA=/usr/lib/code-server/src/browser/media
+ORIG=/usr/lib/code-server/lib/vscode/out/vs/sessions/contrib/chat/browser/media/vscode-icon.svg
+
+# Recolor the bundled VS Code icon SVG: blue shades -> pink equivalents
+# #0065A9 (dark blue)   -> #9C0054 (dark pink)
+# #007ACC (medium blue) -> #CC007A (medium pink)
+# #1F9CF0 (light blue)  -> #FF1493 (hot pink)
+sed \
+  -e 's/#0065A9/#9C0054/g' \
+  -e 's/#007ACC/#CC007A/g' \
+  -e 's/#1F9CF0/#FF1493/g' \
+  "$ORIG" > /tmp/cs-icon-pink.svg
+
+# SVG favicons (browsers render these directly, transparent bg preserved)
+cp /tmp/cs-icon-pink.svg "$MEDIA/favicon.svg"
+cp /tmp/cs-icon-pink.svg "$MEDIA/favicon-dark-support.svg"
+
+# favicon.ico multi-size (16, 32, 48) for legacy browsers and OS pinning
+rsvg-convert -w 16 -h 16 /tmp/cs-icon-pink.svg -o /tmp/cs-fav16.png
+rsvg-convert -w 32 -h 32 /tmp/cs-icon-pink.svg -o /tmp/cs-fav32.png
+rsvg-convert -w 48 -h 48 /tmp/cs-icon-pink.svg -o /tmp/cs-fav48.png
+convert /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png "$MEDIA/favicon.ico"
+
+# PWA regular icons (transparent bg)
+rsvg-convert -w 192 -h 192 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-192.png"
+rsvg-convert -w 512 -h 512 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-512.png"
+
+# Maskable icons: dark background (#1e1e1e, VS Code dark theme) with pink icon in safe zone
+cat > /tmp/cs-icon-maskable.svg << 'SVGEOF'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <rect width="96" height="96" fill="#1e1e1e"/>
+  <g transform="translate(16.8,16.8) scale(0.65)">
+SVGEOF
+sed -n '/<g filter/,/<\/svg>/p' /tmp/cs-icon-pink.svg | head -n -1 >> /tmp/cs-icon-maskable.svg
+echo '  </g></svg>' >> /tmp/cs-icon-maskable.svg
+rsvg-convert -w 192 -h 192 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-192.png"
+rsvg-convert -w 512 -h 512 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-512.png"
+
+rm -f /tmp/cs-icon-pink.svg /tmp/cs-icon-maskable.svg /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png
+echo "[setup-console-wsl] code-server icons replaced (pink VS Code shape, transparent bg)"
+
 # -- 9. Configure tmux mouse mode and ttyd-console service --------------------
 grep -q "mouse on" /root/.tmux.conf 2>/dev/null || echo "set -g mouse on" >> /root/.tmux.conf
 echo "[setup-console-wsl] tmux mouse mode enabled"
