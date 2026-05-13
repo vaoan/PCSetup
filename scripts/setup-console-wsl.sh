@@ -123,17 +123,67 @@ cat > /root/.local/share/code-server/User/settings.json << 'CSSETTINGS'
   "workbench.iconTheme": "vscode-icons",
   "window.menuBarVisibility": "classic",
 
-  "workbench.startupEditor": "terminal",
+  "workbench.startupEditor": "none",
   "workbench.editor.showTabs": "none",
   "workbench.editor.empty.hint": "hidden",
   "editor.minimap.enabled": false,
   "workbench.panel.defaultLocation": "bottom",
   "workbench.panel.opensMaximized": "always",
   "terminal.integrated.defaultProfile.linux": "bash",
-  "terminal.integrated.fontSize": 14
+  "terminal.integrated.fontSize": 14,
+  "terminal.integrated.enablePersistentSessions": true,
+
+  "task.allowAutomaticTasks": "on",
+  "security.workspace.trust.enabled": false,
+
+  "chat.commandCenter.enabled": false,
+  "chat.agent.enabled": false,
+  "inlineChat.enabled": false
 }
 CSSETTINGS
 echo "[setup-console-wsl] code-server user settings written (terminal-focused layout)"
+
+# -- 8b-ii. code-server workspace + terminal auto-open -----------------------
+# Workspace file opens /mnt/z in the sidebar; Terminals Manager opens a shell on load
+cat > /root/dev.code-workspace << 'CSWORKSPACE'
+{
+  "folders": [
+    { "path": "/mnt/z" }
+  ],
+  "settings": {
+    "task.allowAutomaticTasks": "on",
+    "security.workspace.trust.enabled": false
+  }
+}
+CSWORKSPACE
+
+mkdir -p /mnt/z/.vscode
+cat > /mnt/z/.vscode/terminals.json << 'CSTERMS'
+{
+  "autorun": true,
+  "terminals": [
+    {
+      "name": "Terminal",
+      "focus": true
+    }
+  ]
+}
+CSTERMS
+
+# Install Terminals Manager (auto-opens terminal in panel on workspace load)
+code-server --install-extension fabiospampinato.vscode-terminals 2>/dev/null || true
+# Remove ChatGPT extension if present
+code-server --uninstall-extension openai.chatgpt 2>/dev/null || true
+
+# Override systemd service to open the workspace by default
+mkdir -p /etc/systemd/system/code-server@root.service.d
+cat > /etc/systemd/system/code-server@root.service.d/workspace.conf << 'CSOVERRIDE'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/code-server /root/dev.code-workspace
+CSOVERRIDE
+systemctl daemon-reload
+echo "[setup-console-wsl] code-server workspace + terminal auto-open configured"
 
 # -- 8b. Replace code-server icons with pink VS Code icon (transparent bg) ----
 apt-get install -y -q librsvg2-bin imagemagick
