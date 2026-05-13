@@ -115,6 +115,26 @@ cert: false
 CODESERVERCONF
 echo "[setup-console-wsl] code-server config written (port 8080, no auth)"
 
+# -- 8b-i. code-server user settings (terminal-focused layout) ----------------
+mkdir -p /root/.local/share/code-server/User
+cat > /root/.local/share/code-server/User/settings.json << 'CSSETTINGS'
+{
+  "workbench.colorTheme": "Dark Modern",
+  "workbench.iconTheme": "vscode-icons",
+  "window.menuBarVisibility": "classic",
+
+  "workbench.startupEditor": "terminal",
+  "workbench.editor.showTabs": "none",
+  "workbench.editor.empty.hint": "hidden",
+  "editor.minimap.enabled": false,
+  "workbench.panel.defaultLocation": "bottom",
+  "workbench.panel.opensMaximized": "always",
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.fontSize": 14
+}
+CSSETTINGS
+echo "[setup-console-wsl] code-server user settings written (terminal-focused layout)"
+
 # -- 8b. Replace code-server icons with pink VS Code icon (transparent bg) ----
 apt-get install -y -q librsvg2-bin imagemagick
 MEDIA=/usr/lib/code-server/src/browser/media
