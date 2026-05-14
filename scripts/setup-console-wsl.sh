@@ -123,25 +123,15 @@ cat > /root/.local/share/code-server/User/settings.json << 'CSSETTINGS'
   "workbench.iconTheme": "vscode-icons",
   "window.menuBarVisibility": "classic",
 
-  "workbench.startupEditor": "none",
-  "workbench.editor.showTabs": "none",
-  "workbench.editor.empty.hint": "hidden",
-  "editor.minimap.enabled": false,
-  "workbench.panel.defaultLocation": "bottom",
   "workbench.panel.opensMaximized": "always",
-  "terminal.integrated.defaultProfile.linux": "bash",
-  "terminal.integrated.fontSize": 14,
-  "terminal.integrated.enablePersistentSessions": true,
-
-  "task.allowAutomaticTasks": "on",
-  "security.workspace.trust.enabled": false,
 
   "chat.commandCenter.enabled": false,
   "chat.agent.enabled": false,
-  "inlineChat.enabled": false
+  "inlineChat.enabled": false,
+  "security.workspace.trust.enabled": false
 }
 CSSETTINGS
-echo "[setup-console-wsl] code-server user settings written (terminal-focused layout)"
+echo "[setup-console-wsl] code-server user settings written"
 
 # -- 8b-ii. code-server workspace + terminal auto-open -----------------------
 # Workspace file opens /mnt/z in the sidebar; Terminals Manager opens a shell on load
@@ -160,13 +150,8 @@ CSWORKSPACE
 mkdir -p /mnt/z/.vscode
 cat > /mnt/z/.vscode/terminals.json << 'CSTERMS'
 {
-  "autorun": true,
-  "terminals": [
-    {
-      "name": "Terminal",
-      "focus": true
-    }
-  ]
+  "autorun": false,
+  "terminals": []
 }
 CSTERMS
 
