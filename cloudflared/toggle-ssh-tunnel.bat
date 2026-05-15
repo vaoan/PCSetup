@@ -1,0 +1,2 @@
+@echo off
+powershell -ExecutionPolicy Bypass -Command "$task = Get-ScheduledTask -TaskName 'ssh-tunnel' -ErrorAction SilentlyContinue; if (-not $task) { Write-Host 'SSH tunnel task not found! Run install-ssh-tunnel.ps1 first.' -ForegroundColor Red } elseif ($task.State -eq 'Running') { Stop-ScheduledTask -TaskName 'ssh-tunnel'; Write-Host 'SSH Tunnel stopped!' -ForegroundColor Yellow } else { Start-ScheduledTask -TaskName 'ssh-tunnel'; Write-Host 'SSH Tunnel started!' -ForegroundColor Green }; Start-Sleep -Seconds 2"
