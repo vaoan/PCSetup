@@ -11,7 +11,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 #   - Stops WSL wetty
 #   - Deletes Cloudflare DNS records and tunnel via API
 #
-# To reinstall: run scripts\setup-console-windows.ps1
+# To reinstall: run cloudflared\setup-console-windows.ps1
 
 $cfDir         = "$env:USERPROFILE\.cloudflared"
 $certPem       = "$cfDir\cert.pem"
@@ -108,4 +108,4 @@ if ($tunnelId -and (Test-Path $certPem)) {
 
 Write-Host ""
 Write-Host "[uninstall-console] Uninstall complete." -ForegroundColor Green
-Write-Host "  To reinstall: scripts\setup-console-windows.ps1"
+Write-Host "  To reinstall: cloudflared\setup-console-windows.ps1"
