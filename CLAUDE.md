@@ -285,7 +285,7 @@ Tunnel name: `dev-console` — ID: `9c355567-7511-43af-bfcd-25e765106b16`
 |---|---|---|
 | `SSHWIFTY_CONF_B64` | `sshwifty.conf.json` (contains embedded SSH private keys) | `[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\Documents\Cloudflare\sshwifty\sshwifty.conf.json")) \| clip` |
 
-Cloudflare tunnel credentials are **not stored in secrets** — `setup-console-windows.ps1` creates a fresh tunnel automatically using `cert.pem` from `cloudflared tunnel login`.
+Cloudflare tunnel credentials are **not stored in secrets** — `cloudflared/setup-console-windows.ps1` creates a fresh tunnel automatically using `cert.pem` from `cloudflared tunnel login`.
 
 ### SSH presets (authorized_keys forced commands)
 
