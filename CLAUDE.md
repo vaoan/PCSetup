@@ -55,7 +55,7 @@ Master script that executes all numbered setup scripts in sequential order. Auto
 >
 > The `Copy-Item` call uses `-Exclude 'run-all.bat'` to skip overwriting the currently running script. Without this, CMD's internal file position pointer gets corrupted when the file is replaced mid-execution, causing execution to silently stop. By excluding it, the script falls through naturally to `:run_scripts` after the download. Do NOT use `start "" cmd /c` to relaunch — `start` from an elevated process does not inherit elevation (uses ShellExecute, not CreateProcess), which triggers UAC again and causes the window to flash and close.
 
-### sync-secrets.bat
+### cloudflared/sync-secrets.bat
 Pulls secrets from GitHub repository secrets to a local `.secrets` file (gitignored). Reads a decryption passphrase from `%USERPROFILE%\.pcsetup-sync-passphrase`, triggers `.github/workflows/sync-secrets.yml` via `gh workflow run`, waits for the workflow to complete, downloads the AES-256-CBC encrypted artifact, decrypts it with `openssl.exe` (bundled with Git for Windows), and writes `.secrets`.
 
 **Prerequisites:** `gh auth login` must have been run. Git for Windows must be installed. `%USERPROFILE%\.pcsetup-sync-passphrase` must exist (see `.secrets.example` first-time setup instructions).
@@ -223,41 +223,43 @@ Browser (Cloudflare Access auth)
 
 1. **Run WSL setup (once):**
    ```
-   wsl -d Ubuntu-24.04 --user root bash /mnt/z/Users/Heiner/Documents/PCSetup/scripts/setup-console-wsl.sh
+   wsl -d Ubuntu-24.04 --user root bash /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/setup-console-wsl.sh
    ```
 2. **Authenticate cloudflared** (one-time, browser login):
    ```
    cloudflared tunnel login
    ```
-3. **Populate secrets** — run `sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` in GitHub Secrets).
+3. **Populate secrets** — run `cloudflared\sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` in GitHub Secrets).
 4. **Run Windows setup** (creates tunnel, DNS, and downloads sshwifty automatically):
    ```
-   scripts\setup-console-windows.ps1
+   cloudflared\setup-console-windows.ps1
    ```
 5. **Start the console:**
    ```
-   start-console.bat
+   cloudflared\start-console.bat
    ```
 
 ### Daily use
 
-Run `start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
+Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
 
 ### Console scripts
 
 | File | Purpose |
 |---|---|
-| `start-console.bat` | One-click launcher (calls `scripts\start-console.ps1`) |
-| `scripts/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
-| `scripts/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
-| `scripts/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
-| `scripts/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
-| `scripts/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
-| `scripts/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
-| `scripts/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
-| `scripts/git-proxy.js` | Node.js repo list landing page + proxy (WSL 7687→7688) for git.ffxivbe.org |
-| `uninstall/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
-| `uninstall/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
+| `cloudflared/start-console.bat` | One-click launcher (calls `start-console.ps1`) |
+| `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
+| `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
+| `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
+| `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
+| `cloudflared/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
+| `cloudflared/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
+| `cloudflared/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
+| `cloudflared/git-proxy.js` | Node.js repo list landing page + proxy (WSL 7687→7688) for git.ffxivbe.org |
+| `cloudflared/sync-secrets.bat` | Syncs secrets from GitHub → local `.secrets` file |
+| `cloudflared/sync-secrets.ps1` | Secrets sync implementation |
+| `cloudflared/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
+| `cloudflared/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
 
 ### WSL services
 
@@ -299,6 +301,135 @@ Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forc
 | Eclipse-con Fresh | *(plain bash)* | `/mnt/z/Github/eclipse-con` |
 
 Persistent = `tmux new-session -A` (attach or create). Fresh = `exec bash -l` (new shell every time).
+
+## Cloudflare SSH & Remote Access
+
+Two tunnels that run as Windows scheduled tasks, separate from the web console.
+
+### Tunnels
+
+| Tunnel | Hostname | Purpose |
+|--------|----------|---------|
+| `ffxivbe-tunnel` | ffxivbe.org | Web proxy to localhost:9000 |
+| `ssh-tunnel` | pc.ffxivbe.org | SSH remote access from Mac |
+
+Tunnel IDs (persist in Cloudflare, survive PC formats):
+- `ffxivbe-tunnel`: `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3`
+- `ssh-tunnel`: `8dffdb51-77cc-43ca-8dc8-8a0c720607a5`
+
+### Post-Format Recovery
+
+Run after a fresh Windows install to restore tunnels and Claude Code sessions:
+
+```powershell
+cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
+.\post-format-recovery.ps1
+```
+
+Or run individual steps:
+
+```powershell
+.\install-ssh-tunnel.ps1    # SSH tunnel + OpenSSH
+.\install-tunnel.ps1        # Web tunnel
+.\install-claude-session.ps1  # Claude Code tmux sessions
+```
+
+> **Note on cloudflared installation:** Scripts auto-install the official signed MSI. Do NOT install via Chocolatey — Smart App Control blocks unsigned executables.
+
+### Claude Code Persistent Sessions (MSYS2/tmux)
+
+| Session | Project | Type |
+|---------|---------|------|
+| `claude` | Z:\Users\Heiner\Documents\PCSetup\cloudflared | Claude Code |
+| `claimangel` | Z:\Github\ClaimAngel\frontend | Claude Code |
+| `snd` | Z:\Users\Heiner\Documents\Luas\SND | Bash only |
+
+Sessions start automatically at Windows login. Accessible via `ssh windows-remote` from Mac, then:
+```bash
+claude        # attach to claude session
+claimangel    # attach to claimangel session
+snd           # attach to snd session
+sessions      # list all tmux sessions
+```
+Detach: `Ctrl+B`, then `D`.
+
+> **Browser-based MCPs don't work in remote sessions** (Playwright, Chrome DevTools require a local display). All other Claude Code functionality works fine.
+
+### Windows Scheduled Tasks
+
+| Task Name | Trigger | Purpose |
+|-----------|---------|---------|
+| `ffxivbe-tunnel` | At logon | Web tunnel to ffxivbe.org |
+| `ssh-tunnel` | At logon | SSH tunnel to pc.ffxivbe.org |
+| `claude-session` | At logon | Claude Code tmux (cloudflared project) |
+| `claimangel-session` | At logon | Claude Code tmux (ClaimAngel project) |
+| `snd-session` | At logon | Bash tmux (SND project) |
+
+### Mac SSH Config
+
+```bash
+brew install cloudflared
+
+# Add to ~/.ssh/config
+Host windows-remote
+    HostName pc.ffxivbe.org
+    User Heiner
+    ProxyCommand cloudflared access tcp --hostname %h --listener -
+```
+
+Mac SSH public key (already in authorized_keys):
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local
+```
+
+### Cloudflare Dashboard (Already Configured — Persists)
+
+Already set up, survives PC formats:
+1. DNS CNAMEs pointing to tunnel IDs
+2. Zero Trust route for SSH tunnel (`pc.ffxivbe.org` → ssh://localhost:22)
+3. WAF bypass rule for `pc.ffxivbe.org`
+
+### cloudflared/ Scripts
+
+| File | Purpose |
+|---|---|
+| `cloudflared/post-format-recovery.ps1` | Master recovery script — does everything |
+| `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone) |
+| `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer |
+| `cloudflared/install-claude-session.ps1` | Claude Code tmux sessions installer |
+| `cloudflared/install-scheduled-tasks.ps1` | Reinstall scheduled tasks only |
+| `cloudflared/toggle-tunnel.bat` | Start/stop web tunnel |
+| `cloudflared/toggle-ssh-tunnel.bat` | Start/stop SSH tunnel |
+| `cloudflared/toggle-claude-session.bat` | Start/stop any Claude/tmux session |
+| `cloudflared/manage-tunnel.ps1` | Status checker for web tunnel |
+| `cloudflared/create-shortcuts.ps1` | Creates desktop shortcuts |
+| `cloudflared/start-claude-session.sh` | MSYS2 script to start/attach tmux session |
+| `cloudflared/claude-aliases.sh` | Bash aliases (claude, claimangel, snd, etc.) |
+| `cloudflared/.cloudflared/config.yml` | ffxivbe-tunnel routing config |
+
+### Troubleshooting
+
+```powershell
+# Tunnel not connecting — check task status
+Get-ScheduledTask -TaskName "ssh-tunnel" | Select State
+Get-ScheduledTask -TaskName "ffxivbe-tunnel" | Select State
+
+# SSH "Permission denied" — re-add SSH key
+$key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local"
+Set-Content -Path "C:\ProgramData\ssh\administrators_authorized_keys" -Value $key
+icacls "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F'
+Restart-Service sshd
+
+# Claude session not starting
+Get-ScheduledTask -TaskName "claude-session" | Select State
+Start-ScheduledTask -TaskName "claude-session"
+
+# Cloudflared blocked by Smart App Control
+# → Uninstall Chocolatey version, install from official MSI:
+choco uninstall cloudflared -y
+Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi' -OutFile "$env:TEMP\cloudflared.msi"
+Start-Process msiexec.exe -ArgumentList '/i', "$env:TEMP\cloudflared.msi", '/quiet' -Wait
+```
 
 ## Source Files (`sources/`)
 
