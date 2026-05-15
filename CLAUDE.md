@@ -310,12 +310,32 @@ Two tunnels that run as Windows scheduled tasks, separate from the web console.
 
 | Tunnel | Hostname | Purpose |
 |--------|----------|---------|
-| `ffxivbe-tunnel` | ffxivbe.org | Web proxy to localhost:9000 |
+| `ffxivbe-tunnel` | ffxivbe.org and subdomains | Web services proxy (reverse proxy on :7542) |
 | `ssh-tunnel` | pc.ffxivbe.org | SSH remote access from Mac |
 
 Tunnel IDs (persist in Cloudflare, survive PC formats):
 - `ffxivbe-tunnel`: `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3`
 - `ssh-tunnel`: `8dffdb51-77cc-43ca-8dc8-8a0c720607a5`
+
+#### ffxivbe-tunnel hostnames
+
+All main app routes go through a local reverse proxy on port 7542. Chat and Supabase have dedicated ports.
+
+| Hostname | Backend |
+|---|---|
+| `ffxivbe.org` / `www.ffxivbe.org` / `landing.ffxivbe.org` | `localhost:7542` |
+| `auth.ffxivbe.org` | `localhost:7542` |
+| `store.ffxivbe.org` | `localhost:7542` |
+| `admin.ffxivbe.org` | `localhost:7542` |
+| `payments.ffxivbe.org` | `localhost:7542` |
+| `playground.ffxivbe.org` | `localhost:7542` |
+| `studio.ffxivbe.org` | `localhost:7542` |
+| `chat.ffxivbe.org` | `192.168.2.6:3000` |
+| `supabase.ffxivbe.org` | `localhost:64321` |
+| `supabase-studio.ffxivbe.org` | `localhost:64323` |
+| `mailpit.ffxivbe.org` | `localhost:64324` |
+
+Config lives at `cloudflared/.cloudflared/config.yml` in this repo and is deployed to `C:\Users\Heiner\.cloudflared\config.yml` by `install-tunnel.ps1`.
 
 ### Post-Format Recovery
 
@@ -402,6 +422,7 @@ Already set up, survives PC formats:
 | `cloudflared/toggle-ssh-tunnel.bat` | Start/stop SSH tunnel |
 | `cloudflared/toggle-claude-session.bat` | Start/stop any Claude/tmux session |
 | `cloudflared/manage-tunnel.ps1` | Status checker for web tunnel |
+| `cloudflared/uninstall-tunnel.ps1` | Stops task, kills processes, leaves config/DNS intact |
 | `cloudflared/create-shortcuts.ps1` | Creates desktop shortcuts |
 | `cloudflared/start-claude-session.sh` | MSYS2 script to start/attach tmux session |
 | `cloudflared/claude-aliases.sh` | Bash aliases (claude, claimangel, snd, etc.) |

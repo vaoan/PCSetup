@@ -112,29 +112,31 @@ protocol: http2
 
 ingress:
   - hostname: ffxivbe.org
-    service: http://127.0.0.1:9000
+    service: http://127.0.0.1:7542
   - hostname: www.ffxivbe.org
-    service: http://127.0.0.1:9000
+    service: http://127.0.0.1:7542
+  - hostname: chat.ffxivbe.org
+    service: http://192.168.2.6:3000
   - hostname: landing.ffxivbe.org
-    service: http://127.0.0.1:5004
+    service: http://127.0.0.1:7542
   - hostname: auth.ffxivbe.org
-    service: http://127.0.0.1:5000
+    service: http://127.0.0.1:7542
   - hostname: store.ffxivbe.org
-    service: http://127.0.0.1:5001
+    service: http://127.0.0.1:7542
   - hostname: admin.ffxivbe.org
-    service: http://127.0.0.1:5002
-  - hostname: playground.ffxivbe.org
-    service: http://127.0.0.1:5003
+    service: http://127.0.0.1:7542
   - hostname: payments.ffxivbe.org
-    service: http://127.0.0.1:5005
+    service: http://127.0.0.1:7542
+  - hostname: playground.ffxivbe.org
+    service: http://127.0.0.1:7542
   - hostname: studio.ffxivbe.org
-    service: http://127.0.0.1:5006
+    service: http://127.0.0.1:7542
   - hostname: supabase.ffxivbe.org
-    service: http://127.0.0.1:54321
+    service: http://127.0.0.1:64321
   - hostname: supabase-studio.ffxivbe.org
-    service: http://127.0.0.1:54323
+    service: http://127.0.0.1:64323
   - hostname: mailpit.ffxivbe.org
-    service: http://127.0.0.1:54324
+    service: http://127.0.0.1:64324
   - service: http_status:404
 "@
 
@@ -200,7 +202,7 @@ Write-Host "  OK Task started" -ForegroundColor Green
 # Step 5: Create shortcuts
 Write-Host ""
 Write-Host "[5/5] Creating desktop shortcuts..." -ForegroundColor Yellow
-$shortcutScript = Join-Path $scriptPath "create-shortcuts.ps1"
+$shortcutScript = Join-Path $PSScriptRoot "create-shortcuts.ps1"
 if (Test-Path $shortcutScript) {
     powershell -ExecutionPolicy Bypass -File $shortcutScript
     Write-Host "  OK Shortcuts created" -ForegroundColor Green
@@ -228,5 +230,3 @@ Write-Host "  - Test: https://ffxivbe.org" -ForegroundColor Gray
 Write-Host "  - Toggle tunnel: Double-click 'Toggle Tunnel' on desktop" -ForegroundColor Gray
 Write-Host "  - Or run: toggle-tunnel.bat" -ForegroundColor Gray
 Write-Host ""
-Write-Host "Press any key to exit..."
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
