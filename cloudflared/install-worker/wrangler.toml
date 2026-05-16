@@ -1,0 +1,7 @@
+name = "pcsetup-install"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[[routes]]
+pattern = "i.ffxivbe.org/*"
+zone_name = "ffxivbe.org"
