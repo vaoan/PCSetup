@@ -1,0 +1,23 @@
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `
+    "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
+
+# Install Pester before running setup
+RUN Install-Module -Name Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck -Scope AllUsers
+
+# CI mode: skips profile folder move (5), games (6), Defender checks (10)
+ENV PCSETUP_CI=1
+
+ARG BRANCH=main
+
+# Run the remote install
+RUN $url = "https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/$env:BRANCH/remote-call.ps1"; `
+    Write-Host "Fetching $url" -ForegroundColor Cyan; `
+    $script = (Invoke-RestMethod -Uri $url -UseBasicParsing); `
+    Invoke-Expression $script
+
+# Copy test suite and run Pester
+COPY tests/ C:/pcsetup-tests/
+RUN Invoke-Pester C:/pcsetup-tests/setup.tests.ps1 -CI -Output Detailed
