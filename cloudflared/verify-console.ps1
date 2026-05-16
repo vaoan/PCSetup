@@ -4,8 +4,6 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-$ErrorActionPreference = 'SilentlyContinue'
-
 $results = [System.Collections.Generic.List[PSObject]]::new()
 
 function Test-Port {
@@ -15,7 +13,7 @@ function Test-Port {
         $tcp.Connect('127.0.0.1', $Port)
         return $tcp.Connected
     } catch { return $false }
-    finally { $tcp.Dispose() }
+    finally { $tcp.Close(); $tcp.Dispose() }
 }
 
 function Test-Http {
@@ -74,7 +72,7 @@ $httpEndpoints = @(
 )
 foreach ($e in $httpEndpoints) {
     $code = Test-Http $e.Url
-    $ok = ($code -ge 200 -and $code -lt 400)
+    $ok = ($code -ge 200 -and $code -lt 300)
     Add-Result "$($e.Name)" 'http' $ok "HTTP $code"
 }
 
