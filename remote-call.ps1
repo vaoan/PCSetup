@@ -1,3 +1,5 @@
+param([string]$Branch = "main")
+
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
@@ -7,7 +9,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-$repoZipUrl = "https://github.com/vaoan/PCSetup/archive/refs/heads/main.zip"
+$repoZipUrl = "https://github.com/vaoan/PCSetup/archive/refs/heads/$Branch.zip"
 $workDir = Join-Path $env:TEMP ("PCSetup-remote-{0}-{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), (Get-Random))
 $repoRootName = "PCSetup-main"
 $allowedExtensions = @(".bat", ".config", ".v")
