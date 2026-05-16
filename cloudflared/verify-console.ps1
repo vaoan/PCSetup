@@ -8,12 +8,7 @@ $results = [System.Collections.Generic.List[PSObject]]::new()
 
 function Test-Port {
     param([int]$Port)
-    $tcp = New-Object System.Net.Sockets.TcpClient
-    try {
-        $tcp.Connect('127.0.0.1', $Port)
-        return $tcp.Connected
-    } catch { return $false }
-    finally { $tcp.Close(); $tcp.Dispose() }
+    return (Test-NetConnection -ComputerName 127.0.0.1 -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue)
 }
 
 function Test-Http {

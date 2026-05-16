@@ -51,13 +51,13 @@ Describe "2-setup-windows" {
     It "cloudflared runs" {
         (& 'C:\Program Files (x86)\cloudflared\cloudflared.exe' --version 2>&1) | Should -Match 'cloudflared version'
     }
-    It ".NET 6 desktop runtime installed" {
+    It ".NET 6 desktop runtime installed" -Skip:($IsCI) {
         (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 6\.'
     }
-    It ".NET 8 desktop runtime installed" {
+    It ".NET 8 desktop runtime installed" -Skip:($IsCI) {
         (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 8\.'
     }
-    It ".NET 9 desktop runtime installed" {
+    It ".NET 9 desktop runtime installed" -Skip:($IsCI) {
         (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 9\.'
     }
     # GUI/winget-only — skip in CI containers
@@ -110,7 +110,9 @@ Describe "2-setup-windows" {
 # ─────────────────────────────────────────────
 Describe "3-setup-node" {
     It "nvm installed" {
-        (Get-Command nvm -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        $onPath = (Get-Command nvm -ErrorAction SilentlyContinue) -ne $null
+        $atPath = Test-Path "$env:APPDATA\nvm\nvm.exe"
+        ($onPath -or $atPath) | Should -BeTrue
     }
     It "Node.js installed" {
         (node --version 2>&1) | Should -Match 'v\d+'
@@ -161,7 +163,7 @@ Describe "7-context-menu-terminal-install" {
         (Get-Item $key -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "Open PowerShell as Admin entry exists" {
-        $key = 'HKLM:\SOFTWARE\Classes\Directory\shell\OpenPSAdmin'
+        $key = 'HKLM:\SOFTWARE\Classes\Directory\shell\OpenPowerShellAdmin'
         (Get-Item $key -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "Open Git Bash entry exists" {

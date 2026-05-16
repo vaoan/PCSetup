@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $repoZipUrl = "https://github.com/vaoan/PCSetup/archive/refs/heads/$Branch.zip"
 $workDir = Join-Path $env:TEMP ("PCSetup-remote-{0}-{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), (Get-Random))
-$repoRootName = "PCSetup-main"
+$repoRootName = "PCSetup-$Branch"
 $allowedExtensions = @(".bat", ".config", ".v")
 
 try {

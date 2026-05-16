@@ -12,11 +12,10 @@ ENV PCSETUP_CI=1
 
 ARG BRANCH=main
 
-# Run the remote install
+# Run the remote install — use scriptblock so param() binding works and -Branch is honoured
 RUN $url = "https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/$env:BRANCH/remote-call.ps1"; `
     Write-Host "Fetching $url" -ForegroundColor Cyan; `
-    $script = (Invoke-RestMethod -Uri $url -UseBasicParsing); `
-    Invoke-Expression $script
+    & ([scriptblock]::Create((Invoke-RestMethod -Uri $url -UseBasicParsing))) -Branch $env:BRANCH
 
 # Copy test suite and run Pester
 COPY tests/ C:/pcsetup-tests/
