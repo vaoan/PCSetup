@@ -7,6 +7,11 @@ if %errorlevel% neq 0 (
 )
 setlocal EnableExtensions EnableDelayedExpansion
 
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping profile folder move
+    exit /b 0
+)
+
 :: ============================================
 :: CONFIGURATION
 :: Loaded from profile-folders.config (next to this script)

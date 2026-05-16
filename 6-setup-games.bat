@@ -7,6 +7,12 @@ if %errorlevel% neq 0 (
 )
 
 SETLOCAL
+
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping games setup
+    exit /b 0
+)
+
 SET SCRIPT=%TEMP%\temp-games-setup.ps1
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
