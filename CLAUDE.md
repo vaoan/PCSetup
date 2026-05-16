@@ -37,6 +37,18 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 - Numbered prefix (`1-`, `2-`, etc.) indicates execution order after fresh Windows install
 - Utility scripts have no number prefix (run as needed)
 
+## Quick Install
+
+One-liner that works on a fresh Windows machine before any setup is run:
+
+```powershell
+irm i.ffxivbe.org | iex
+```
+
+`irm` (Invoke-RestMethod) returns the script as a plain string, which `iex` executes directly. Do NOT use `iwr` (Invoke-WebRequest) — it returns a WebResponseObject that breaks `iex` in PS5.1.
+
+The URL is served by a Cloudflare Worker (`cloudflared/install-worker/`) that proxies `remote-call.ps1` from GitHub raw. Free tier (100k req/day). To deploy the worker one-time: `cd cloudflared/install-worker && wrangler deploy`.
+
 ## Run All Scripts
 
 ### remote-call.ps1
@@ -64,6 +76,29 @@ To add a new secret:
 1. Add it in GitHub → Settings → Secrets and variables → Actions
 2. Add it to the `env:` block and `run:` output section in `.github/workflows/sync-secrets.yml`
 3. Add a placeholder line to `.secrets.example`
+
+## Testing
+
+### Flow 1 — Windows setup (Docker)
+
+Runs the full install inside a Windows Server Core container and verifies all packages with Pester. Requires Docker Desktop in Windows containers mode.
+
+```batch
+test-local.bat            # test against main branch
+test-local.bat my-branch  # test against a specific branch
+```
+
+The `PCSETUP_CI=1` env var is set inside the container. Scripts 5 and 6 detect it and skip their body (profile folder relocation and game launchers don't work in containers).
+
+### Flow 2 — Console service verifier
+
+Run after `cloudflared\start-console.bat` to verify all local services are healthy without opening Cloudflare tunnels:
+
+```powershell
+cloudflared\verify-console.ps1
+```
+
+Checks port connectivity, HTTP 200 responses, and WSL systemd service status. Exits 0 if all pass, 1 if any fail.
 
 ## Setup Scripts (Run in Order)
 
@@ -249,6 +284,7 @@ Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all 
 |---|---|
 | `cloudflared/start-console.bat` | One-click launcher (calls `start-console.ps1`) |
 | `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
+| `cloudflared/verify-console.ps1` | Verifies all console services are healthy (ports, HTTP 200, WSL systemd) — run after start-console.bat |
 | `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
 | `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
 | `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
