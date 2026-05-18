@@ -285,6 +285,7 @@ Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all 
 | `cloudflared/start-console.bat` | One-click launcher (calls `start-console.ps1`) |
 | `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
 | `cloudflared/verify-console.ps1` | Verifies all console services are healthy (ports, HTTP 200, WSL systemd) — run after start-console.bat |
+| `cloudflared/set-access-sessions.ps1` | Sets `session_duration` on every Zero Trust Access app (default `730h` ≈ 1 month). Requires `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets`. |
 | `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
 | `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
 | `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |

@@ -15,3 +15,7 @@ nul
 .secrets
 .secrets-download/
 .secrets-decrypted.tmp
+
+# Node / Wrangler build artifacts
+node_modules/
+.wrangler/
