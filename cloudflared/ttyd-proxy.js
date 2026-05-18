@@ -82,12 +82,17 @@ function backendFor(url) {
   return null;
 }
 
-// Listens on 127.0.0.1 only — TLS is terminated by the Cloudflare tunnel upstream. nosemgrep
+const LANDING_BUF = Buffer.from(LANDING_HTML, 'utf8');
+
+// Binds 0.0.0.0 so the Windows portproxy (127.0.0.1:7683 → WSL IP:7683) can reach it.
+// TLS terminated by Cloudflare tunnel upstream. nosemgrep
+// Content-Length avoids chunked encoding. keepAliveTimeout > cloudflared's 90s so cloudflared
+// closes idle connections first — portproxy only RSTs on WSL-initiated close.
 const server = http.createServer((req, res) => { // nosemgrep
   const url = req.url || '/';
   if (url === '/' || url === '') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(LANDING_HTML);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': LANDING_BUF.length });
+    return res.end(LANDING_BUF);
   }
   const port = backendFor(url);
   if (!port) { res.writeHead(404); return res.end('Not found'); }
@@ -117,6 +122,8 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => conn.destroy());
 });
 
-server.listen(7683, '127.0.0.1', () => {
-  console.log('[ttyd-proxy] 127.0.0.1:7683  =>  persistent:7684, fresh:7685');
+server.keepAliveTimeout = 120000;
+server.headersTimeout   = 125000;
+server.listen(7683, '0.0.0.0', () => {
+  console.log('[ttyd-proxy] 0.0.0.0:7683  =>  persistent:7684, fresh:7685');
 });

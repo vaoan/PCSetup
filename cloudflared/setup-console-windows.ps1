@@ -13,9 +13,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 #   2. Writes sshwifty.conf.json from .secrets (SSHWIFTY_CONF_B64)
 #   3. Provisions Cloudflare tunnel 'dev-console' (creates if missing) + DNS records
 #   4. Writes ~/.cloudflared/dev-config.yml with the live tunnel ID
-#   5. Copies launcher scripts (console-proxy.js, console-launcher.js) from repo
-#   6. Creates CloudflaredDevTunnel scheduled task
-#   7. Creates UpdateWSLPortProxy scheduled task (runs at logon)
+#   5. Copies launcher scripts (console-proxy.js, console-launcher.js, start-console.ps1) from repo
+#   6. Creates web-console scheduled task (SSHwifty + proxy + cloudflared at logon)
+#   7. Creates UpdateWSLPortProxy scheduled task (portproxies + WSL services at logon)
 
 $ErrorActionPreference = 'Stop'
 
@@ -144,48 +144,29 @@ if (-not (Test-Path $sshwiftyExe)) {
     Write-Log "sshwifty binary already present"
 }
 
-# -- 7. CloudflaredDevTunnel scheduled task -----------------------------------
-# At logon: runs cloudflared hidden via a small PS launcher so output is
-# captured to cloudflared-dev.log (same approach as start-console.ps1).
-Write-Log "Creating CloudflaredDevTunnel scheduled task..."
+# -- 7. web-console scheduled task --------------------------------------------
+# Runs start-console.ps1 at logon: sets portproxies, starts WSL services,
+# SSHwifty, console-proxy.js, and the cloudflared dev tunnel — all hidden.
+Write-Log "Creating web-console scheduled task..."
 
-$cfLog     = "$cfDir\cloudflared-dev.log"
-$cfPidFile = "$cfDir\cloudflared-dev.pid"
+# Remove the old CloudflaredDevTunnel task if present (replaced by web-console)
+Unregister-ScheduledTask -TaskName "CloudflaredDevTunnel" -Confirm:$false -ErrorAction SilentlyContinue
 
-$cfLauncherScript = @"
-`$cfExe     = '$cfExe'
-`$config    = '$devConfigPath'
-`$logFile   = '$cfLog'
-`$pidFile   = '$cfPidFile'
+$wcTaskName  = "web-console"
+$wcScript    = "$cloudflareDir\start-console.ps1"
+$wcAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$wcScript`""
+$wcTriggers  = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME),
+    (New-ScheduledTaskTrigger -AtStartup)   # also fires on resume from sleep
+)
+$wcSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+$wcPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
-# Kill any existing dev-tunnel process
-if (Test-Path `$pidFile) {
-    `$oldPid = (Get-Content `$pidFile -ErrorAction SilentlyContinue).Trim()
-    if (`$oldPid -match '^\d+`$') { Stop-Process -Id ([int]`$oldPid) -Force -ErrorAction SilentlyContinue }
-    Remove-Item `$pidFile -Force -ErrorAction SilentlyContinue
-}
-
-`$proc = Start-Process -FilePath `$cfExe ``
-    -ArgumentList 'tunnel', '--config', `$config, 'run' ``
-    -WindowStyle Hidden ``
-    -RedirectStandardError `$logFile ``
-    -PassThru
-`$proc.Id | Out-File -FilePath `$pidFile -Encoding utf8
-"@
-$cfLauncherPath = "$cfDir\start-dev-tunnel.ps1"
-[IO.File]::WriteAllText($cfLauncherPath, $cfLauncherScript, [Text.Encoding]::UTF8)
-
-$taskName  = "CloudflaredDevTunnel"
-$taskArgs  = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$cfLauncherPath`""
-$action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs
-$trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-    -Settings $settings -Principal $principal -Force | Out-Null
-Write-Log "Scheduled task '$taskName' created (runs at logon, hidden, logs to $cfLog)"
+Unregister-ScheduledTask -TaskName $wcTaskName -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $wcTaskName -Action $wcAction -Trigger $wcTriggers `
+    -Settings $wcSettings -Principal $wcPrincipal -Force | Out-Null
+Write-Log "Scheduled task '$wcTaskName' created (runs at logon + boot/resume, hidden)"
 
 # -- 8. UpdateWSLPortProxy scheduled task -------------------------------------
 Write-Log "Creating UpdateWSLPortProxy scheduled task..."
@@ -212,14 +193,17 @@ $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
 
 $proxyAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$proxyScriptPath`""
-$proxyTrigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$proxyTriggers  = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME),
+    (New-ScheduledTaskTrigger -AtStartup)   # also fires on resume from sleep
+)
 $proxySettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $proxyPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
 Unregister-ScheduledTask -TaskName $proxyTaskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $proxyTaskName -Action $proxyAction -Trigger $proxyTrigger `
+Register-ScheduledTask -TaskName $proxyTaskName -Action $proxyAction -Trigger $proxyTriggers `
     -Settings $proxySettings -Principal $proxyPrincipal -Force | Out-Null
-Write-Log "Scheduled task '$proxyTaskName' created (runs at logon, elevated)"
+Write-Log "Scheduled task '$proxyTaskName' created (runs at logon + boot/resume, elevated)"
 
 # -- Done ----------------------------------------------------------------------
 Write-Host ""

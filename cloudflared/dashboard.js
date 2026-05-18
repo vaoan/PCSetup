@@ -196,6 +196,8 @@ const HTML = `<!DOCTYPE html>
     .ssh      .icon, .ssh      .name { color: #f9e2af; }
     .git      { border-color: #fab387; }
     .git      .icon, .git      .name { color: #fab387; }
+    .chat     { border-color: #94e2d5; }
+    .chat     .icon, .chat     .name { color: #94e2d5; }
   </style>
 </head>
 <body>
@@ -226,14 +228,27 @@ const HTML = `<!DOCTYPE html>
       <span class="name">Git</span>
       <span class="desc">Visual branch browser</span>
     </a>
+    <a class="card chat" href="https://chat.ffxivbe.org" target="_blank" rel="noopener">
+      <span class="icon">:)</span>
+      <span class="name">Chat</span>
+      <span class="desc">Chat service</span>
+    </a>
   </div>
 </body>
 </html>`;
 
-// nosemgrep - listens on 127.0.0.1 only, TLS terminated by Cloudflare tunnel upstream
-http.createServer((req, res) => { // nosemgrep
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(HTML);
-}).listen(7686, '127.0.0.1', () => {
-  console.log('[dashboard] 127.0.0.1:7686');
+const HTML_BUF = Buffer.from(HTML, 'utf8');
+
+// Binds 0.0.0.0 so the Windows portproxy (127.0.0.1:7686 → WSL IP:7686) can reach it.
+// TLS terminated by Cloudflare tunnel upstream. nosemgrep
+// Content-Length avoids chunked encoding. keepAliveTimeout > cloudflared's 90s default so
+// cloudflared always closes idle connections first — portproxy only RSTs on WSL-initiated close.
+const server = http.createServer((req, res) => { // nosemgrep
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': HTML_BUF.length });
+  res.end(HTML_BUF);
+});
+server.keepAliveTimeout = 120000;
+server.headersTimeout   = 125000;
+server.listen(7686, '0.0.0.0', () => {
+  console.log('[dashboard] 0.0.0.0:7686');
 });

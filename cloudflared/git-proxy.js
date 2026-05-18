@@ -70,11 +70,13 @@ function landingPage() {
 </html>`;
 }
 
-// nosemgrep - listens on 127.0.0.1 only, TLS terminated by Cloudflare tunnel upstream
+// Binds 0.0.0.0 so the Windows portproxy (127.0.0.1:7687 → WSL IP:7687) can reach it.
+// TLS terminated by Cloudflare tunnel upstream. nosemgrep
 const server = http.createServer((req, res) => { // nosemgrep
   if (req.url === '/repos' || req.url === '/repos/') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(landingPage());
+    const body = Buffer.from(landingPage(), 'utf8');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': body.length });
+    res.end(body);
     return;
   }
   // proxy everything else (including /) to ungit so hash routing works
@@ -103,6 +105,8 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => conn.destroy());
 });
 
-server.listen(PROXY_PORT, '127.0.0.1', () => {
-  console.log(`[git-proxy] 127.0.0.1:${PROXY_PORT} -> ungit:${UNGIT_PORT}`);
+server.keepAliveTimeout = 120000;
+server.headersTimeout   = 125000;
+server.listen(PROXY_PORT, '0.0.0.0', () => {
+  console.log(`[git-proxy] 0.0.0.0:${PROXY_PORT} -> ungit:${UNGIT_PORT}`);
 });

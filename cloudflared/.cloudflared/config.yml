@@ -29,4 +29,6 @@ ingress:
     service: http://127.0.0.1:64323
   - hostname: mailpit.ffxivbe.org
     service: http://127.0.0.1:64324
+  - hostname: map.ffxivbe.org
+    service: http://127.0.0.1:8100
   - service: http_status:404

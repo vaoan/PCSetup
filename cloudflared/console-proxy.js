@@ -63,6 +63,7 @@ const server = http.createServer((req, res) => { // nosemgrep
       const body = Buffer.from(html, 'utf8');
       const headers = copyHeaders(proxyRes.headers, { 'content-length': body.length });
       delete headers['content-encoding'];
+      delete headers['transfer-encoding'];
 
       res.writeHead(proxyRes.statusCode, headers);
       res.end(body);

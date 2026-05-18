@@ -6,20 +6,50 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 $results = [System.Collections.Generic.List[PSObject]]::new()
 
-function Test-Port {
+function Test-PortListening {
+    # Checks LISTEN state via netstat — does NOT open a TCP connection,
+    # which would disturb portproxy state for subsequent HTTP checks.
     param([int]$Port)
-    return (Test-NetConnection -ComputerName 127.0.0.1 -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue)
+    $hit = netstat -an 2>$null | Select-String "127\.0\.0\.1:$Port\s+.*LISTENING"
+    return [bool]$hit
 }
 
-function Test-Http {
-    param([string]$Url)
+function Test-HttpWindows {
+    # Tests a Windows-side HTTP service (no portproxy involved).
+    # Uses HttpWebRequest with KeepAlive=false for a clean single-shot request.
+    param([string]$Url, [hashtable]$Headers = @{})
     try {
-        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-        return [int]$r.StatusCode
-    } catch {
-        if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+        $req = [System.Net.HttpWebRequest]::Create($Url)
+        $req.Timeout   = 8000
+        $req.KeepAlive = $false
+        $req.Method    = 'GET'
+        foreach ($key in $Headers.Keys) {
+            if ($key -eq 'Host') { $req.Host = $Headers[$key] }
+            else { $req.Headers.Add($key, $Headers[$key]) }
+        }
+        $resp = $req.GetResponse()
+        $code = [int]$resp.StatusCode
+        $resp.Close()
+        return $code
+    } catch [System.Net.WebException] {
+        if ($_.Exception.Response) {
+            $code = [int]$_.Exception.Response.StatusCode
+            $_.Exception.Response.Close()
+            return $code
+        }
         return 0
-    }
+    } catch { return 0 }
+}
+
+function Test-HttpWSL {
+    # Tests a WSL-side HTTP service using curl inside WSL.
+    # Avoids the Windows portproxy entirely — tests the service directly
+    # from within WSL where it runs.
+    param([int]$Port, [string]$Path = '/')
+    try {
+        $code = wsl -d Ubuntu-24.04 --user root -- bash -c "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${Port}${Path} 2>/dev/null" 2>$null
+        return [int]$code.Trim()
+    } catch { return 0 }
 }
 
 function Test-WslService {
@@ -46,39 +76,46 @@ Write-Host "  Console Service Verifier" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Windows port checks ──────────────────────────────────────────────
-$ports = @(
-    @{ Name = 'dashboard'; Port = 7686 }
-    @{ Name = 'console-proxy'; Port = 7681 }
-    @{ Name = 'ttyd-proxy'; Port = 7683 }
-    @{ Name = 'git-proxy'; Port = 7687 }
+# ── HTTP checks ────────────────────────────────────────────────────────────
+# WSL services tested from inside WSL (no portproxy involved — avoids
+# portproxy state corruption that would break the subsequent port checks).
+# Windows services tested via HttpWebRequest.
+$httpChecks = @(
+    @{ Name = 'dashboard';     Type = 'wsl';     Port = 7686; Path = '/';     Headers = @{} }
+    @{ Name = 'console-proxy'; Type = 'windows'; Port = 7681; Path = '/';     Headers = @{ Host = 'console.ffxivbe.org' } }
+    @{ Name = 'ttyd-proxy';    Type = 'wsl';     Port = 7683; Path = '/';     Headers = @{} }
+    @{ Name = 'git-proxy';     Type = 'wsl';     Port = 7687; Path = '/repos'; Headers = @{} }
 )
-foreach ($p in $ports) {
-    $ok = Test-Port $p.Port
-    Add-Result "$($p.Name) ($($p.Port))" 'port' $ok "localhost:$($p.Port)"
-}
-
-# ── HTTP checks ───────────────────────────────────────────────────────
-$httpEndpoints = @(
-    @{ Name = 'dashboard'; Url = 'http://localhost:7686' }
-    @{ Name = 'console-proxy'; Url = 'http://localhost:7681' }
-    @{ Name = 'ttyd-proxy'; Url = 'http://localhost:7683' }
-    @{ Name = 'git-proxy'; Url = 'http://localhost:7687' }
-)
-foreach ($e in $httpEndpoints) {
-    $code = Test-Http $e.Url
+foreach ($e in $httpChecks) {
+    if ($e.Type -eq 'wsl') {
+        $code = Test-HttpWSL $e.Port $e.Path
+    } else {
+        $code = Test-HttpWindows "http://127.0.0.1:$($e.Port)$($e.Path)" $e.Headers
+    }
     $ok = ($code -ge 200 -and $code -lt 300)
     Add-Result "$($e.Name)" 'http' $ok "HTTP $code"
 }
 
-# ── WSL service checks ────────────────────────────────────────────────
+# ── Windows port-listening checks (netstat, no TCP connection) ──────────────
+$ports = @(
+    @{ Name = 'dashboard';     Port = 7686 }
+    @{ Name = 'console-proxy'; Port = 7681 }
+    @{ Name = 'ttyd-proxy';    Port = 7683 }
+    @{ Name = 'git-proxy';     Port = 7687 }
+)
+foreach ($p in $ports) {
+    $ok = Test-PortListening $p.Port
+    Add-Result "$($p.Name) ($($p.Port))" 'port' $ok "127.0.0.1:$($p.Port)"
+}
+
+# ── WSL service checks ──────────────────────────────────────────────────────
 $wslServices = @('ssh', 'code-server@root', 'ttyd-proxy', 'ttyd-persistent', 'ttyd-fresh', 'git-proxy', 'ungit')
 foreach ($svc in $wslServices) {
     $ok = Test-WslService $svc
     Add-Result "WSL: $svc" 'systemd' $ok ''
 }
 
-# ── Results output ────────────────────────────────────────────────────
+# ── Results output ──────────────────────────────────────────────────────────
 Write-Host ""
 $width = @{ Service = 30; Check = 8 }
 $header = "{0,-$($width.Service)} {1,-$($width.Check)} {2,-6} {3}" -f 'Service', 'Check', 'Status', 'Detail'

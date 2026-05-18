@@ -217,7 +217,7 @@ echo "[setup-console-wsl] code-server icons replaced (pink VS Code shape, transp
 grep -q "mouse on" /root/.tmux.conf 2>/dev/null || echo "set -g mouse on" >> /root/.tmux.conf
 echo "[setup-console-wsl] tmux mouse mode enabled"
 
-cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/ttyd-proxy.js /usr/local/bin/ttyd-proxy.js
+cp /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/ttyd-proxy.js /usr/local/bin/ttyd-proxy.js
 
 cat > /etc/systemd/system/ttyd-persistent.service << 'TTYDSERVICE'
 [Unit]
@@ -268,7 +268,7 @@ systemctl daemon-reload
 echo "[setup-console-wsl] ttyd services configured (proxy:7683, persistent:7684, fresh:7685)"
 
 # -- 10. Start services -------------------------------------------------------
-cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/dashboard.js /usr/local/bin/dashboard.js
+cp /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/dashboard.js /usr/local/bin/dashboard.js
 
 cat > /etc/systemd/system/dashboard.service << 'DASHSERVICE'
 [Unit]
@@ -307,7 +307,7 @@ RestartSec=3
 WantedBy=multi-user.target
 UNGITSERVICE
 
-cp /mnt/z/Users/Heiner/Documents/PCSetup/scripts/git-proxy.js /usr/local/bin/git-proxy.js
+cp /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/git-proxy.js /usr/local/bin/git-proxy.js
 
 cat > /etc/systemd/system/git-proxy.service << 'GITPROXYSERVICE'
 [Unit]
