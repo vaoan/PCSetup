@@ -4,15 +4,22 @@
 
 | Script | Purpose | Sets up |
 |--------|---------|---------|
-| `install-tunnel.ps1` | Web tunnel | ffxivbe.org on port 9000 |
-| `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxivbe.org for remote SSH |
-| `install-scheduled-tasks.ps1` | Auto-start only | Reinstall scheduled tasks for both tunnels |
+| `install-tunnel.ps1` | Web tunnel | ffxivbe.org + chat/map hostnames, hidden boot/logon task |
+| `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxivbe.org for remote SSH, hidden boot/logon task |
+| `install-scheduled-tasks.ps1` | Auto-start only | Reinstall hidden boot/logon tasks for both tunnels |
+
+These installers only manage the `ffxivbe-tunnel` and `ssh-tunnel` tasks. They do not stop or rewrite other Cloudflare tunnels used by other apps.
 
 ## Requirements
 
 Before running any installer:
 1. **Cloudflared CLI** installed (https://github.com/cloudflare/cloudflared/releases)
 2. **PowerShell** (comes with Windows)
+
+For browser verification:
+1. **Node.js / npm** available on PATH
+2. `pnpm` does not need to be preinstalled manually
+3. The verification scripts will install `pnpm`, install the local Playwright dependency set, and install Chromium automatically when needed
 
 ---
 
@@ -65,15 +72,11 @@ powershell -ExecutionPolicy Bypass -File install-ssh-tunnel.ps1
 powershell -ExecutionPolicy Bypass -File install-ssh-tunnel.ps1 -MacPublicKey "ssh-ed25519 AAAA..."
 ```
 
-### Manual Steps Required
+### Manual Steps
 
-Some Cloudflare Dashboard configuration cannot be automated:
+None for tunnel/DNS provisioning. The installer now writes `cert.pem` from `FFXIVBE_PEM_B64` and creates the DNS route headlessly with `cloudflared tunnel route dns`.
 
-1. **DNS Record**: Add CNAME `pc` -> `TUNNEL_ID.cfargotunnel.com`
-2. **Zero Trust Route**: Add `pc.ffxivbe.org` -> `ssh://localhost:22`
-3. **WAF Bypass Rule**: Skip all for hostname `pc.ffxivbe.org`
-
-The script will remind you of these steps after installation.
+If you maintain separate Access or WAF policy outside this repo, keep that in your Cloudflare automation. The installer does not open the dashboard.
 
 ### After Installation
 
@@ -101,5 +104,18 @@ This script:
 - Checks if each tunnel's config exists
 - Reinstalls scheduled tasks for both tunnels
 - Starts both tunnels immediately
+- Uses boot plus logon triggers so tunnels come back after restart
 
 Use this after a format if you've restored the `.cloudflared` config files but lost the scheduled tasks.
+
+For a full rebuild after formatting the PC, use `cloudflared\post-format-recovery.ps1` from the repo root instead of running the tunnel installers one by one.
+
+## Verification bootstrap
+
+`verify-console.ps1` calls the public-route verifier, and the public-route verifier now bootstraps its own browser-test dependencies:
+
+- installs `pnpm` globally with `npm` if `pnpm` is missing
+- runs `pnpm install` in `cloudflared\`
+- runs `pnpm exec playwright install chromium`
+
+This means a fresh machine does not need a prepopulated `cloudflared\node_modules` directory for verification to work.

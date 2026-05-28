@@ -8,27 +8,5 @@ ingress:
   - hostname: www.ffxivbe.org
     service: http://127.0.0.1:7542
   - hostname: chat.ffxivbe.org
-    service: http://192.168.2.6:3000
-  - hostname: landing.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: auth.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: store.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: admin.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: payments.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: playground.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: studio.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: supabase.ffxivbe.org
-    service: http://127.0.0.1:64321
-  - hostname: supabase-studio.ffxivbe.org
-    service: http://127.0.0.1:64323
-  - hostname: mailpit.ffxivbe.org
-    service: http://127.0.0.1:64324
-  - hostname: map.ffxivbe.org
-    service: http://127.0.0.1:8100
+    service: http://127.0.0.1:3000
   - service: http_status:404

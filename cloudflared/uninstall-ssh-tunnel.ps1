@@ -8,18 +8,18 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Cloudflare Tunnel Uninstaller" -ForegroundColor Yellow
+Write-Host "SSH Tunnel Uninstaller" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-$taskName = "ffxivbe-tunnel"
-$configPath = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
-$credentialsPath = Join-Path $env:USERPROFILE ".cloudflared\c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.json"
-$launcherPath = Join-Path $env:USERPROFILE ".cloudflared\ffxivbe-tunnel-launcher.vbs"
-$expectedCommand = '"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\Heiner\.cloudflared\config.yml" run ffxivbe-tunnel'
+$taskName = "ssh-tunnel"
+$configDir = Join-Path $env:USERPROFILE ".cloudflared"
+$sshConfigPath = Join-Path $configDir "ssh-config.yml"
+$launcherPath = Join-Path $configDir "ssh-tunnel-launcher.vbs"
+$credentialsPath = Join-Path $configDir "8dffdb51-77cc-43ca-8dc8-8a0c720607a5.json"
 
 # Step 1: Stop and remove scheduled task
-Write-Host "[1/3] Removing scheduled task..." -ForegroundColor Yellow
+Write-Host "[1/4] Removing scheduled task..." -ForegroundColor Yellow
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($task) {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -29,13 +29,13 @@ if ($task) {
     Write-Host "  SKIP Task not found" -ForegroundColor Gray
 }
 
-# Step 2: Kill any running cloudflared processes using this config
+# Step 2: Kill matching cloudflared process
 Write-Host ""
-Write-Host "[2/3] Stopping cloudflared processes for ffxivbe-tunnel..." -ForegroundColor Yellow
+Write-Host "[2/4] Stopping cloudflared processes for ssh-tunnel..." -ForegroundColor Yellow
 $killed = 0
 Get-WmiObject Win32_Process -Filter "Name='cloudflared.exe'" | ForEach-Object {
     $cmd = $_.CommandLine
-    if ($cmd -eq $expectedCommand -or $cmd -match "run ffxivbe-tunnel") {
+    if ($cmd -and $cmd -match "run ssh-tunnel") {
         Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
         $killed++
     }
@@ -46,19 +46,25 @@ if ($killed -gt 0) {
     Write-Host "  SKIP No matching processes running" -ForegroundColor Gray
 }
 
-# Step 3: Remove local config artifacts (recreated by install-tunnel.ps1)
+# Step 3: Remove local config artifacts
 Write-Host ""
-Write-Host "[3/3] Config files..." -ForegroundColor Yellow
-Remove-Item $configPath -Force -ErrorAction SilentlyContinue
-Remove-Item $credentialsPath -Force -ErrorAction SilentlyContinue
+Write-Host "[3/4] Removing local config..." -ForegroundColor Yellow
+Remove-Item $sshConfigPath -Force -ErrorAction SilentlyContinue
 Remove-Item $launcherPath -Force -ErrorAction SilentlyContinue
-Write-Host "  OK Removed local config, credentials, and launcher" -ForegroundColor Green
-Write-Host "  NOTE DNS records and Cloudflare tunnel registration kept (run cloudflared tunnel delete to remove)" -ForegroundColor Gray
+Remove-Item $credentialsPath -Force -ErrorAction SilentlyContinue
+Write-Host "  OK Removed ssh-config.yml, launcher, and credentials" -ForegroundColor Green
+
+# Step 4: Stop SSH service but leave the Windows capability installed for easy reinstall
+Write-Host ""
+Write-Host "[4/4] Stopping SSH service..." -ForegroundColor Yellow
+Stop-Service sshd -ErrorAction SilentlyContinue
+Set-Service -Name sshd -StartupType Disabled -ErrorAction SilentlyContinue
+Write-Host "  OK SSH service stopped and disabled" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Uninstall complete." -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "To reinstall: .\install-tunnel.ps1" -ForegroundColor Gray
+Write-Host "To reinstall: .\install-ssh-tunnel.ps1" -ForegroundColor Gray
 Write-Host ""

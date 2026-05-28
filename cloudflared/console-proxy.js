@@ -15,8 +15,28 @@ const path = require('path');
 const PROXY_PORT    = 7681;
 const UPSTREAM_PORT = 7682;
 
+const PRIVATE_KEY_FILES = {
+  'WSL Terminal (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/wsl-terminal',
+  'WSL Shell (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/wsl-shell',
+  'Candystore (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/candystore',
+  'Candystore (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/candystore-shell',
+  'Eclipse-con (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/eclipse-con',
+  'Eclipse-con (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/eclipse-con-shell',
+  'PCSetup (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/pcsetup',
+  'PCSetup (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/pcsetup-shell',
+};
+
+function readPrivateKey(filePath) {
+  return fs.readFileSync(filePath, 'utf8');
+}
+
+const privateKeys = {};
+for (const [title, relPath] of Object.entries(PRIVATE_KEY_FILES)) {
+  privateKeys[title] = readPrivateKey(relPath);
+}
+
 const launcherSrc = fs.readFileSync(path.join(__dirname, 'console-launcher.js'), 'utf8');
-const INJECTION   = `\n<script>\n${launcherSrc}\n</script>\n`;
+const INJECTION   = `\n<script>\nwindow.__SSHWIFTY_PRIVATE_KEYS__ = ${JSON.stringify(privateKeys)};\n</script>\n<script>\n${launcherSrc}\n</script>\n`;
 
 function copyHeaders(src, overrides) {
   const out = {};

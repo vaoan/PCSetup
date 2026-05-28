@@ -60,43 +60,40 @@ try {
 }
 await page.screenshot({ path: 'console-loaded.png', fullPage: true });
 
-// Open the quick-connect popup by clicking the logo
-console.log('Clicking logo to open quick-connect popup...');
-await page.click('#home-hd-title');
-await page.waitForTimeout(800);
+const presetTitles = [
+  'Candystore (Persistent)',
+  'Candystore (Fresh)',
+  'Eclipse-con (Persistent)',
+  'Eclipse-con (Fresh)',
+  'PCSetup (Persistent)',
+  'PCSetup (Fresh)',
+];
 
-// Force popup visible in case logo click didn't register
+console.log('\nVerifying quick-connect buttons...');
+await page.click('#home-hd-title');
+await page.waitForTimeout(500);
 await page.evaluate(() => {
   const popup = document.getElementById('ql-popup');
   if (popup) popup.style.display = 'block';
 });
 await page.waitForTimeout(300);
 
-// Find the Eclipse-con (Persistent) button by its title attribute
-const btn = page.locator('[title="Eclipse-con (Persistent)"]');
-const found = await btn.count() > 0;
-console.log('\nEclipse-con (Persistent) button found:', found);
-
-if (found) {
-  console.log('Clicking Eclipse-con (Persistent)...');
-  await btn.click({ force: true });
-  await page.waitForTimeout(2000);
-  await page.screenshot({ path: 'console-after-click.png' });
-
-  console.log('Waiting 20s for SSH connection result...');
-  await page.waitForTimeout(20000);
-
-  const afterText = (await page.evaluate(() => document.body.innerText)).substring(0, 800);
-  console.log('\nAfter connection attempt:', afterText.replace(/\n+/g, ' | '));
-  await page.screenshot({ path: 'console-after-ssh.png', fullPage: true });
-} else {
-  const allText = await page.evaluate(() =>
-    [...document.querySelectorAll('button,a,li,h1,h2,h3,[class*="item"],[class*="panel"],[class*="btn"]')]
-      .map(e => e.textContent?.trim()).filter(t => t && t.length < 80)
-      .filter((v,i,a) => a.indexOf(v) === i)
-  );
-  console.log('Visible elements:', allText.slice(0, 40));
+for (const title of presetTitles) {
+  const btn = page.locator(`[title="${title}"]`);
+  const found = await btn.count() > 0;
+  console.log(`${title} button found:`, found);
+  if (!found) {
+    const allText = await page.evaluate(() =>
+      [...document.querySelectorAll('button,a,li,h1,h2,h3,[class*="item"],[class*="panel"],[class*="btn"]')]
+        .map(e => e.textContent?.trim()).filter(t => t && t.length < 80)
+        .filter((v,i,a) => a.indexOf(v) === i)
+    );
+    console.log('Visible elements:', allText.slice(0, 40));
+    throw new Error(`Preset "${title}" not found`);
+  }
 }
+
+await page.screenshot({ path: 'console-presets.png', fullPage: true });
 
 await browser.close();
 relay.close();

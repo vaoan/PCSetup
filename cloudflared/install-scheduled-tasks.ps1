@@ -26,27 +26,48 @@ Write-Host ""
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $configDir = Join-Path $env:USERPROFILE ".cloudflared"
 
+function New-CloudflaredStartupTriggers {
+    param([string]$UserName)
+
+    return @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -AtLogOn -User $UserName)
+    )
+}
+
+function New-CloudflaredTaskSettings {
+    return New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+}
+
 # ============================================
 # Web Tunnel (ffxivbe-tunnel)
 # ============================================
 Write-Host "[1/2] Web Tunnel (ffxivbe-tunnel)..." -ForegroundColor Yellow
 
 $webTaskName = "ffxivbe-tunnel"
-$wrapperScript = Join-Path $scriptDir "run-tunnel-hidden.ps1"
+$webConfigPath = Join-Path $configDir "config.yml"
+$webLauncherPath = Join-Path $configDir "ffxivbe-tunnel-launcher.vbs"
+$cloudflaredPath = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 
-if (-not (Test-Path $wrapperScript)) {
-    Write-Host "  SKIP run-tunnel-hidden.ps1 not found" -ForegroundColor Yellow
+if (-not (Test-Path $webConfigPath)) {
+    Write-Host "  SKIP config.yml not found" -ForegroundColor Yellow
     Write-Host "  Run install-tunnel.ps1 for full setup" -ForegroundColor Gray
 } else {
     # Remove existing task if present
     Unregister-ScheduledTask -TaskName $webTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$wrapperScript`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+    $webLauncherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$webConfigPath" & Chr(34) & " run ffxivbe-tunnel", 0, False
+"@
+    Set-Content -Path $webLauncherPath -Value $webLauncherContent
 
-    Register-ScheduledTask -TaskName $webTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for ffxivbe.org" | Out-Null
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$webLauncherPath`""
+    $trigger = New-CloudflaredStartupTriggers -UserName $env:USERNAME
+    $settings = New-CloudflaredTaskSettings
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+
+    Register-ScheduledTask -TaskName $webTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for ffxivbe.org (boot-started)" | Out-Null
     Write-Host "  OK Task installed: $webTaskName" -ForegroundColor Green
 
     Start-ScheduledTask -TaskName $webTaskName
@@ -61,6 +82,7 @@ Write-Host "[2/2] SSH Tunnel (ssh-tunnel)..." -ForegroundColor Yellow
 
 $sshTaskName = "ssh-tunnel"
 $sshConfigPath = Join-Path $configDir "ssh-config.yml"
+$sshLauncherPath = Join-Path $configDir "ssh-tunnel-launcher.vbs"
 $sshTunnelName = "ssh-tunnel"
 
 if (-not (Test-Path $sshConfigPath)) {
@@ -70,12 +92,18 @@ if (-not (Test-Path $sshConfigPath)) {
     # Remove existing task if present
     Unregister-ScheduledTask -TaskName $sshTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"cloudflared tunnel --config '$sshConfigPath' run $sshTunnelName`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+    $sshLauncherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$sshConfigPath" & Chr(34) & " run $sshTunnelName", 0, False
+"@
+    Set-Content -Path $sshLauncherPath -Value $sshLauncherContent
 
-    Register-ScheduledTask -TaskName $sshTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH Tunnel for pc.ffxivbe.org" | Out-Null
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$sshLauncherPath`""
+    $trigger = New-CloudflaredStartupTriggers -UserName $env:USERNAME
+    $settings = New-CloudflaredTaskSettings
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+
+    Register-ScheduledTask -TaskName $sshTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH Tunnel for pc.ffxivbe.org (boot-started)" | Out-Null
     Write-Host "  OK Task installed: $sshTaskName" -ForegroundColor Green
 
     Start-ScheduledTask -TaskName $sshTaskName
@@ -108,7 +136,7 @@ if ($sshTask) {
 }
 
 Write-Host ""
-Write-Host "Both tunnels will now start automatically at login." -ForegroundColor Gray
+Write-Host "Both tunnels will now start automatically at boot and logon." -ForegroundColor Gray
 Write-Host ""
 Write-Host "Press any key to exit..."
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

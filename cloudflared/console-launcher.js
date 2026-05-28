@@ -5,19 +5,24 @@
   'use strict';
 
   const PRESETS = [
-    { group: 'WSL',         sub: 'Persistent', title: 'WSL Terminal (Persistent)' },
-    { group: 'WSL',         sub: 'Fresh',      title: 'WSL Shell (Fresh)'         },
-    { group: 'Candystore',  sub: 'Persistent', title: 'Candystore (Persistent)'   },
-    { group: 'Candystore',  sub: 'Fresh',      title: 'Candystore (Fresh)'        },
-    { group: 'Eclipse-con', sub: 'Persistent', title: 'Eclipse-con (Persistent)'  },
-    { group: 'Eclipse-con', sub: 'Fresh',      title: 'Eclipse-con (Fresh)'       },
+    { group: 'WSL',           sub: 'Persistent', title: 'WSL Terminal (Persistent)' },
+    { group: 'WSL',           sub: 'Fresh',      title: 'WSL Shell (Fresh)'         },
+    { group: 'Candystore',    sub: 'Persistent', title: 'Candystore (Persistent)'   },
+    { group: 'Candystore',    sub: 'Fresh',      title: 'Candystore (Fresh)'        },
+    { group: 'Eclipse-con',   sub: 'Persistent', title: 'Eclipse-con (Persistent)'  },
+    { group: 'Eclipse-con',   sub: 'Fresh',      title: 'Eclipse-con (Fresh)'       },
+    { group: 'PCSetup',       sub: 'Persistent', title: 'PCSetup (Persistent)'      },
+    { group: 'PCSetup',       sub: 'Fresh',      title: 'PCSetup (Fresh)'           },
   ];
 
   const GROUP_COLORS = {
     'WSL':         '#4caf82',
-    'Candystore':  '#c47f3a',
-    'Eclipse-con': '#7b6fcf',
+    'Candystore':  '#7b6fcf',
+    'Eclipse-con': '#d17a5b',
+    'PCSetup':     '#4f8fdf',
   };
+
+  const PRIVATE_KEYS = window.__SSHWIFTY_PRIVATE_KEYS__ || {};
 
   function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
@@ -38,7 +43,7 @@
 
   // Automate: open dialog → Known remotes tab → click preset → Connect → Login
   async function connectPreset(title) {
-    const plusBtn = await waitFor('#home-hd-plus', 10000);
+    const plusBtn = await waitFor('#home-hd-plus', 15000);
 
     const connectEl = document.querySelector('#connect');
     const isHidden = !connectEl || getComputedStyle(connectEl).display === 'none';
@@ -47,7 +52,7 @@
       await sleep(400);
     }
 
-    const connectSwitch = await waitFor('#connect-switch', 4000);
+    const connectSwitch = await waitFor('#connect-switch', 10000);
     let knownTab = null;
     for (const li of connectSwitch.querySelectorAll('li')) {
       if (li.textContent.includes('Known remotes')) { knownTab = li; break; }
@@ -59,7 +64,7 @@
       await sleep(300);
     }
 
-    const presetContainer = await waitFor('#connect-known-list-presets', 4000);
+    const presetContainer = await waitFor('#connect-known-list-presets', 10000);
     let found = false;
     for (const wrap of presetContainer.querySelectorAll('.lst-wrap')) {
       const h4 = wrap.querySelector('h4');
@@ -79,19 +84,82 @@
           var submitBtn = form.querySelector('[type=submit]');
           if (submitBtn && !submitBtn.disabled) { submitBtn.click(); return resolve(); }
         }
-        if (Date.now() - start > 5000) return reject(new Error('Connector form not ready'));
+        if (Date.now() - start > 15000) return reject(new Error('Connector form not ready'));
         setTimeout(check, 80);
       })();
     });
 
+    // Drive the current SSHwifty wizards until the remote session is accepted.
+    const autoSubmitLabels = new Set([
+      "I'm aware of the change",
+      'Authenticate',
+      'Login',
+      'Continue',
+      'Connect',
+    ]);
+
     await new Promise(function (resolve, reject) {
       var start = Date.now();
+      var wizardObserver = null;
+
+      function tryWizardSubmit() {
+        var connector = document.querySelector('#connector');
+        if (!connector) return false;
+        var keyFileInput = connector.querySelector('input[type="file"][name="Private Key-file"]');
+        var keyMaterial = PRIVATE_KEYS[title];
+        if (keyFileInput && keyFileInput.files && keyFileInput.files.length === 0 && keyMaterial) {
+          var dt = new DataTransfer();
+          dt.items.add(new File([keyMaterial], 'private-key', { type: 'text/plain' }));
+          Object.defineProperty(keyFileInput, 'files', { value: dt.files, configurable: true });
+          keyFileInput.disabled = false;
+          keyFileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        var authBtn = Array.from(connector.querySelectorAll('button'))
+          .find(function (b) { return b.textContent.trim() === 'Authenticate' && !b.disabled; });
+        if (authBtn) {
+          authBtn.click();
+          return true;
+        }
+        return false;
+      }
+
+      wizardObserver = new MutationObserver(function () {
+        if (tryWizardSubmit()) {
+          wizardObserver.disconnect();
+        }
+      });
+      wizardObserver.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+
       (function check() {
-        var loginBtn = Array.from(document.querySelectorAll('button'))
-          .find(function(b) { return b.textContent.trim() === 'Login' && !b.disabled; });
-        if (loginBtn) { loginBtn.click(); return resolve(); }
-        if (Date.now() - start > 5000) return reject(new Error('Login button not found'));
-        setTimeout(check, 80);
+        try {
+          var connector = document.querySelector('#connector');
+          if (connector) {
+            var keyFileInput = connector.querySelector('input[type="file"][name="Private Key-file"]');
+            var keyMaterial = PRIVATE_KEYS[title];
+            if (tryWizardSubmit()) return resolve();
+          }
+
+          var btn = Array.from(document.querySelectorAll('button'))
+            .find(function (b) {
+              return autoSubmitLabels.has(b.textContent.trim()) && !b.disabled;
+            });
+          if (btn) {
+            btn.click();
+            setTimeout(check, 200);
+            return;
+          }
+
+          if (connector) {
+            var text = connector.innerText || '';
+            if (/shell/i.test(text)) return resolve();
+          }
+
+          if (Date.now() - start > 20000) return resolve();
+          setTimeout(check, 120);
+        } catch (e) {
+          setTimeout(check, 120);
+        }
       })();
     });
   }

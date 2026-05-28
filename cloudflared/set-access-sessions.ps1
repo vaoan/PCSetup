@@ -1,4 +1,5 @@
-# Sets Cloudflare Zero Trust Access app session_duration for every app on the account.
+# Sets Cloudflare Zero Trust Access app session_duration for every app on the account,
+# and sets the global (org-level) session timeout to the same value.
 # Defaults to 730h (~1 month). Run after a fresh install to keep logins long-lived.
 #
 # Requires CLOUDFLARE_ACCOUNT_API_TOKEN in .secrets (token needs Access: Apps and Policies → Edit).
@@ -71,3 +72,22 @@ foreach ($app in $apps) {
 }
 
 if ($failed -gt 0) { exit 1 }
+
+# --- Global (org-level) session timeout ---
+Write-Host "`n[access-sessions] Setting global session timeout = $Duration..."
+$orgBase = "https://api.cloudflare.com/client/v4/accounts/$AccountId/access/organizations"
+try {
+    $org = (Invoke-RestMethod -Uri $orgBase -Headers $headers -Method Get).result
+    $orgPayload = [ordered]@{
+        name                 = $org.name
+        auth_domain          = $org.auth_domain
+        auth_session_duration = $Duration
+    }
+    $orgResp = Invoke-RestMethod -Uri $orgBase -Headers $headers -Method Put `
+        -Body ($orgPayload | ConvertTo-Json -Depth 5 -Compress)
+    Write-Host ("OK   global session timeout -> {0}" -f $orgResp.result.auth_session_duration)
+} catch {
+    Write-Host ("ERR  global session timeout: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    if ($_.ErrorDetails.Message) { Write-Host ("     " + $_.ErrorDetails.Message) -ForegroundColor Red }
+    exit 1
+}

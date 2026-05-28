@@ -212,7 +212,7 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 | Hostname | Purpose |
 |---|---|
 | `tools.ffxivbe.org` | Dashboard — links to all dev tools |
-| `console.ffxivbe.org` | SSH web client (sshwifty) with 6 quick-connect presets |
+| `console.ffxivbe.org` | SSH web client (sshwifty) with 8 quick-connect presets |
 | `dev.ffxivbe.org` | Direct SSH to WSL (for native SSH clients) |
 | `code.ffxivbe.org` | VS Code in the browser (code-server) |
 | `ttyd.ffxivbe.org` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
@@ -332,10 +332,12 @@ Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forc
 |---|---|---|
 | WSL Persistent | `console` | `~` |
 | WSL Fresh | *(plain bash)* | `~` |
-| Candystore Persistent | `candystore` | `/mnt/z/Github/candystore` |
+| Candystore Persistent | `candyshop` | `/mnt/z/Github/candystore` |
 | Candystore Fresh | *(plain bash)* | `/mnt/z/Github/candystore` |
 | Eclipse-con Persistent | `eclipse-con` | `/mnt/z/Github/eclipse-con` |
 | Eclipse-con Fresh | *(plain bash)* | `/mnt/z/Github/eclipse-con` |
+| PCSetup Persistent | `pcsetup` | `/mnt/z/Users/Heiner/Documents/PCSetup` |
+| PCSetup Fresh | *(plain bash)* | `/mnt/z/Users/Heiner/Documents/PCSetup` |
 
 Persistent = `tmux new-session -A` (attach or create). Fresh = `exec bash -l` (new shell every time).
 
@@ -356,21 +358,12 @@ Tunnel IDs (persist in Cloudflare, survive PC formats):
 
 #### ffxivbe-tunnel hostnames
 
-All main app routes go through a local reverse proxy on port 7542. Chat and Supabase have dedicated ports.
+All main app routes go through a local reverse proxy on port 7542. The PC setup does not manage local Supabase services.
 
 | Hostname | Backend |
 |---|---|
-| `ffxivbe.org` / `www.ffxivbe.org` / `landing.ffxivbe.org` | `localhost:7542` |
-| `auth.ffxivbe.org` | `localhost:7542` |
-| `store.ffxivbe.org` | `localhost:7542` |
-| `admin.ffxivbe.org` | `localhost:7542` |
-| `payments.ffxivbe.org` | `localhost:7542` |
-| `playground.ffxivbe.org` | `localhost:7542` |
-| `studio.ffxivbe.org` | `localhost:7542` |
-| `chat.ffxivbe.org` | `192.168.2.6:3000` |
-| `supabase.ffxivbe.org` | `localhost:64321` |
-| `supabase-studio.ffxivbe.org` | `localhost:64323` |
-| `mailpit.ffxivbe.org` | `localhost:64324` |
+| `ffxivbe.org` / `www.ffxivbe.org` | `localhost:7542` |
+| `chat.ffxivbe.org` | `localhost:3000` |
 
 Config lives at `cloudflared/.cloudflared/config.yml` in this repo and is deployed to `C:\Users\Heiner\.cloudflared\config.yml` by `install-tunnel.ps1`.
 

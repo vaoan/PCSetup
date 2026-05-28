@@ -1,3 +1,9 @@
+# Optional switch used by the full recovery flow. When set, the script restores
+# the console stack but skips the final public-route verification.
+param(
+    [switch]$SkipVerification
+)
+
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
@@ -21,14 +27,17 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot         = Split-Path -Parent $PSScriptRoot
 $secretsFile      = Join-Path $repoRoot '.secrets'
+$accountId        = 'd34896e6a0f8b2fba5e03dec659eac50'
 $cloudflareDir    = "$env:USERPROFILE\Documents\Cloudflare"
 $sshwiftyDir      = "$cloudflareDir\sshwifty"
+$sshwiftyKeyDir   = "$sshwiftyDir\keys"
 $launcherDir      = "$cloudflareDir\launcher"
 $cfDir            = "$env:USERPROFILE\.cloudflared"
 $cfExe            = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
-$certPem          = "$cfDir\cert.pem"
 $devConfigPath    = "$cfDir\dev-config.yml"
+$sshwiftyConfPath = "$sshwiftyDir\sshwifty.conf.json"
 $tunnelName       = 'dev-console'
+$zoneName         = 'ffxivbe.org'
 $distro           = 'Ubuntu-24.04'
 $consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','ttyd.ffxivbe.org','tools.ffxivbe.org','git.ffxivbe.org')
 
@@ -43,6 +52,41 @@ function Read-Secret {
     return ($line -replace "^$key=", '').Trim()
 }
 
+$script:cloudflareAccountApiToken = Read-Secret 'CLOUDFLARE_ACCOUNT_API_TOKEN'
+if (-not $script:cloudflareAccountApiToken -or $script:cloudflareAccountApiToken -eq 'replace_me') {
+    Fail "CLOUDFLARE_ACCOUNT_API_TOKEN is missing or placeholder in .secrets."
+}
+function Invoke-CloudflareApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('GET','POST','PUT','PATCH','DELETE')]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [object]$Body = $null
+    )
+
+    $headers = @{ Authorization = "Bearer $script:cloudflareAccountApiToken" }
+    $params = @{
+        Uri     = "https://api.cloudflare.com/client/v4$Path"
+        Headers = $headers
+        Method  = $Method
+    }
+    if ($null -ne $Body) {
+        $params.Body = ($Body | ConvertTo-Json -Depth 12 -Compress)
+        $params.ContentType = 'application/json'
+    }
+
+    $response = Invoke-RestMethod @params
+    if ($null -eq $response.success -or -not $response.success) {
+        $errors = if ($response.errors) { ($response.errors | ConvertTo-Json -Depth 8 -Compress) } else { 'unknown error' }
+        Fail "Cloudflare API $Method $Path failed: $errors"
+    }
+    return $response.result
+}
+
+. (Join-Path $PSScriptRoot 'shared-cloudflare-auth.ps1')
+
 # -- 1. Create directories ----------------------------------------------------
 Write-Log "Creating directories..."
 New-Item -ItemType Directory -Path $sshwiftyDir  -Force | Out-Null
@@ -53,37 +97,181 @@ New-Item -ItemType Directory -Path $cfDir        -Force | Out-Null
 Write-Log "Writing sshwifty.conf.json..."
 $sshwiftyConfB64  = Read-Secret 'SSHWIFTY_CONF_B64'
 $sshwiftyConfJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sshwiftyConfB64))
-[IO.File]::WriteAllText("$sshwiftyDir\sshwifty.conf.json", $sshwiftyConfJson, (New-Object System.Text.UTF8Encoding $false))
+[IO.File]::WriteAllText($sshwiftyConfPath, $sshwiftyConfJson, (New-Object System.Text.UTF8Encoding $false))
+
+function Convert-ToFileUri {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return 'file://' + ($Path -replace '\\', '/')
+}
+
+function Get-PresetKeyReference {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$KeyBase,
+        [Parameter(Mandatory = $true)]
+        [string]$PresetTitle
+    )
+
+    $privatePath = Join-Path $sshwiftyKeyDir $KeyBase
+    if (-not (Test-Path $privatePath)) {
+        Fail "Generated SSHWifty key file missing for '$PresetTitle'. Run setup-console-wsl.sh first."
+    }
+
+    return [pscustomobject]@{
+        PrivateKey = Convert-ToFileUri -Path $privatePath
+    }
+}
+
+function Get-WslHostFingerprint {
+    param([string]$DistroName)
+
+    $fingerprintLine = & wsl -d $DistroName --user root -- bash -lc "ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub 2>/dev/null | head -n 1" 2>$null | Select-Object -First 1
+    if (-not $fingerprintLine) {
+        Fail "Could not read WSL SSH host fingerprint."
+    }
+
+    $fingerprint = ($fingerprintLine -split '\s+')[1]
+    if (-not $fingerprint) {
+        Fail "Could not parse WSL SSH host fingerprint."
+    }
+
+    return $fingerprint
+}
+
+function Set-OrAddPreset {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Config,
+        [Parameter(Mandatory = $true)]
+        [string]$Title,
+        [Parameter(Mandatory = $true)]
+        [string]$PrivateKey,
+        [Parameter(Mandatory = $true)]
+        [string]$Fingerprint
+    )
+
+        $preset = @($Config.Presets | Where-Object { $_.Title -eq $Title } | Select-Object -First 1)
+    if ($preset) {
+        $preset.Meta.'Private Key' = $PrivateKey
+        $preset.Meta.Fingerprint = $Fingerprint
+        return
+    }
+
+    $Config.Presets += [pscustomobject]@{
+        Title = $Title
+        Type  = 'SSH'
+        Host  = '127.0.0.1:2222'
+        Meta  = [pscustomobject]@{
+            User = 'root'
+            Encoding = 'utf-8'
+            Authentication = 'Private Key'
+            'Private Key' = $PrivateKey
+            Fingerprint = $Fingerprint
+        }
+    }
+}
+
+$wslIp = (& wsl -d $distro --user root -- bash -lc "hostname -I | cut -d ' ' -f1" 2>$null | Out-String).Trim()
+if (-not $wslIp) {
+    Write-Log "Could not resolve WSL IP during setup."
+    $wslSshHost = '127.0.0.1:2222'
+} else {
+    $wslSshHost = '127.0.0.1:2222'
+    Write-Log "Resolved WSL IP: $wslIp"
+    Write-Log "SSHwifty will target the local TCP relay at $wslSshHost"
+}
+
+if (Test-Path $sshwiftyKeyDir) {
+    Write-Log "Synchronizing sshwifty preset keys from $sshwiftyKeyDir..."
+    $sshwiftyConfig = Get-Content $sshwiftyConfPath -Raw | ConvertFrom-Json
+    $sshwiftyConfig.DialTimeout = 120
+    foreach ($server in @($sshwiftyConfig.Servers)) {
+        $server.InitialTimeout = 120
+        $server.ReadTimeout = 180
+        $server.WriteTimeout = 180
+    }
+    $presetSpecs = @(
+        @{ Title = 'WSL Terminal (Persistent)'; KeyBase = 'wsl-terminal' },
+        @{ Title = 'WSL Shell (Fresh)';         KeyBase = 'wsl-shell' },
+        @{ Title = 'Candystore (Persistent)'; KeyBase = 'candystore' },
+        @{ Title = 'Candystore (Fresh)';      KeyBase = 'candystore-shell' },
+        @{ Title = 'Eclipse-con (Persistent)'; KeyBase = 'eclipse-con' },
+        @{ Title = 'Eclipse-con (Fresh)';      KeyBase = 'eclipse-con-shell' },
+        @{ Title = 'PCSetup (Persistent)';     KeyBase = 'pcsetup' },
+        @{ Title = 'PCSetup (Fresh)';          KeyBase = 'pcsetup-shell' }
+    )
+
+    $serverFingerprint = Get-WslHostFingerprint -DistroName $distro
+
+    foreach ($spec in $presetSpecs) {
+        $material = Get-PresetKeyReference -KeyBase $spec.KeyBase -PresetTitle $spec.Title
+        Set-OrAddPreset -Config $sshwiftyConfig -Title $spec.Title -PrivateKey $material.PrivateKey -Fingerprint $serverFingerprint
+    }
+
+    foreach ($preset in @($sshwiftyConfig.Presets)) {
+        if ($preset.Type -eq 'SSH') {
+            $preset.Host = $wslSshHost
+        }
+    }
+
+    [IO.File]::WriteAllText($sshwiftyConfPath, ($sshwiftyConfig | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
+    Write-Log "sshwifty presets synchronized (Candystore, Eclipse-con, PCSetup) -> $wslSshHost"
+} else {
+    Fail "Missing generated key directory: $sshwiftyKeyDir. Run setup-console-wsl.sh before setup-console-windows.ps1."
+}
 
 # -- 3. Provision Cloudflare tunnel + DNS records -----------------------------
 Write-Log "Provisioning Cloudflare dev tunnel..."
 if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
-if (-not (Test-Path $certPem)) { Fail "cloudflared not authenticated. Run: cloudflared tunnel login" }
 
 $tunnelId = $null
 
-# Try to create — exit 0 = new, non-zero = already exists (both are fine)
-try { & $cfExe tunnel --origincert $certPem create $tunnelName 2>$null | Out-Null } catch { <# tunnel exists #> }
-
-# Always look up the tunnel by name in the list (handles both new and existing)
-$listJson = (& $cfExe tunnel --origincert $certPem list --output json 2>&1) -join "`n"
-if ($listJson -match '(?s)(\[.*\])') {
-    # deleted_at is '0001-01-01T00:00:00Z' (zero time) for active tunnels, a real date if deleted
-    $tunnels  = ($Matches[1] | ConvertFrom-Json)
-    $existing = @($tunnels | Where-Object { $_.name -eq $tunnelName -and $_.deleted_at -like '0001*' })
-    if ($existing.Count -gt 0) {
-        $tunnelId = $existing[0].id
-        Write-Log "Tunnel ready: $tunnelName ($tunnelId)"
-    }
+$tunnels = Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel"
+$existing = @($tunnels | Where-Object { $_.name -eq $tunnelName -and -not $_.deleted_at })
+if ($existing.Count -gt 0) {
+    $tunnelId = $existing[0].id
+    Write-Log "Tunnel ready: $tunnelName ($tunnelId)"
+} else {
+    Write-Log "Creating new tunnel via API..."
+    $created = Invoke-CloudflareApi -Method POST -Path "/accounts/$accountId/cfd_tunnel" -Body @{ name = $tunnelName }
+    $tunnelId = $created.id
+    Write-Log "Tunnel created: $tunnelName ($tunnelId)"
 }
-if (-not $tunnelId) { Fail "Failed to create or find tunnel '$tunnelName'." }
 
 $credPath = "$cfDir\$tunnelId.json"
 
-# Create DNS routes (idempotent — cloudflared skips if record already exists)
-foreach ($h in $consoleHostnames) {
-    try { & $cfExe tunnel --origincert $certPem route dns $tunnelId $h 2>$null | Out-Null } catch { <# record exists #> }
-    Write-Log "DNS route: $h -> $tunnelId"
+if (-not (Test-Path $credPath)) {
+    Write-Log "Creating tunnel credentials..."
+    $tokenResult = Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel/$tunnelId/token"
+    $tokenValue = if ($tokenResult.PSObject.Properties.Name -contains 'token') { $tokenResult.token } else { $tokenResult }
+    if (-not $tokenValue) {
+        Fail "Could not generate credentials token for $tunnelName."
+    }
+    try {
+        $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($tokenValue.Trim()))
+        $tokenData = $tokenJson | ConvertFrom-Json
+        $credentials = @{
+            AccountTag   = $tokenData.a
+            TunnelSecret = $tokenData.s
+            TunnelID     = $tokenData.t
+        } | ConvertTo-Json
+        [IO.File]::WriteAllText($credPath, $credentials, (New-Object System.Text.UTF8Encoding $false))
+        Write-Log "Tunnel credentials written: $credPath"
+    } catch {
+        Fail "Failed to decode credentials token for $tunnelName. $_"
+    }
+}
+
+try {
+    Write-Log "Ensuring Cloudflare cert.pem from .secrets..."
+    $null = Ensure-CloudflareCertPem -RepoRoot $repoRoot
+    Write-Log "cert.pem ready"
+
+    Write-Log "Provisioning DNS routes for dev-console..."
+    Invoke-CloudflaredDnsRoute -CloudflaredPath $cfExe -TunnelName $tunnelId -Hostnames $consoleHostnames
+    Write-Log "DNS routes provisioned"
+} catch {
+    Fail "DNS route provisioning failed: $_"
 }
 
 # -- 4. Write dev-config.yml --------------------------------------------------
@@ -95,17 +283,17 @@ protocol: http2
 
 ingress:
   - hostname: console.ffxivbe.org
-    service: http://localhost:7681
+    service: http://127.0.0.1:7681
   - hostname: dev.ffxivbe.org
     service: ssh://localhost:22
   - hostname: tools.ffxivbe.org
-    service: http://localhost:7686
+    service: http://127.0.0.1:7686
   - hostname: git.ffxivbe.org
-    service: http://localhost:7687
+    service: http://127.0.0.1:7687
   - hostname: code.ffxivbe.org
-    service: http://localhost:8080
+    service: http://127.0.0.1:8080
   - hostname: ttyd.ffxivbe.org
-    service: http://localhost:7683
+    service: http://127.0.0.1:7683
   - service: http_status:404
 "@
 [IO.File]::WriteAllText($devConfigPath, $devConfig, [Text.Encoding]::UTF8)
@@ -114,6 +302,8 @@ ingress:
 Write-Log "Copying launcher scripts..."
 Copy-Item "$PSScriptRoot\console-proxy.js"    "$launcherDir\console-proxy.js"    -Force
 Copy-Item "$PSScriptRoot\console-launcher.js" "$launcherDir\console-launcher.js" -Force
+Copy-Item "$PSScriptRoot\ssh-proxy.js"        "$cloudflareDir\ssh-proxy.js"      -Force
+Copy-Item "$PSScriptRoot\tcp-relay.js"        "$cloudflareDir\tcp-relay.js"      -Force
 Copy-Item "$PSScriptRoot\start-console.ps1"   "$cloudflareDir\start-console.ps1" -Force
 
 # -- 6. Download sshwifty binary if missing -----------------------------------
@@ -173,20 +363,9 @@ Write-Log "Creating UpdateWSLPortProxy scheduled task..."
 $proxyTaskName = "UpdateWSLPortProxy"
 $proxyScript = @"
 `$distro = 'Ubuntu-24.04'
-`$wslIp = (wsl -d `$distro --user root -- bash -c "hostname -I | awk '{print \`$1}'").Trim()
-if (`$wslIp) {
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=2222 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=2222 connectaddress=`$wslIp connectport=22
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=8080 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=`$wslIp connectport=8080
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7683 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7683 connectaddress=`$wslIp connectport=7683
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7686 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7686 connectaddress=`$wslIp connectport=7686
-    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7687 2>`$null | Out-Null
-    netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7687 connectaddress=`$wslIp connectport=7687
-    wsl -d `$distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
-}
+`$codeUser = (wsl -d `$distro --user root -- bash -lc "getent passwd 1000 | cut -d: -f1" | Out-String).Trim()
+if (-not `$codeUser) { `$codeUser = 'root' }
+wsl -d `$distro --user root -- bash -c "systemctl start code-server@`$codeUser ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
 "@
 $proxyScriptPath = "$cfDir\update-wsl-portproxy.ps1"
 [IO.File]::WriteAllText($proxyScriptPath, $proxyScript, [Text.Encoding]::UTF8)
@@ -218,3 +397,49 @@ Write-Host "  Files deployed to:"
 Write-Host "    $sshwiftyDir\"
 Write-Host "    $launcherDir\"
 Write-Host "    $devConfigPath"
+
+Write-Host ""
+Write-Host "Launching console stack now so verification runs against a live install..." -ForegroundColor Yellow
+$startConsoleScript = Join-Path $cloudflareDir "start-console.ps1"
+if (Test-Path $startConsoleScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $startConsoleScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Console launch failed. Check the logs under $cloudflareDir and $launcherDir."
+        exit $LASTEXITCODE
+    }
+} else {
+    Write-Log "Console launcher missing: $startConsoleScript"
+    exit 1
+}
+
+Write-Log "Giving the console stack time to settle before verification..."
+Start-Sleep -Seconds 15
+
+Write-Log "Running post-install console verification..."
+$verifyConsoleScript = Join-Path $PSScriptRoot "verify-console.ps1"
+if (Test-Path $verifyConsoleScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyConsoleScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Console verification failed. Check the report under $env:USERPROFILE\.cloudflared\reports."
+        exit $LASTEXITCODE
+    }
+    Write-Log "Console verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports."
+} else {
+    Write-Log "Console verification skipped: verify-console.ps1 not found."
+}
+
+if (-not $SkipVerification) {
+    $verifyScript = Join-Path $PSScriptRoot "verify-public-routes.ps1"
+    if (Test-Path $verifyScript) {
+        Write-Log "Running post-install public-route verification..."
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "Verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports."
+        } else {
+            Write-Log "Verification failed. Check the report under $env:USERPROFILE\.cloudflared\reports."
+            exit $LASTEXITCODE
+        }
+    } else {
+        Write-Log "Verification skipped: verify-public-routes.ps1 not found."
+    }
+}

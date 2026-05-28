@@ -8,19 +8,35 @@ Cloudflare Tunnel setup for web proxying and SSH remote access.
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-tunnel.ps1
 ```
-Exposes local port 9000 via `ffxivbe.org`.
+Exposes the local `ffxivbe` web stack via `ffxivbe.org`, including `chat.ffxivbe.org`.
 
 ### SSH Tunnel (pc.ffxivbe.org)
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-ssh-tunnel.ps1
 ```
-SSH remote access to your Windows PC. Some Cloudflare Dashboard steps are manual (script will remind you).
+SSH remote access to your Windows PC. DNS routing is provisioned headlessly from the secrets bundle; no browser dashboard step is required.
 
 ### Restore Auto-Start Only
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-scheduled-tasks.ps1
 ```
-Reinstall scheduled tasks without full setup.
+Reinstall scheduled tasks without full setup. The tasks start at boot and logon, and stay hidden.
+These installers only manage the `ffxivbe-tunnel` and `ssh-tunnel` tasks and do not stop other Cloudflare tunnels.
+
+### Post-Install Verification
+```powershell
+powershell -ExecutionPolicy Bypass -File verify-console.ps1
+```
+Runs the full post-install report:
+- scheduled task state
+- tunnel processes
+- local HTTP origins
+- WSL service state
+- public hostname checks
+
+Reports are written to:
+- `%USERPROFILE%\.cloudflared\reports\latest.md`
+- `%USERPROFILE%\.cloudflared\reports\latest.json`
 
 ## Usage
 
@@ -36,18 +52,23 @@ Reinstall scheduled tasks without full setup.
 - Press `Win + R`, type `taskschd.msc`
 - Find `ffxivbe-tunnel` or `ssh-tunnel`
 - Right-click to Start/Stop
+- Both tasks are hidden and configured with boot plus logon triggers.
 
 ## Configuration
 
 - **Domain**: `ffxivbe.org`
 - **SSH Hostname**: `pc.ffxivbe.org`
 - **Tunnel Configs**: `C:\Users\Heiner\.cloudflared\`
+- **Verification Reports**: `C:\Users\Heiner\.cloudflared\reports\`
+- **Console presets**: `console.ffxivbe.org` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, and `PCSetup` in persistent and fresh variants.
 
 ## Setup After Format
 
 1. Install **cloudflared**: https://github.com/cloudflare/cloudflared/releases
 2. Run `install-tunnel.ps1` (web tunnel)
 3. Run `install-ssh-tunnel.ps1` (SSH tunnel)
+4. Or run `post-format-recovery.ps1` to restore the full Windows-side tunnel and SSH setup in one pass.
 
 See **[SETUP_GUIDE.md](SETUP_GUIDE.md)** for detailed steps.
 See **[INSTALL.md](INSTALL.md)** for installer details.
+See **[OPERATIONS.md](OPERATIONS.md)** for the full recovery history, current architecture, install/uninstall lifecycle, verification flow, and secret inventory.

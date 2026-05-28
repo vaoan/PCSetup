@@ -3,7 +3,7 @@
 # ============================================================================
 # Run this script after formatting your PC to restore everything:
 # - Cloudflared (official MSI for Smart App Control)
-# - Web tunnel (ffxivbe.org -> localhost:9000)
+# - Web tunnel (ffxivbe.org, chat.ffxivbe.org)
 # - SSH tunnel (pc.ffxivbe.org -> SSH access)
 # - Dev tunnel (dev.ffxivbe.org -> VS Code Remote SSH)
 # - OpenSSH Server with key authentication
@@ -14,6 +14,7 @@
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 # ============================================================================
 # CONFIGURATION - Update these if IDs change
@@ -33,6 +34,88 @@ $devHostname = "dev.ffxivbe.org"
 $macPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local"
 
 $cloudflaredPath = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+$cfDir = Join-Path $env:USERPROFILE ".cloudflared"
+$accountId = 'd34896e6a0f8b2fba5e03dec659eac50'
+
+function Read-Secret {
+    param([string]$Key)
+    $secretsPath = Join-Path (Split-Path -Parent $PSScriptRoot) '.secrets'
+    if (-not (Test-Path $secretsPath)) { throw ".secrets not found at $secretsPath" }
+    $line = Get-Content $secretsPath | Where-Object { $_ -match "^$Key=" } | Select-Object -First 1
+    if (-not $line) { throw "Secret '$Key' not found in .secrets" }
+    return ($line -replace "^$Key=", '').Trim()
+}
+
+function Get-CloudflaredTunnelToken {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TunnelName,
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPrefix
+    )
+
+    $token = Read-Secret 'CLOUDFLARE_ACCOUNT_API_TOKEN'
+    $headers = @{ Authorization = "Bearer $token" }
+    $tunnels = (Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/accounts/$accountId/cfd_tunnel" -Headers $headers -Method Get).result
+    $tunnel = @($tunnels | Where-Object { $_.name -eq $TunnelName -and -not $_.deleted_at } | Select-Object -First 1)
+    if (-not $tunnel) { return $null }
+    $tokenResponse = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/accounts/$accountId/cfd_tunnel/$($tunnel.id)/token" -Headers $headers -Method Get
+    if (-not $tokenResponse.success) { return $null }
+    if ($tokenResponse.result.PSObject.Properties.Name -contains 'token') { return $tokenResponse.result.token }
+    return $tokenResponse.result
+}
+
+function Invoke-CloudflareApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('GET','POST','PUT','PATCH','DELETE')]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [object]$Body = $null
+    )
+
+    $token = Read-Secret 'CLOUDFLARE_ACCOUNT_API_TOKEN'
+    $headers = @{ Authorization = "Bearer $token" }
+    $params = @{
+        Uri     = "https://api.cloudflare.com/client/v4$Path"
+        Headers = $headers
+        Method  = $Method
+    }
+    if ($null -ne $Body) {
+        $params.Body = ($Body | ConvertTo-Json -Depth 12 -Compress)
+        $params.ContentType = 'application/json'
+    }
+    $response = Invoke-RestMethod @params
+    if ($null -eq $response.success -or -not $response.success) {
+        $errors = if ($response.errors) { ($response.errors | ConvertTo-Json -Depth 8 -Compress) } else { 'unknown error' }
+        throw "Cloudflare API $Method $Path failed: $errors"
+    }
+    return $response.result
+}
+
+. (Join-Path $PSScriptRoot 'shared-cloudflare-auth.ps1')
+
+function Invoke-CloudflaredCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = Join-Path $env:TEMP "cloudflared-command.out"
+    $stderrPath = Join-Path $env:TEMP "cloudflared-command.err"
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    $process = Start-Process -FilePath $cloudflaredPath -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    return [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Output   = $stdout
+    }
+}
 
 # ============================================================================
 # AUTO-ELEVATE TO ADMINISTRATOR
@@ -62,7 +145,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "This will install and configure:" -ForegroundColor White
 Write-Host "  - Cloudflared (official MSI)" -ForegroundColor Gray
-Write-Host "  - Web tunnel: $webHostname" -ForegroundColor Gray
+Write-Host "  - Web tunnel: $webHostname + chat/map + app subdomains" -ForegroundColor Gray
 Write-Host "  - SSH tunnel: $sshHostname" -ForegroundColor Gray
 Write-Host "  - Dev tunnel: $devHostname (VS Code Remote SSH)" -ForegroundColor Gray
 Write-Host "  - OpenSSH Server + key auth" -ForegroundColor Gray
@@ -71,7 +154,7 @@ Write-Host "  - Desktop shortcuts" -ForegroundColor Gray
 Write-Host ""
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$configDir = Join-Path $env:USERPROFILE ".cloudflared"
+$configDir = $cfDir
 
 # ============================================================================
 # STEP 1: Install Cloudflared
@@ -79,8 +162,8 @@ $configDir = Join-Path $env:USERPROFILE ".cloudflared"
 Write-Host "[1/9] Installing Cloudflared..." -ForegroundColor Yellow
 
 if (Test-Path $cloudflaredPath) {
-    $cfVersion = & $cloudflaredPath --version 2>&1
-    Write-Host "  OK Already installed: $cfVersion" -ForegroundColor Green
+    $cfVersionResult = Invoke-CloudflaredCommand -Arguments @('--version')
+    Write-Host "  OK Already installed: $($cfVersionResult.Output.Trim())" -ForegroundColor Green
 } else {
     Write-Host "  Downloading official MSI (for Smart App Control)..." -ForegroundColor Gray
 
@@ -95,8 +178,8 @@ if (Test-Path $cloudflaredPath) {
     Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
 
     if (Test-Path $cloudflaredPath) {
-        $cfVersion = & $cloudflaredPath --version 2>&1
-        Write-Host "  OK Installed: $cfVersion" -ForegroundColor Green
+        $cfVersionResult = Invoke-CloudflaredCommand -Arguments @('--version')
+        Write-Host "  OK Installed: $($cfVersionResult.Output.Trim())" -ForegroundColor Green
     } else {
         Write-Host "  X Failed to install cloudflared" -ForegroundColor Red
         Write-Host "  Press any key to exit..."
@@ -109,23 +192,16 @@ if (Test-Path $cloudflaredPath) {
 # STEP 2: Cloudflare Authentication
 # ============================================================================
 Write-Host ""
-Write-Host "[2/9] Cloudflare Authentication..." -ForegroundColor Yellow
-
-# Check if cert.pem exists (indicates already authenticated)
-$certPath = Join-Path $configDir "cert.pem"
-if (Test-Path $certPath) {
-    Write-Host "  OK Already authenticated (cert.pem exists)" -ForegroundColor Green
-} else {
-    Write-Host "  Opening browser for authentication..." -ForegroundColor Gray
-    Write-Host "  (Complete login in your browser)" -ForegroundColor Gray
-    & $cloudflaredPath tunnel login
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  X Authentication failed" -ForegroundColor Red
-        Write-Host "  Press any key to exit..."
-        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        exit 1
-    }
-    Write-Host "  OK Authenticated" -ForegroundColor Green
+Write-Host "[2/10] Cloudflare Authentication..." -ForegroundColor Yellow
+try {
+    $apiToken = Read-Secret 'CLOUDFLARE_ACCOUNT_API_TOKEN'
+    if (-not $apiToken -or $apiToken -eq 'replace_me') { throw "CLOUDFLARE_ACCOUNT_API_TOKEN missing" }
+    Write-Host "  OK Cloudflare API token loaded from .secrets" -ForegroundColor Green
+} catch {
+    Write-Host "  X Cloudflare API token missing" -ForegroundColor Red
+    Write-Host "  Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
 }
 
 # Create config directory if needed
@@ -153,26 +229,8 @@ ingress:
     service: http://127.0.0.1:9000
   - hostname: www.$webHostname
     service: http://127.0.0.1:9000
-  - hostname: landing.$webHostname
-    service: http://127.0.0.1:5004
-  - hostname: auth.$webHostname
-    service: http://127.0.0.1:5000
-  - hostname: store.$webHostname
-    service: http://127.0.0.1:5001
-  - hostname: admin.$webHostname
-    service: http://127.0.0.1:5002
-  - hostname: playground.$webHostname
-    service: http://127.0.0.1:5003
-  - hostname: payments.$webHostname
-    service: http://127.0.0.1:5005
-  - hostname: studio.$webHostname
-    service: http://127.0.0.1:5006
-  - hostname: supabase.$webHostname
-    service: http://127.0.0.1:54321
-  - hostname: supabase-studio.$webHostname
-    service: http://127.0.0.1:54323
-  - hostname: mailpit.$webHostname
-    service: http://127.0.0.1:54324
+  - hostname: chat.$webHostname
+    service: http://127.0.0.1:3000
   - service: http_status:404
 "@
 
@@ -182,8 +240,8 @@ Write-Host "  OK Config: $webConfigPath" -ForegroundColor Green
 # Create credentials if needed
 if (-not (Test-Path $webCredentialsPath)) {
     Write-Host "  Generating credentials from tunnel token..." -ForegroundColor Gray
-    $token = & $cloudflaredPath tunnel token $webTunnelName 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $token = Get-CloudflaredTunnelToken -TunnelName $webTunnelName -OutputPrefix "cloudflared-web-token"
+    if ($token) {
         try {
             $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($token.Trim()))
             $tokenData = $tokenJson | ConvertFrom-Json
@@ -231,8 +289,8 @@ Write-Host "  OK Config: $sshConfigPath" -ForegroundColor Green
 # Create credentials if needed
 if (-not (Test-Path $sshCredentialsPath)) {
     Write-Host "  Generating credentials from tunnel token..." -ForegroundColor Gray
-    $token = & $cloudflaredPath tunnel token $sshTunnelName 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $token = Get-CloudflaredTunnelToken -TunnelName $sshTunnelName -OutputPrefix "cloudflared-ssh-token"
+    if ($token) {
         try {
             $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($token.Trim()))
             $tokenData = $tokenJson | ConvertFrom-Json
@@ -253,7 +311,26 @@ if (-not (Test-Path $sshCredentialsPath)) {
     Write-Host "  OK Credentials exist" -ForegroundColor Green
 }
 
-# ============================================================================
+try {
+    Write-Host "  Ensuring Cloudflare cert.pem from .secrets..." -ForegroundColor Gray
+    $null = Ensure-CloudflareCertPem -RepoRoot $PSScriptRoot
+    Write-Host "  OK cert.pem ready" -ForegroundColor Green
+
+    Write-Host "  Provisioning DNS routes for web and SSH tunnels..." -ForegroundColor Gray
+    Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $webTunnelId -Hostnames @(
+        $webHostname,
+        "www.$webHostname",
+        "chat.$webHostname",
+        "map.$webHostname"
+    )
+    Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $sshTunnelId -Hostnames @($sshHostname)
+    Write-Host "  OK DNS routes provisioned" -ForegroundColor Green
+} catch {
+    Write-Host "  X DNS route provisioning failed: $_" -ForegroundColor Red
+    exit 1
+}
+
+# ============================================================================ 
 # STEP 5: Setup Dev Tunnel Config (VS Code Remote SSH)
 # ============================================================================
 Write-Host ""
@@ -265,11 +342,10 @@ $devTunnelId = $null
 $devTunnelReady = $false
 
 # Look up dev-tunnel ID dynamically (it's not hardcoded since it may be recreated)
-$tunnelListOutput = & $cloudflaredPath tunnel list 2>&1
-$devMatch = [regex]::Match($tunnelListOutput, "([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\s+$devTunnelName")
+$devTunnel = @(Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel" | Where-Object { $_.name -eq $devTunnelName -and -not $_.deleted_at } | Select-Object -First 1)
 
-if ($devMatch.Success) {
-    $devTunnelId = $devMatch.Groups[1].Value
+if ($devTunnel) {
+    $devTunnelId = $devTunnel.id
     Set-Content -Path $devIdStorePath -Value $devTunnelId
     Write-Host "  OK Tunnel found: $devTunnelId" -ForegroundColor Green
 
@@ -292,8 +368,8 @@ ingress:
     # Create credentials if needed
     if (-not (Test-Path $devCredentialsPath)) {
         Write-Host "  Generating credentials from tunnel token..." -ForegroundColor Gray
-        $devToken = & $cloudflaredPath tunnel token $devTunnelName 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $devToken = Get-CloudflaredTunnelToken -TunnelName $devTunnelName -OutputPrefix "cloudflared-dev-token"
+        if ($devToken) {
             try {
                 $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($devToken.Trim()))
                 $tokenData = $tokenJson | ConvertFrom-Json
@@ -315,8 +391,7 @@ ingress:
     $devTunnelReady = $true
 } else {
     Write-Host "  WARNING dev-tunnel not found in Cloudflare account." -ForegroundColor Yellow
-    Write-Host "  Run install-dev-tunnel.ps1 from the candystore scripts after recovery." -ForegroundColor Gray
-    Write-Host "  Location: Z:\Github\candystore\scripts\dev-tunnel\install-dev-tunnel.ps1" -ForegroundColor Gray
+    Write-Host "  Run the dev tunnel installer from its own project if you need that service." -ForegroundColor Gray
 }
 
 # ============================================================================
@@ -376,32 +451,59 @@ Write-Host "[8/9] Creating Scheduled Tasks..." -ForegroundColor Yellow
 
 # Web Tunnel Task
 Unregister-ScheduledTask -TaskName $webTunnelName -Confirm:$false -ErrorAction SilentlyContinue
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command `"& '$cloudflaredPath' tunnel --config '$webConfigPath' run $webTunnelName`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-Register-ScheduledTask -TaskName $webTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Web tunnel for $webHostname (silent)" | Out-Null
+$webLauncherPath = Join-Path $cfDir "web-tunnel-launcher.vbs"
+$webLauncherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$webConfigPath" & Chr(34) & " run $webTunnelName", 0, False
+"@
+Set-Content -Path $webLauncherPath -Value $webLauncherContent
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$webLauncherPath`""
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtStartup),
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+Register-ScheduledTask -TaskName $webTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Web tunnel for $webHostname (silent, boot-started)" | Out-Null
 Start-ScheduledTask -TaskName $webTunnelName
 Write-Host "  OK $webTunnelName" -ForegroundColor Green
 
 # SSH Tunnel Task
 Unregister-ScheduledTask -TaskName $sshTunnelName -Confirm:$false -ErrorAction SilentlyContinue
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command `"& '$cloudflaredPath' tunnel --config '$sshConfigPath' run $sshTunnelName`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-Register-ScheduledTask -TaskName $sshTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH tunnel for $sshHostname (silent)" | Out-Null
+$sshLauncherPath = Join-Path $cfDir "ssh-tunnel-launcher.vbs"
+$sshLauncherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$sshConfigPath" & Chr(34) & " run $sshTunnelName", 0, False
+"@
+Set-Content -Path $sshLauncherPath -Value $sshLauncherContent
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$sshLauncherPath`""
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtStartup),
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+Register-ScheduledTask -TaskName $sshTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH tunnel for $sshHostname (silent, boot-started)" | Out-Null
 Start-ScheduledTask -TaskName $sshTunnelName
 Write-Host "  OK $sshTunnelName" -ForegroundColor Green
 
 # Dev Tunnel Task (only if tunnel was found)
 if ($devTunnelReady) {
     Unregister-ScheduledTask -TaskName $devTunnelName -Confirm:$false -ErrorAction SilentlyContinue
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& '$cloudflaredPath' tunnel --config '$devConfigPath' run $devTunnelName`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    Register-ScheduledTask -TaskName $devTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Dev SSH tunnel for $devHostname (VS Code Remote)" | Out-Null
+    $devLauncherPath = Join-Path $cfDir "dev-tunnel-launcher.vbs"
+    $devLauncherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$devConfigPath" & Chr(34) & " run $devTunnelName", 0, False
+"@
+    Set-Content -Path $devLauncherPath -Value $devLauncherContent
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$devLauncherPath`""
+    $trigger = @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+    )
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+    Register-ScheduledTask -TaskName $devTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Dev SSH tunnel for $devHostname (VS Code Remote, boot-started)" | Out-Null
     Start-ScheduledTask -TaskName $devTunnelName
     Write-Host "  OK $devTunnelName" -ForegroundColor Green
 } else {
@@ -448,18 +550,6 @@ if (Test-Path $toggleSshPath) {
     Write-Host "  OK Toggle SSH Tunnel" -ForegroundColor Green
 }
 
-# Toggle Dev Tunnel
-$toggleDevPath = "Z:\Github\candystore\scripts\dev-tunnel\toggle-dev-tunnel.bat"
-if (Test-Path $toggleDevPath) {
-    $shortcut = $ws.CreateShortcut("$desktop\Toggle Dev Tunnel.lnk")
-    $shortcut.TargetPath = $toggleDevPath
-    $shortcut.WorkingDirectory = "Z:\Github\candystore\scripts\dev-tunnel"
-    $shortcut.IconLocation = "shell32.dll,144"
-    $shortcut.Description = "Toggle Dev SSH Tunnel (Start/Stop)"
-    $shortcut.Save()
-    Write-Host "  OK Toggle Dev Tunnel" -ForegroundColor Green
-}
-
 # Toggle Claude Sessions
 $toggleClaudePath = Join-Path $scriptDir "toggle-claude-session.bat"
 if (Test-Path $toggleClaudePath) {
@@ -503,12 +593,14 @@ Write-Host "  SSH tunnel task  : $sshTaskState" -ForegroundColor White
 if ($devTunnelReady) {
     Write-Host "  Dev tunnel task  : $devTaskState" -ForegroundColor White
 } else {
-    Write-Host "  Dev tunnel task  : SKIPPED - run Z:\Github\candystore\scripts\dev-tunnel\install-dev-tunnel.ps1" -ForegroundColor Yellow
+    Write-Host "  Dev tunnel task  : SKIPPED - install it from the dev tunnel project if needed" -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "Test URLs:" -ForegroundColor Cyan
 Write-Host "  Web: https://$webHostname" -ForegroundColor White
+Write-Host "  Chat: https://chat.$webHostname" -ForegroundColor White
+Write-Host "  Map: https://map.$webHostname" -ForegroundColor White
 Write-Host "  SSH: ssh windows-remote (from Mac)" -ForegroundColor White
 Write-Host "  Dev: ssh dev-windows (VS Code Remote SSH)" -ForegroundColor White
 
@@ -517,5 +609,50 @@ Write-Host "Desktop shortcuts created for toggling tunnels." -ForegroundColor Gr
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Press any key to exit..."
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+# ============================================================================
+# STEP 10: Restore the console stack
+# ============================================================================
+Write-Host "[10/10] Restoring Console Stack..." -ForegroundColor Yellow
+
+$consoleSetupWindows = Join-Path $scriptDir "setup-console-windows.ps1"
+$consoleSetupWsl = Join-Path $scriptDir "setup-console-wsl.sh"
+
+if (Test-Path $consoleSetupWindows) {
+    Write-Host "  Running setup-console-windows.ps1..." -ForegroundColor Gray
+    & powershell -ExecutionPolicy Bypass -File $consoleSetupWindows -SkipVerification
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  X Console Windows setup failed" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+    Write-Host "  OK Console Windows setup complete" -ForegroundColor Green
+} else {
+    Write-Host "  SKIP setup-console-windows.ps1 not found" -ForegroundColor Yellow
+}
+
+if (Test-Path $consoleSetupWsl) {
+    Write-Host "  Running setup-console-wsl.sh..." -ForegroundColor Gray
+    $consoleSetupWslUnix = ($consoleSetupWsl -replace '^Z:\\', '/mnt/z/' -replace '\\', '/')
+    wsl -d Ubuntu-24.04 --user root bash $consoleSetupWslUnix
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  X Console WSL setup failed" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+    Write-Host "  OK Console WSL setup complete" -ForegroundColor Green
+} else {
+    Write-Host "  SKIP setup-console-wsl.sh not found" -ForegroundColor Yellow
+}
+
+$verifyScript = Join-Path $scriptDir "verify-public-routes.ps1"
+if (Test-Path $verifyScript) {
+    Write-Host "[post-format-recovery] Running post-install public-route verification..." -ForegroundColor Yellow
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[post-format-recovery] Verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Green
+    } else {
+        Write-Host "[post-format-recovery] Verification failed. Check $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+} else {
+    Write-Host "[post-format-recovery] Verification skipped: verify-public-routes.ps1 not found." -ForegroundColor Yellow
+}

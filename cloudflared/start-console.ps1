@@ -9,7 +9,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 # Architecture:
 #   Cloudflare tunnel -> proxy (127.0.0.1:7681) -> SSHwifty (127.0.0.1:7682)
 #   proxy injects quick-connect panel into SSHwifty HTML.
-#   SSHwifty connects via SSH -> portproxy (127.0.0.1:2222) -> WSL:22
+#   SSHwifty connects through the local portproxy (127.0.0.1:2222) to WSL SSH.
+#   The portproxy is refreshed at launch to the current WSL IP.
 #   SSH authorized_keys map each key to a specific tmux session/directory.
 
 $distro        = "Ubuntu-24.04"
@@ -25,44 +26,154 @@ $sshwiftyLog   = "$sshwiftyDir\sshwifty.log"
 $proxyScript   = "$launcherDir\console-proxy.js"
 $proxyLog      = "$launcherDir\proxy.log"
 $proxyPidFile  = "$launcherDir\proxy.pid"
+$sshProxyScript = "$PSScriptRoot\ssh-proxy.js"
+$sshProxyLog   = "$launcherDir\ssh-proxy.log"
+$sshProxyPidFile = "$launcherDir\ssh-proxy.pid"
+$tcpRelayScript = "$PSScriptRoot\tcp-relay.js"
 $cfLog         = "$cfDir\cloudflared-dev.log"
 $cfPidFile     = "$cfDir\cloudflared-dev.pid"
+$nodeCmd       = Get-Command node -ErrorAction SilentlyContinue
+$nodeExe       = if ($nodeCmd) { $nodeCmd.Source } else { $null }
 
 function Write-Log { param([string]$msg) Write-Host "[start-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[start-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
+function Get-CodeServerUser {
+    $user = (& wsl -d $distro --user root -- bash -lc "getent passwd 1000 | cut -d: -f1" | Out-String).Trim()
+    if (-not $user) { return 'root' }
+    return $user
+}
+function Stop-ListenerOnPort {
+    param([int]$Port)
 
-# -- 1. Update portproxy: 127.0.0.1:2222 -> WSL2 IP:22 -----------------------
+    $listeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq $Port }
+    foreach ($listener in @($listeners)) {
+        if ($listener.OwningProcess -gt 0) {
+            $proc = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ProcessName -ne 'svchost') {
+                Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+                Write-Log "Stopped stale listener on 127.0.0.1:$Port (PID $($listener.OwningProcess))"
+            }
+        }
+    }
+}
+
+# -- 1. Resolve WSL IP and normalize local origin targets ---------------------
 Write-Log "Resolving WSL2 IP..."
-$wslIp = (wsl -d $distro --user root -- bash -c "hostname -I | awk '{print `$1}'").Trim()
+$wslIp = (wsl -d $distro --user root -- bash -c "hostname -I | cut -d ' ' -f1").Trim()
 if (-not $wslIp) { Fail "Could not determine WSL2 IP. Is $distro running?" }
 Write-Log "WSL2 IP: $wslIp"
+$codeUser = Get-CodeServerUser
+Write-Log "code-server user: $codeUser"
+
+function Set-SshwiftyWslHost {
+    param(
+        [string]$ConfigPath,
+        [string]$TargetHost
+    )
+
+    if (-not (Test-Path $ConfigPath)) { return }
+    try {
+        $cfg = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+        foreach ($preset in @($cfg.Presets)) {
+            if ($preset.Type -eq 'SSH') {
+                $preset.Host = $TargetHost
+            }
+        }
+        [IO.File]::WriteAllText($ConfigPath, ($cfg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
+        Write-Log "SSHwifty SSH presets pointed at $TargetHost"
+    } catch {
+        Write-Log "WARNING: Could not update SSHwifty hosts in ${ConfigPath}: $($_.Exception.Message)"
+    }
+}
+
+function Set-DevTunnelLocalOrigins {
+    param([string]$ConfigPath)
+
+    if (-not (Test-Path $ConfigPath)) { return }
+    try {
+        $raw = Get-Content $ConfigPath -Raw
+        $raw = [regex]::Replace($raw, '(?m)^(\s+service:\s+)http://.+:7686$', '${1}http://127.0.0.1:7686')
+        $raw = [regex]::Replace($raw, '(?m)^(\s+service:\s+)http://.+:7687$', '${1}http://127.0.0.1:7687')
+        $raw = [regex]::Replace($raw, '(?m)^(\s+service:\s+)http://.+:8080$', '${1}http://127.0.0.1:8080')
+        $raw = [regex]::Replace($raw, '(?m)^(\s+service:\s+)http://.+:7683$', '${1}http://127.0.0.1:7683')
+        [IO.File]::WriteAllText($ConfigPath, $raw, (New-Object System.Text.UTF8Encoding $false))
+        Write-Log "Dev tunnel origins pointed at local relays"
+    } catch {
+        Write-Log "WARNING: Could not update dev tunnel origins in ${ConfigPath}: $($_.Exception.Message)"
+    }
+}
+
+function Start-TcpRelay {
+    param(
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$NodePath,
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$LauncherPath
+    )
+
+    $pidFile = Join-Path $LauncherPath "relay-$Port.pid"
+    $logFile = Join-Path $LauncherPath "relay-$Port.log"
+
+    if (Test-Path $pidFile) {
+        $oldPid = (Get-Content $pidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldPid -match '^\d+$') {
+            Stop-Process -Id ([int]$oldPid) -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Stop-ListenerOnPort -Port $Port
+    Start-Sleep -Milliseconds 200
+
+    $proc = Start-Process -FilePath $NodePath `
+        -ArgumentList $ScriptPath, "--listen-port=$Port", "--target-port=$Port" `
+        -RedirectStandardError $logFile `
+        -WindowStyle Hidden `
+        -PassThru
+    $proc.Id | Out-File -FilePath $pidFile -Encoding utf8
+    Write-Log "TCP relay: started (PID $($proc.Id)) -> 127.0.0.1:$Port"
+}
+
+Set-SshwiftyWslHost -ConfigPath $sshwiftyConf -TargetHost '127.0.0.1:2222'
+Write-Log "SSHwifty SSH target: 127.0.0.1:2222"
+Set-DevTunnelLocalOrigins -ConfigPath $devConfigPath
 
 netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=2222 2>$null | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=2222 connectaddress=$wslIp connectport=22
-Write-Log "portproxy: 127.0.0.1:2222 -> ${wslIp}:22"
-
-netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=8080 2>$null | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=$wslIp connectport=8080
-Write-Log "portproxy: 127.0.0.1:8080 -> ${wslIp}:8080"
-
-netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7683 2>$null | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7683 connectaddress=$wslIp connectport=7683
-Write-Log "portproxy: 127.0.0.1:7683 -> ${wslIp}:7683"
-
-netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7686 2>$null | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7686 connectaddress=$wslIp connectport=7686
-Write-Log "portproxy: 127.0.0.1:7686 -> ${wslIp}:7686"
-
-netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=7687 2>$null | Out-Null
-netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=7687 connectaddress=$wslIp connectport=7687
-Write-Log "portproxy: 127.0.0.1:7687 -> ${wslIp}:7687"
+Write-Log "portproxy: 127.0.0.1:2222 removed (replaced by local TCP relay)"
+foreach ($port in 8080, 7683, 7686, 7687) {
+    netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=$port 2>$null | Out-Null
+}
+Write-Log "portproxy: removed for dev origins (replaced by local TCP relays)"
 
 # -- 2. Ensure SSH and WSL services are running -------------------------------
 wsl -d $distro --user root -- bash -c "service ssh start 2>/dev/null || true" | Out-Null
 Write-Log "WSL SSH: started"
 
-wsl -d $distro --user root -- bash -c "systemctl start code-server@root ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
+wsl -d $distro --user root -- bash -c "systemctl start code-server@$codeUser ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
 Write-Log "WSL services: started"
+
+if (Test-Path $sshProxyPidFile) {
+    $oldSshProxyPid = (Get-Content $sshProxyPidFile -ErrorAction SilentlyContinue).Trim()
+    if ($oldSshProxyPid -match '^\d+$') {
+        Stop-Process -Id ([int]$oldSshProxyPid) -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item $sshProxyPidFile -Force -ErrorAction SilentlyContinue
+}
+Stop-ListenerOnPort -Port 2222
+Start-Sleep -Milliseconds 300
+
+$sshProxyProc = Start-Process -FilePath $nodeExe `
+    -ArgumentList $sshProxyScript, "--target=${wslIp}:22" `
+    -RedirectStandardError $sshProxyLog `
+    -WindowStyle Hidden `
+    -PassThru
+$sshProxyProc.Id | Out-File -FilePath $sshProxyPidFile -Encoding utf8
+Write-Log "SSH relay: started (PID $($sshProxyProc.Id)) -> 127.0.0.1:2222"
+
+if (-not (Test-Path $tcpRelayScript)) { Fail "TCP relay script not found: $tcpRelayScript" }
+foreach ($port in 8080, 7683, 7686, 7687) {
+    Start-TcpRelay -Port $port -NodePath $nodeExe -ScriptPath $tcpRelayScript -LauncherPath $launcherDir
+}
 
 # -- 3. Kill stale tmux console session so drives remount on next connect -----
 wsl -d $distro --user root -- bash -c "tmux kill-session -t console 2>/dev/null || true" | Out-Null
@@ -91,10 +202,9 @@ if (Test-Path $proxyPidFile) {
     }
     Remove-Item $proxyPidFile -Force -ErrorAction SilentlyContinue
 }
+Stop-ListenerOnPort -Port 7681
 Start-Sleep -Milliseconds 300
 
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-$nodeExe = if ($nodeCmd) { $nodeCmd.Source } else { $null }
 if (-not $nodeExe) { Fail "node.exe not found. Run 3-setup-node.bat first." }
 
 $proxyProc = Start-Process -FilePath $nodeExe `

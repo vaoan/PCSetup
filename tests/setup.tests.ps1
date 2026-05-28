@@ -232,3 +232,26 @@ Describe "99-remove-windows-ai" {
         Test-Path (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") | Should -BeTrue
     }
 }
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# cloudflared scheduled tasks
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Describe "cloudflared scheduled tasks" {
+    It "web installer uses boot plus logon triggers" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\install-tunnel.ps1") -Raw
+        $script | Should -Match 'New-ScheduledTaskTrigger -AtStartup'
+        $script | Should -Match 'New-ScheduledTaskTrigger -AtLogOn -User \$env:USERNAME'
+        $script | Should -Match 'MultipleInstances IgnoreNew'
+        $script | Should -Match 'wscript\.exe'
+        $script | Should -Match 'launcher\.vbs'
+    }
+
+    It "ssh installer uses boot plus logon triggers" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\install-ssh-tunnel.ps1") -Raw
+        $script | Should -Match 'New-ScheduledTaskTrigger -AtStartup'
+        $script | Should -Match 'New-ScheduledTaskTrigger -AtLogOn -User \$env:USERNAME'
+        $script | Should -Match 'MultipleInstances IgnoreNew'
+        $script | Should -Match 'wscript\.exe'
+        $script | Should -Match 'launcher\.vbs'
+    }
+}

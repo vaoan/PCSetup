@@ -55,11 +55,13 @@ cloudflared tunnel create ffxivbe-tunnel
    tunnel: YOUR_TUNNEL_ID_HERE
    credentials-file: C:\Users\Heiner\.cloudflared\YOUR_TUNNEL_ID_HERE.json
 
-   ingress:
-     - hostname: ffxivbe.org
-       service: http://127.0.0.1:9000
-     - hostname: www.ffxivbe.org
-       service: http://127.0.0.1:9000
+    ingress:
+      - hostname: ffxivbe.org
+        service: http://127.0.0.1:7542
+      - hostname: www.ffxivbe.org
+        service: http://127.0.0.1:7542
+      - hostname: chat.ffxivbe.org
+        service: http://127.0.0.1:3000
      - service: http_status:404
    ```
 
@@ -88,7 +90,9 @@ cloudflared tunnel create ffxivbe-tunnel
 
 ## Step 6: Test Tunnel Manually
 
-1. Make sure your local service is running on port 9000 (if using web tunnel)
+1. Make sure the local services are running:
+   - app web stack on `7542`
+   - chat backend on `3000`
 
 2. Run tunnel manually to test:
    ```bash
@@ -119,8 +123,9 @@ This creates:
 ## Step 8: Verify Everything Works
 
 1. Test public URL:
-   - Open https://ffxivbe.org in browser
-   - Should show your local service
+- Open https://ffxivbe.org in browser
+- Should show your local service
+   - Also test `https://chat.ffxivbe.org`
 
 2. Test toggle shortcut:
    - Double-click `Toggle Tunnel.lnk` on desktop
@@ -129,7 +134,9 @@ This creates:
 ## Troubleshooting
 
 ### Tunnel not connecting
-- Check local service is running: `curl http://127.0.0.1:9000`
+- Check the local origins are running:
+  - `curl http://127.0.0.1:7542`
+  - `curl http://127.0.0.1:3000`
 - Verify tunnel config: `cloudflared tunnel info ffxivbe-tunnel`
 - Check credentials file exists at path in config.yml
 
@@ -145,8 +152,8 @@ This creates:
 
 ### 503/1033 errors
 - Tunnel not connected - restart it
-- Local service not running - start your service on port 9000
-- Check firewall isn't blocking localhost:9000
+- Local service not running - start the `7542` or `3000` origin that matches the hostname
+- Check firewall isn't blocking the local loopback origin
 
 ## Quick Reference
 
@@ -167,7 +174,7 @@ This creates:
 - The tunnel runs hidden in the background via scheduled task
 - It starts automatically on login
 - Use the toggle shortcut to start/stop manually
-- Local service must be running on port 9000 for tunnel to work
+- Local services must be running for the relevant hostnames to work
 - DNS changes may take a few minutes to propagate
 
 
@@ -306,7 +313,10 @@ Run in Administrator PowerShell:
 
 ```powershell
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"cloudflared tunnel --config C:\Users\Heiner\.cloudflared\ssh-config.yml run ssh-tunnel`""
-$trigger = New-ScheduledTaskTrigger -AtLogon
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtStartup),
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+)
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 

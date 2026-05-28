@@ -7,6 +7,49 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
+
+$accountId = 'd34896e6a0f8b2fba5e03dec659eac50'
+
+function Read-Secret {
+    param([string]$Key)
+    $secretsPath = Join-Path (Split-Path -Parent $PSScriptRoot) '.secrets'
+    if (-not (Test-Path $secretsPath)) { throw ".secrets not found at $secretsPath" }
+    $line = Get-Content $secretsPath | Where-Object { $_ -match "^$Key=" } | Select-Object -First 1
+    if (-not $line) { throw "Secret '$Key' not found in .secrets" }
+    return ($line -replace "^$Key=", '').Trim()
+}
+
+function Invoke-CloudflareApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('GET','POST','PUT','PATCH','DELETE')]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [object]$Body = $null
+    )
+
+    $token = Read-Secret 'CLOUDFLARE_ACCOUNT_API_TOKEN'
+    $headers = @{ Authorization = "Bearer $token" }
+    $params = @{
+        Uri     = "https://api.cloudflare.com/client/v4$Path"
+        Headers = $headers
+        Method  = $Method
+    }
+    if ($null -ne $Body) {
+        $params.Body = ($Body | ConvertTo-Json -Depth 12 -Compress)
+        $params.ContentType = 'application/json'
+    }
+    $response = Invoke-RestMethod @params
+    if ($null -eq $response.success -or -not $response.success) {
+        $errors = if ($response.errors) { ($response.errors | ConvertTo-Json -Depth 8 -Compress) } else { 'unknown error' }
+        throw "Cloudflare API $Method $Path failed: $errors"
+    }
+    return $response.result
+}
+
+. (Join-Path $PSScriptRoot 'shared-cloudflare-auth.ps1')
 
 # Check if running as Administrator, if not, restart with elevation
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -43,9 +86,31 @@ Write-Host "[1/6] Checking cloudflared..." -ForegroundColor Yellow
 
 # MUST use official MSI path (not Chocolatey) for Smart App Control compatibility
 $cloudflaredPath = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+
+function Invoke-CloudflaredCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = Join-Path $env:TEMP "cloudflared-command.out"
+    $stderrPath = Join-Path $env:TEMP "cloudflared-command.err"
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    $process = Start-Process -FilePath $cloudflaredPath -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    return [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Output   = $stdout
+    }
+}
+
 if (Test-Path $cloudflaredPath) {
-    $cfVersion = & $cloudflaredPath --version 2>&1
-    Write-Host "  OK Cloudflared: $cfVersion" -ForegroundColor Green
+    $cfVersionResult = Invoke-CloudflaredCommand -Arguments @('--version')
+    Write-Host "  OK Cloudflared: $($cfVersionResult.Output.Trim())" -ForegroundColor Green
 } else {
     Write-Host "  Cloudflared not found, installing from official MSI..." -ForegroundColor Yellow
     Write-Host "  (Using official MSI for Smart App Control compatibility)" -ForegroundColor Gray
@@ -62,8 +127,8 @@ if (Test-Path $cloudflaredPath) {
     Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
 
     if (Test-Path $cloudflaredPath) {
-        $cfVersion = & $cloudflaredPath --version 2>&1
-        Write-Host "  OK Cloudflared installed: $cfVersion" -ForegroundColor Green
+        $cfVersionResult = Invoke-CloudflaredCommand -Arguments @('--version')
+        Write-Host "  OK Cloudflared installed: $($cfVersionResult.Output.Trim())" -ForegroundColor Green
     } else {
         Write-Host "  X Failed to install cloudflared" -ForegroundColor Red
         exit 1
@@ -110,27 +175,16 @@ Write-Host ""
 Write-Host "[3/6] Setting up SSH tunnel..." -ForegroundColor Yellow
 
 # Check if tunnel exists
-$tunnelList = & $cloudflaredPath tunnel list 2>&1
-if ($tunnelList -match $sshTunnelId) {
+$tunnelListResult = Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel"
+$existingTunnel = @($tunnelListResult | Where-Object { $_.name -eq $sshTunnelName -and -not $_.deleted_at } | Select-Object -First 1)
+if ($existingTunnel) {
+    $sshTunnelId = $existingTunnel.id
     Write-Host "  OK Tunnel exists: $sshTunnelId" -ForegroundColor Green
 } else {
     Write-Host "  Creating new tunnel..." -ForegroundColor Gray
-    $createOutput = & $cloudflaredPath tunnel create $sshTunnelName 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  X Failed to create tunnel" -ForegroundColor Red
-        Write-Host "  Output: $createOutput" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "  If tunnel already exists with different ID, update this script" -ForegroundColor Yellow
-        exit 1
-    }
-    # Extract tunnel ID from output
-    if ($createOutput -match "([a-f0-9-]{36})") {
-        $sshTunnelId = $matches[1]
-        Write-Host "  OK Tunnel created: $sshTunnelId" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "  IMPORTANT: Update the sshTunnelId variable in this script!" -ForegroundColor Yellow
-        Write-Host "  New ID: $sshTunnelId" -ForegroundColor Yellow
-    }
+    $createResult = Invoke-CloudflareApi -Method POST -Path "/accounts/$accountId/cfd_tunnel" -Body @{ name = $sshTunnelName }
+    $sshTunnelId = $createResult.id
+    Write-Host "  OK Tunnel created: $sshTunnelId" -ForegroundColor Green
 }
 
 # Step 4: Create SSH config file
@@ -144,6 +198,8 @@ if (-not (Test-Path $configDir)) {
 
 $sshConfigPath = Join-Path $configDir "ssh-config.yml"
 $credentialsPath = Join-Path $configDir "$sshTunnelId.json"
+$tokenOutputPath = Join-Path $env:TEMP "cloudflared-ssh-token.out"
+$tokenErrorPath = Join-Path $env:TEMP "cloudflared-ssh-token.err"
 
 $sshConfigContent = @"
 tunnel: $sshTunnelId
@@ -162,16 +218,8 @@ Write-Host "  OK Config created: $sshConfigPath" -ForegroundColor Green
 # Verify credentials file exists, if not generate from token
 if (-not (Test-Path $credentialsPath)) {
     Write-Host "  Credentials file not found, generating from tunnel token..." -ForegroundColor Gray
-
-    # Get tunnel token
-    $token = & $cloudflaredPath tunnel token $sshTunnelName 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  X Failed to get tunnel token" -ForegroundColor Red
-        Write-Host "  Output: $token" -ForegroundColor Gray
-        exit 1
-    }
-
-    # Decode base64 token to get credentials
+    $tokenResponse = Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel/$sshTunnelId/token"
+    $token = if ($tokenResponse.PSObject.Properties.Name -contains 'token') { $tokenResponse.token } else { $tokenResponse }
     try {
         $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($token.Trim()))
         $tokenData = $tokenJson | ConvertFrom-Json
@@ -193,22 +241,45 @@ if (-not (Test-Path $credentialsPath)) {
     Write-Host "  OK Credentials file exists: $credentialsPath" -ForegroundColor Green
 }
 
+try {
+    Write-Host "  Ensuring Cloudflare cert.pem from .secrets..." -ForegroundColor Gray
+    $null = Ensure-CloudflareCertPem -RepoRoot (Split-Path -Parent $PSScriptRoot)
+    Write-Host "  OK cert.pem ready" -ForegroundColor Green
+
+    Write-Host "  Provisioning DNS route..." -ForegroundColor Gray
+    Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $sshTunnelId -Hostnames @($sshHostname)
+    Write-Host "  OK DNS route provisioned" -ForegroundColor Green
+} catch {
+    Write-Host "  X DNS route provisioning failed: $_" -ForegroundColor Red
+    exit 1
+}
+
 # Step 5: Create scheduled task
 Write-Host ""
 Write-Host "[5/6] Creating scheduled task..." -ForegroundColor Yellow
 
 $taskName = "ssh-tunnel"
+$launcherPath = Join-Path $configDir "ssh-tunnel-launcher.vbs"
 
 # Remove existing task if present
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-# Create task
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -Command `"& '$cloudflaredPath' tunnel --config '$sshConfigPath' run $sshTunnelName`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
+# Create a hidden VBS launcher so no console window appears
+$launcherContent = @"
+Set shell = CreateObject("WScript.Shell")
+shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$sshConfigPath" & Chr(34) & " run $sshTunnelName", 0, False
+"@
+Set-Content -Path $launcherPath -Value $launcherContent
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH Tunnel for $sshHostname" | Out-Null
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$launcherPath`""
+$triggers = @(
+    (New-ScheduledTaskTrigger -AtStartup),
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description "SSH Tunnel for $sshHostname (boot-started)" | Out-Null
 Write-Host "  OK Scheduled task installed: $taskName" -ForegroundColor Green
 
 # Start task
@@ -293,23 +364,10 @@ Write-Host ""
 Write-Host "SSH Tunnel Status: $taskStatus" -ForegroundColor Cyan
 Write-Host ""
 
-Write-Host "========================================" -ForegroundColor Yellow
-Write-Host "MANUAL STEPS REQUIRED (Cloudflare Dashboard)" -ForegroundColor Yellow
-Write-Host "========================================" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "1. DNS Record (if not already done):" -ForegroundColor White
-Write-Host "   - Go to: https://dash.cloudflare.com/ -> DNS -> Records" -ForegroundColor Gray
-Write-Host "   - Add CNAME: pc -> $sshTunnelId.cfargotunnel.com" -ForegroundColor Gray
-Write-Host ""
-Write-Host "2. Zero Trust Route (if not already done):" -ForegroundColor White
-Write-Host "   - Go to: https://one.dash.cloudflare.com/" -ForegroundColor Gray
-Write-Host "   - Networks -> Tunnels -> ssh-tunnel" -ForegroundColor Gray
-Write-Host "   - Add public hostname: $sshHostname -> ssh://localhost:22" -ForegroundColor Gray
-Write-Host ""
-Write-Host "3. WAF Bypass Rule (if not already done):" -ForegroundColor White
-Write-Host "   - Go to: https://dash.cloudflare.com/ -> Security -> WAF" -ForegroundColor Gray
-Write-Host "   - Create rule: Hostname equals $sshHostname -> Skip all" -ForegroundColor Gray
-Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Cloudflare DNS route provisioned headlessly." -ForegroundColor Green
+Write-Host "No dashboard step is required for the tunnel itself." -ForegroundColor Green
+Write-Host "If you manage Access/WAF separately, keep that in your Cloudflare automation." -ForegroundColor Gray
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "To connect from Mac:" -ForegroundColor Cyan

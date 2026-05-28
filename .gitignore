@@ -19,3 +19,4 @@ nul
 # Node / Wrangler build artifacts
 node_modules/
 .wrangler/
+cloudflared/reports-*/
