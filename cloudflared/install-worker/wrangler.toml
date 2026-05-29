@@ -2,7 +2,9 @@ name = "pcsetup-install"
 main = "index.js"
 compatibility_date = "2024-01-01"
 account_id = "d34896e6a0f8b2fba5e03dec659eac50"
+workers_dev = true
 
 [[routes]]
-pattern = "i.ffxivbe.org/*"
+pattern = "i.ffxivbe.org"
+custom_domain = true
 zone_name = "ffxivbe.org"

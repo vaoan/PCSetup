@@ -1,9 +1,7 @@
 #Requires -Modules Pester
 
-BeforeAll {
-    $ErrorActionPreference = 'Stop'
-    $IsCI = $env:PCSETUP_CI -eq '1'
-}
+$ErrorActionPreference = 'Stop'
+$IsCI = $env:PCSETUP_CI -eq '1'
 
 # ─────────────────────────────────────────────
 # 1 — delete-node-modules
@@ -253,5 +251,35 @@ Describe "cloudflared scheduled tasks" {
         $script | Should -Match 'MultipleInstances IgnoreNew'
         $script | Should -Match 'wscript\.exe'
         $script | Should -Match 'launcher\.vbs'
+    }
+}
+
+Describe "cloudflared staging recovery" {
+    It "clean-install smoke test script exists" {
+        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\test-clean-install.ps1") | Should -BeTrue
+    }
+
+    It "clean-install smoke test runs uninstall then recovery then full verification" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\test-clean-install.ps1") -Raw
+        $script | Should -Match 'sync-secrets\.ps1'
+        $script | Should -Match 'uninstall-console\.ps1'
+        $script | Should -Match 'uninstall-tunnel\.ps1'
+        $script | Should -Match 'uninstall-ssh-tunnel\.ps1'
+        $script | Should -Match 'post-format-recovery\.ps1'
+        $script | Should -Match 'verify-console\.ps1'
+    }
+
+    It "post-format recovery ends with full verification" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\post-format-recovery.ps1") -Raw
+        $script | Should -Match 'verify-console\.ps1'
+        $script | Should -Not -Match 'verify-public-routes\.ps1'
+    }
+
+    It "public route verifier bootstraps pnpm and Chromium" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.ps1") -Raw
+        $script | Should -Match 'Ensure-Pnpm'
+        $script | Should -Match 'npm\.cmd install -g pnpm'
+        $script | Should -Match 'pnpm install'
+        $script | Should -Match 'playwright install chromium'
     }
 }

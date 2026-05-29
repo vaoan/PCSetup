@@ -643,16 +643,16 @@ if (Test-Path $consoleSetupWsl) {
     Write-Host "  SKIP setup-console-wsl.sh not found" -ForegroundColor Yellow
 }
 
-$verifyScript = Join-Path $scriptDir "verify-public-routes.ps1"
+$verifyScript = Join-Path $scriptDir "verify-console.ps1"
 if (Test-Path $verifyScript) {
-    Write-Host "[post-format-recovery] Running post-install public-route verification..." -ForegroundColor Yellow
+    Write-Host "[post-format-recovery] Running full post-install verification..." -ForegroundColor Yellow
     & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "[post-format-recovery] Verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Green
+        Write-Host "[post-format-recovery] Full verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Green
     } else {
-        Write-Host "[post-format-recovery] Verification failed. Check $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Red
+        Write-Host "[post-format-recovery] Full verification failed. Check $env:USERPROFILE\.cloudflared\reports." -ForegroundColor Red
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "[post-format-recovery] Verification skipped: verify-public-routes.ps1 not found." -ForegroundColor Yellow
+    Write-Host "[post-format-recovery] Verification skipped: verify-console.ps1 not found." -ForegroundColor Yellow
 }

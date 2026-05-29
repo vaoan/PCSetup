@@ -419,7 +419,36 @@ Repeated during debugging:
 - process command-line checks
 - port-listener checks
 
-### 4. SSHwifty and browser-path debugging
+### 4. Public installer worker
+
+The public bootstrap URL is now fronted by a Cloudflare Worker:
+
+- Worker name: `pcsetup-install`
+- Public installer URL: `https://i.ffxivbe.org/`
+- Fallback workers.dev URL: `https://pcsetup-install.vaoan-pcsetup-20260528.workers.dev`
+- Worker source: `cloudflared/install-worker/index.js`
+- Wrangler config: `cloudflared/install-worker/wrangler.toml`
+
+Behavior:
+
+- fetches `https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/main/remote-call.ps1`
+- returns the PowerShell script as plain text with `Cache-Control: no-cache`
+
+Release model:
+
+- `workers_dev = true`
+- `i.ffxivbe.org` is attached as a Worker custom domain, not a legacy route
+- `wrangler deploy --config cloudflared/install-worker/wrangler.toml` now succeeds end to end
+
+Validation used:
+
+- Cloudflare API `PUT /accounts/{account_id}/workers/domains`
+- `wrangler deploy` confirmation showing both:
+  - `https://pcsetup-install.vaoan-pcsetup-20260528.workers.dev`
+  - `i.ffxivbe.org (custom domain - zone name: ffxivbe.org)`
+- direct `curl.exe --resolve i.ffxivbe.org:443:104.21.13.129 https://i.ffxivbe.org/` returning the `remote-call.ps1` content
+
+### 5. SSHwifty and browser-path debugging
 
 Used during the fixes:
 
@@ -561,6 +590,73 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-tunnel
 powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-ssh-tunnel.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\setup-console-windows.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-console.ps1
+```
+
+### Clean-image staging validation
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
+```
+
+This is the repo-owned smoke test for fresh-machine validation. It:
+
+- syncs secrets unless `-SkipSecretSync` is passed
+- uninstalls the current Cloudflare stack unless `-SkipUninstall` is passed
+- runs `post-format-recovery.ps1`
+- finishes with `verify-console.ps1`
+
+This is the staging path that should be used to prove the stack can reinstall cleanly from repo state.
+
+### Repo test harness
+
+Use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run-tests.ps1
+```
+
+Do not rely on the machine-default `Invoke-Pester` entrypoint. This repo's test file uses modern Pester syntax, and `tests/run-tests.ps1` installs and imports Pester 5 automatically when needed.
+
+### Windows container validation
+
+Use:
+
+```powershell
+docker build -f .\Dockerfile.test .
+```
+
+This path now pulls the remote bootstrap from:
+
+- `https://i.ffxivbe.org/`
+
+Host prerequisites for this Windows container path:
+
+- Docker Desktop must be running
+- Docker Desktop must be switched to `desktop-windows`
+- Windows optional feature `Containers` must be enabled
+- Windows optional feature `Microsoft-Hyper-V-All` must be enabled
+- the host must be rebooted after enabling those features
+
+Observed failure mode from this chat:
+
+- Docker Desktop could switch contexts, but the Windows engine returned `500` on `_ping` and `info`
+- root cause was both `Containers` and `Microsoft-Hyper-V-All` being disabled
+- after enabling them with `Enable-WindowsOptionalFeature -Online ... -NoRestart`, Windows reported `RestartNeeded : True`
+- until reboot, `docker build -f .\Dockerfile.test .` could not run against the Windows engine
+
+This is a non-Cloudflare, container-safe validation path only. It does not attempt to prove host-only features such as:
+
+- WSL startup and service wiring
+- Windows Scheduled Tasks
+- OpenSSH Server installation on the host
+- Defender exclusion changes
+- desktop shortcuts
+- real Cloudflare tunnel runtime on the host
+
+The actual Cloudflare staging proof stays on the host-side smoke test:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
 ```
 
 ### Headed public-route debugging

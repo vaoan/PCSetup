@@ -131,6 +131,46 @@ This creates:
    - Double-click `Toggle Tunnel.lnk` on desktop
    - Should start/stop the tunnel
 
+## Clean-Image Validation
+
+For staging or fresh-image validation, use the repo smoke test instead of piecing the steps together manually:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
+```
+
+That script:
+- optionally syncs `.secrets`
+- uninstalls the current Cloudflare stack
+- reruns `post-format-recovery.ps1`
+- finishes with `verify-console.ps1`
+
+The verifier now bootstraps `pnpm`, reinstalls the Playwright dependency set, and installs Chromium automatically if those browser-test dependencies are missing.
+
+## Windows Container Validation
+
+For the non-Cloudflare remote-install validation path, build the Windows test image:
+
+```powershell
+docker build -f .\Dockerfile.test .
+```
+
+That image pulls the installer from:
+
+- `https://i.ffxivbe.org/`
+
+Host prerequisites:
+
+- Docker Desktop running
+- Docker Desktop switched to Windows containers
+- Windows optional feature `Containers` enabled
+- Windows optional feature `Microsoft-Hyper-V-All` enabled
+
+Important:
+
+- after enabling those Windows features, you must reboot before the Windows Docker engine can run the build successfully
+- without the reboot, Docker can show the `desktop-windows` context but still fail with Windows engine `500` errors
+
 ## Troubleshooting
 
 ### Tunnel not connecting

@@ -27,6 +27,7 @@ Run these in order from `Z:\Users\Heiner\Documents\PCSetup`:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\cloudflared\post-format-recovery.ps1
    ```
+   This now ends by running the full Cloudflare verifier, not just the public route check.
 4. If you only need the web and SSH tunnel tasks, reinstall those directly.
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\cloudflared\install-tunnel.ps1
@@ -38,6 +39,38 @@ Run these in order from `Z:\Users\Heiner\Documents\PCSetup`:
    powershell -ExecutionPolicy Bypass -File .\cloudflared\setup-console-windows.ps1
    ```
    This ends by running `cloudflared\verify-console.ps1` and writing a report to `%USERPROFILE%\.cloudflared\reports\`.
+
+## Clean-Image Staging
+
+Use this when you want to validate that the Cloudflare stack can be rebuilt from repo state on a fresh machine image:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
+```
+
+What it does:
+- syncs `.secrets` from the GitHub encrypted artifact
+- uninstalls the existing console/web/ssh Cloudflare stack
+- runs `cloudflared\post-format-recovery.ps1`
+- runs the full `cloudflared\verify-console.ps1` report
+
+The browser-verification leg now auto-installs `pnpm`, restores the local Playwright dependency set, and installs Chromium if they are missing.
+
+For containerized validation of the non-Cloudflare setup path, use the Windows test image:
+
+```powershell
+docker build -f .\Dockerfile.test .
+```
+
+That container path uses `https://i.ffxivbe.org/` as the public installer entrypoint, so the clean image exercises the real remote bootstrap URL instead of a raw GitHub URL.
+
+Windows container prerequisites on the host:
+- Docker Desktop must be switched to Windows containers
+- Windows optional feature `Containers` must be enabled
+- Windows optional feature `Microsoft-Hyper-V-All` must be enabled
+- a reboot is required after enabling those features before the Windows Docker engine will become healthy
+
+That container path is intentionally limited to non-Cloudflare, container-safe setup assertions after the installer runs. It does not exercise the host-only Cloudflare recovery/runtime pieces such as WSL, Scheduled Tasks, OpenSSH Server, Defender exclusions, or desktop shortcuts.
 
 ## What Each Tunnel Needs
 
@@ -76,6 +109,14 @@ Use these checks after recovery:
 try { (Invoke-WebRequest -UseBasicParsing https://ffxivbe.org -TimeoutSec 20).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }
 try { (Invoke-WebRequest -UseBasicParsing https://chat.ffxivbe.org -TimeoutSec 20).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }
 ```
+
+For the repo test suite, use the pinned Pester entrypoint instead of calling `Invoke-Pester` directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\run-tests.ps1
+```
+
+That script installs and loads Pester 5 automatically so the repo tests run consistently on fresh machines.
 
 ## References
 
