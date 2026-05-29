@@ -70,11 +70,6 @@ try {
         $memStream.Dispose()
     }
 
-    $runAllPath = Join-Path $workDir "run-all.bat"
-    if (-not (Test-Path $runAllPath)) {
-        throw "run-all.bat was not found in the remote archive."
-    }
-
     $manifestPath = Join-Path $workDir "remote-call.manifest.json"
     $manifest = [ordered]@{
         source = $repoZipUrl
@@ -85,11 +80,38 @@ try {
     } | ConvertTo-Json -Depth 4
     Set-Content -Path $manifestPath -Value $manifest -Encoding UTF8
 
-    Write-Host "Executing remote runner from temp workspace: $workDir" -ForegroundColor Cyan
     $env:PCSETUP_REMOTE_CALL = "1"
-    $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$runAllPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) {
-        throw "Remote runner failed with exit code $($proc.ExitCode)."
+    if ($env:PCSETUP_CI -eq '1') {
+        Write-Host "CI mode detected. Executing container-safe setup scripts from temp workspace: $workDir" -ForegroundColor Cyan
+        $ciScripts = @(
+            '2-setup-windows.bat',
+            '3-setup-node.bat'
+        )
+
+        foreach ($scriptName in $ciScripts) {
+            $scriptPath = Join-Path $workDir $scriptName
+            if (-not (Test-Path $scriptPath)) {
+                throw "Required CI setup script '$scriptName' was not found in the remote archive."
+            }
+
+            Write-Host "Running $scriptName..." -ForegroundColor Cyan
+            $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$scriptPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
+            if ($proc.ExitCode -ne 0) {
+                throw "CI setup script '$scriptName' failed with exit code $($proc.ExitCode)."
+            }
+        }
+    }
+    else {
+        $runAllPath = Join-Path $workDir "run-all.bat"
+        if (-not (Test-Path $runAllPath)) {
+            throw "run-all.bat was not found in the remote archive."
+        }
+
+        Write-Host "Executing remote runner from temp workspace: $workDir" -ForegroundColor Cyan
+        $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$runAllPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -ne 0) {
+            throw "Remote runner failed with exit code $($proc.ExitCode)."
+        }
     }
 }
 finally {
