@@ -105,11 +105,14 @@ try {
         }
         Refresh-ProcessPath
 
-        $nvmExe = (Get-Command nvm -ErrorAction SilentlyContinue).Source
+        $nvmCandidates = @(
+            (Get-Command nvm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+            (Join-Path $env:APPDATA 'nvm\nvm.exe'),
+            'C:\ProgramData\nvm\nvm.exe'
+        ) | Where-Object { $_ } | Select-Object -Unique
+
+        $nvmExe = $nvmCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
         if (-not $nvmExe) {
-            $nvmExe = Join-Path $env:APPDATA 'nvm\nvm.exe'
-        }
-        if (-not (Test-Path $nvmExe)) {
             throw "nvm was not installed successfully."
         }
 
