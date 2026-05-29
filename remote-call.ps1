@@ -82,22 +82,51 @@ try {
 
     $env:PCSETUP_REMOTE_CALL = "1"
     if ($env:PCSETUP_CI -eq '1') {
-        Write-Host "CI mode detected. Executing container-safe setup scripts from temp workspace: $workDir" -ForegroundColor Cyan
-        $ciScripts = @(
-            '2-setup-windows.bat',
-            '3-setup-node.bat'
-        )
+        Write-Host "CI mode detected. Installing container-safe toolchain prerequisites..." -ForegroundColor Cyan
 
-        foreach ($scriptName in $ciScripts) {
-            $scriptPath = Join-Path $workDir $scriptName
-            if (-not (Test-Path $scriptPath)) {
-                throw "Required CI setup script '$scriptName' was not found in the remote archive."
-            }
+        function Refresh-ProcessPath {
+            $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+            $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+            $pathParts = @($machinePath, $userPath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            $env:Path = ($pathParts -join ';')
+        }
 
-            Write-Host "Running $scriptName..." -ForegroundColor Cyan
-            $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$scriptPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
-            if ($proc.ExitCode -ne 0) {
-                throw "CI setup script '$scriptName' failed with exit code $($proc.ExitCode)."
+        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Write-Host "Installing Chocolatey..." -ForegroundColor Cyan
+            $chocoInstallScript = (Invoke-WebRequest -Uri 'https://community.chocolatey.org/install.ps1' -UseBasicParsing -TimeoutSec 180).Content
+            Invoke-Expression $chocoInstallScript
+            Refresh-ProcessPath
+        }
+
+        Write-Host "Installing CI packages..." -ForegroundColor Cyan
+        & choco install git python gh nvm -y --no-progress
+        if ($LASTEXITCODE -ne 0) {
+            throw "Chocolatey package install failed with exit code $LASTEXITCODE."
+        }
+        Refresh-ProcessPath
+
+        $nvmExe = (Get-Command nvm -ErrorAction SilentlyContinue).Source
+        if (-not $nvmExe) {
+            $nvmExe = Join-Path $env:APPDATA 'nvm\nvm.exe'
+        }
+        if (-not (Test-Path $nvmExe)) {
+            throw "nvm was not installed successfully."
+        }
+
+        $nodeVersion = '22.19.0'
+        & $nvmExe install $nodeVersion
+        if ($LASTEXITCODE -ne 0) {
+            throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
+        }
+        & $nvmExe use $nodeVersion
+        if ($LASTEXITCODE -ne 0) {
+            throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
+        }
+        Refresh-ProcessPath
+
+        foreach ($commandName in 'choco', 'git', 'python', 'gh', 'nvm', 'node', 'npm') {
+            if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+                throw "Required CI command '$commandName' was not available after bootstrap."
             }
         }
     }
