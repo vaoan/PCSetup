@@ -10,7 +10,7 @@ ENV PCSETUP_CI=1
 ARG BRANCH=main
 
 # Run the remote install — use scriptblock so param() binding works and -Branch is honoured
-RUN $url = 'https://i.ffxivbe.org/'; `
+RUN $url = ('https://i.ffxivbe.org/?branch=' + $env:BRANCH); `
     Write-Host ('Fetching ' + $url) -ForegroundColor Cyan; `
     & ([scriptblock]::Create((Invoke-RestMethod -Uri $url -UseBasicParsing))) -Branch $env:BRANCH
 
