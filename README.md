@@ -72,6 +72,15 @@ Windows container prerequisites on the host:
 
 That container path is intentionally limited to non-Cloudflare, container-safe setup assertions after the installer runs. It does not exercise the host-only Cloudflare recovery/runtime pieces such as WSL, Scheduled Tasks, OpenSSH Server, Defender exclusions, or desktop shortcuts.
 
+Latest verified result from this chat:
+- `docker build --no-cache -f .\Dockerfile.test .` completed successfully
+- the container installed from `https://i.ffxivbe.org/?branch=main`
+- the container suite passed with `15` tests passed and `0` failed
+
+Important operational note:
+- `i.ffxivbe.org` is the public entrypoint, but the script it serves is sourced from `origin/main`
+- if the remote install behavior changes, the fix must be committed and pushed to GitHub before re-testing the clean-image path
+
 ## What Each Tunnel Needs
 
 ### `ffxivbe-tunnel`

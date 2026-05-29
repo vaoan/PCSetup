@@ -159,6 +159,19 @@ That image pulls the installer from:
 
 - `https://i.ffxivbe.org/`
 
+What that means operationally:
+
+- the container does not fetch the installer from the local repo
+- the container exercises the public Cloudflare-hosted installer entrypoint
+- the Worker bootstrap then pulls `remote-call.ps1` from GitHub `main`
+- if the remote install behavior changes, commit and push `main` before rerunning the clean-image validation
+
+Latest verified result from this chat:
+
+- `docker build --no-cache -f .\Dockerfile.test .` completed successfully
+- the install phase succeeded from `https://i.ffxivbe.org/?branch=main`
+- the container test suite passed with `15` tests passed and `0` failed
+
 Host prerequisites:
 
 - Docker Desktop running
@@ -170,6 +183,14 @@ Important:
 
 - after enabling those Windows features, you must reboot before the Windows Docker engine can run the build successfully
 - without the reboot, Docker can show the `desktop-windows` context but still fail with Windows engine `500` errors
+
+Current Worker deployment caveat:
+
+- the live installer endpoint is already online and working
+- however, `wrangler deploy` is currently blocked on this machine because the authenticated Wrangler account does not match the account configured in `cloudflared/install-worker/wrangler.toml`
+- practical effect:
+  - changes to `remote-call.ps1` go live after a `git push` to `main`
+  - changes to `cloudflared/install-worker/index.js` require Wrangler authentication against the correct Cloudflare account before redeploy
 
 ## Troubleshooting
 

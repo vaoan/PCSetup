@@ -431,22 +431,37 @@ The public bootstrap URL is now fronted by a Cloudflare Worker:
 
 Behavior:
 
-- fetches `https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/main/remote-call.ps1`
-- returns the PowerShell script as plain text with `Cache-Control: no-cache`
+- returns a small PowerShell bootstrap script
+- the bootstrap script fetches and executes:
+  - `https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/main/remote-call.ps1`
+- response headers include:
+  - `X-PCSetup-Branch`
+  - `X-PCSetup-Source`
+- returned content is marked `Cache-Control: no-cache`
 
 Release model:
 
 - `workers_dev = true`
 - `i.ffxivbe.org` is attached as a Worker custom domain, not a legacy route
-- `wrangler deploy --config cloudflared/install-worker/wrangler.toml` now succeeds end to end
+- the current live Worker model does not require repo-local hosting; consumers hit Cloudflare only
 
 Validation used:
 
-- Cloudflare API `PUT /accounts/{account_id}/workers/domains`
-- `wrangler deploy` confirmation showing both:
-  - `https://pcsetup-install.vaoan-pcsetup-20260528.workers.dev`
-  - `i.ffxivbe.org (custom domain - zone name: ffxivbe.org)`
-- direct `curl.exe --resolve i.ffxivbe.org:443:104.21.13.129 https://i.ffxivbe.org/` returning the `remote-call.ps1` content
+- direct fetch of `https://i.ffxivbe.org/?branch=main` returning the bootstrap script
+- direct fetch of the raw GitHub `remote-call.ps1` confirming the live bootstrap target
+- successful clean-image Windows container build using the public URL
+
+Current Wrangler caveat:
+
+- `wrangler deploy --config cloudflared/install-worker/wrangler.toml` is currently blocked on this machine
+- root cause: the authenticated Wrangler account does not match the Worker account configured in `wrangler.toml`
+- observed API failure:
+  - `/accounts/d34896e6a0f8b2fba5e03dec659eac50/workers/services/pcsetup-install`
+  - `Authentication error [code: 10000]`
+- operational meaning:
+  - the live Worker is already online and working
+  - fixes to `remote-call.ps1` still go live immediately after pushing `main`, because the Worker bootstrap points at GitHub
+  - changes to the Worker code itself require logging Wrangler into the correct Cloudflare account before redeploying
 
 ### 5. SSHwifty and browser-path debugging
 
@@ -628,6 +643,25 @@ docker build -f .\Dockerfile.test .
 This path now pulls the remote bootstrap from:
 
 - `https://i.ffxivbe.org/`
+
+Current validated result from this chat:
+
+- `docker build --no-cache -f .\Dockerfile.test .`
+- install bootstrap succeeded from `https://i.ffxivbe.org/?branch=main`
+- the container-safe suite passed with:
+  - `Tests Passed: 15`
+  - `Failed: 0`
+
+Container fixes required to reach green:
+
+- `remote-call.ps1` CI mode was reduced to container-safe prerequisites only:
+  - `git`
+  - `python`
+  - `gh`
+  - `nvm`
+- the CI bootstrap now restores `NVM_HOME` and `NVM_SYMLINK` in-process for Server Core
+- the CI bootstrap now writes `settings.txt` under `NVM_HOME` when needed
+- `tests/run-tests.ps1` now sets `PassThru = $true` so Pester returns a usable result object and the wrapper exits correctly
 
 Host prerequisites for this Windows container path:
 
