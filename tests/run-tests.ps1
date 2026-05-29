@@ -57,6 +57,7 @@ Write-Log "Using Pester $version"
 
 $config = New-PesterConfiguration
 $config.Run.Path = $Path
+$config.Run.PassThru = $true
 $config.Output.Verbosity = 'Detailed'
 
 $result = Invoke-Pester -Configuration $config
