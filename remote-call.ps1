@@ -128,6 +128,23 @@ try {
         $env:NVM_HOME = $nvmHome
         $env:NVM_SYMLINK = $nvmSymlink
 
+        if (-not (Test-Path $env:NVM_HOME)) {
+            New-Item -ItemType Directory -Path $env:NVM_HOME -Force | Out-Null
+        }
+        if (-not (Test-Path $env:NVM_SYMLINK)) {
+            New-Item -ItemType Directory -Path $env:NVM_SYMLINK -Force | Out-Null
+        }
+
+        $nvmSettingsPath = Join-Path $env:NVM_HOME 'settings.txt'
+        if (-not (Test-Path $nvmSettingsPath)) {
+            @(
+                "root: $env:NVM_HOME"
+                "path: $env:NVM_SYMLINK"
+                "arch: 64"
+                "proxy: none"
+            ) | Set-Content -Path $nvmSettingsPath -Encoding ASCII
+        }
+
         $pathSegments = @(
             $env:NVM_HOME,
             $env:NVM_SYMLINK,
@@ -141,13 +158,19 @@ try {
         $env:Path = $pathSegments -join ';'
 
         $nodeVersion = '22.19.0'
-        & $nvmExe install $nodeVersion
-        if ($LASTEXITCODE -ne 0) {
-            throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
+        Push-Location $env:NVM_HOME
+        try {
+            & $nvmExe install $nodeVersion
+            if ($LASTEXITCODE -ne 0) {
+                throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
+            }
+            & $nvmExe use $nodeVersion
+            if ($LASTEXITCODE -ne 0) {
+                throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
+            }
         }
-        & $nvmExe use $nodeVersion
-        if ($LASTEXITCODE -ne 0) {
-            throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
+        finally {
+            Pop-Location
         }
         Refresh-ProcessPath
 
