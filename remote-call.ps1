@@ -116,6 +116,30 @@ try {
             throw "nvm was not installed successfully."
         }
 
+        $nvmHome = [Environment]::GetEnvironmentVariable('NVM_HOME', 'Machine')
+        $nvmSymlink = [Environment]::GetEnvironmentVariable('NVM_SYMLINK', 'Machine')
+        if ([string]::IsNullOrWhiteSpace($nvmHome)) {
+            $nvmHome = Split-Path $nvmExe -Parent
+        }
+        if ([string]::IsNullOrWhiteSpace($nvmSymlink)) {
+            $nvmSymlink = 'C:\nvm4w\nodejs'
+        }
+
+        $env:NVM_HOME = $nvmHome
+        $env:NVM_SYMLINK = $nvmSymlink
+
+        $pathSegments = @(
+            $env:NVM_HOME,
+            $env:NVM_SYMLINK,
+            [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+            [Environment]::GetEnvironmentVariable('Path', 'User')
+        ) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ -split ';' } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        $env:Path = $pathSegments -join ';'
+
         $nodeVersion = '22.19.0'
         & $nvmExe install $nodeVersion
         if ($LASTEXITCODE -ne 0) {
