@@ -165,9 +165,21 @@ try {
         $nodeVersion = '22.19.0'
         Push-Location $env:NVM_HOME
         try {
-            & $nvmExe install $nodeVersion
-            if ($LASTEXITCODE -ne 0) {
-                throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
+            $nvmInstallSucceeded = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                & $nvmExe install $nodeVersion
+                if ($LASTEXITCODE -eq 0) {
+                    $nvmInstallSucceeded = $true
+                    break
+                }
+
+                if ($attempt -lt 3) {
+                    Start-Sleep -Seconds (5 * $attempt)
+                }
+            }
+
+            if (-not $nvmInstallSucceeded) {
+                throw "nvm install $nodeVersion failed after 3 attempts. Last exit code: $LASTEXITCODE."
             }
             & $nvmExe use $nodeVersion
             if ($LASTEXITCODE -ne 0) {
