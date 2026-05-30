@@ -169,12 +169,16 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
             }
-            if (Test-Path $env:NVM_SYMLINK) {
-                Remove-Item $env:NVM_SYMLINK -Recurse -Force
-            }
             & $nvmExe use $nodeVersion
             if ($LASTEXITCODE -ne 0) {
-                throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
+                $versionDir = Join-Path $env:NVM_HOME ("v{0}" -f $nodeVersion)
+                $nodeExePath = Join-Path $versionDir 'node.exe'
+                $npmCmdPath = Join-Path $versionDir 'npm.cmd'
+                if (-not (Test-Path $nodeExePath) -or -not (Test-Path $npmCmdPath)) {
+                    throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
+                }
+
+                $env:Path = (@($versionDir, $env:Path) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';'
             }
         }
         finally {
