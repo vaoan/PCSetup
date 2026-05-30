@@ -169,6 +169,9 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "nvm install $nodeVersion failed with exit code $LASTEXITCODE."
             }
+            if (Test-Path $env:NVM_SYMLINK) {
+                Remove-Item $env:NVM_SYMLINK -Recurse -Force
+            }
             & $nvmExe use $nodeVersion
             if ($LASTEXITCODE -ne 0) {
                 throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
