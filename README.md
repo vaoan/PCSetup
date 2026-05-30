@@ -80,6 +80,7 @@ Latest verified result from this chat:
 Important operational note:
 - `i.ffxivbe.org` is the public entrypoint, but the script it serves is sourced from `origin/main`
 - if the remote install behavior changes, the fix must be committed and pushed to GitHub before re-testing the clean-image path
+- local-only fixes do not affect the installer; the container always consumes what is online on GitHub `main`
 
 ## What Each Tunnel Needs
 

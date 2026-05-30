@@ -165,12 +165,14 @@ What that means operationally:
 - the container exercises the public Cloudflare-hosted installer entrypoint
 - the Worker bootstrap then pulls `remote-call.ps1` from GitHub `main`
 - if the remote install behavior changes, commit and push `main` before rerunning the clean-image validation
+- if you only patch files locally and retest without pushing, the container will still execute the old online installer
 
 Latest verified result from this chat:
 
 - `docker build --no-cache -f .\Dockerfile.test .` completed successfully
 - the install phase succeeded from `https://i.ffxivbe.org/?branch=main`
 - the container test suite passed with `15` tests passed and `0` failed
+- the final CI bootstrap uses a direct Node version-directory fallback when `nvm use` is unreliable under Windows Server Core
 
 Host prerequisites:
 

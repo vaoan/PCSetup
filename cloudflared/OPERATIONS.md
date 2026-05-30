@@ -661,7 +661,15 @@ Container fixes required to reach green:
   - `nvm`
 - the CI bootstrap now restores `NVM_HOME` and `NVM_SYMLINK` in-process for Server Core
 - the CI bootstrap now writes `settings.txt` under `NVM_HOME` when needed
+- the CI bootstrap no longer depends on `nvm use` succeeding in Server Core; if activation fails, it falls back to the installed version directory under `NVM_HOME`
 - `tests/run-tests.ps1` now sets `PassThru = $true` so Pester returns a usable result object and the wrapper exits correctly
+
+Critical operator rule for this path:
+
+- the Windows container install test consumes `https://i.ffxivbe.org/`
+- that Worker bootstrap then consumes GitHub `main`
+- if `remote-call.ps1`, `Dockerfile.test`, or the container test harness changes, those changes must be committed and pushed before rerunning the install test
+- otherwise the retest will keep executing stale online installer code
 
 Host prerequisites for this Windows container path:
 
