@@ -131,8 +131,13 @@ try {
         if (-not (Test-Path $env:NVM_HOME)) {
             New-Item -ItemType Directory -Path $env:NVM_HOME -Force | Out-Null
         }
-        if (-not (Test-Path $env:NVM_SYMLINK)) {
-            New-Item -ItemType Directory -Path $env:NVM_SYMLINK -Force | Out-Null
+
+        $nvmSymlinkParent = Split-Path $env:NVM_SYMLINK -Parent
+        if (-not [string]::IsNullOrWhiteSpace($nvmSymlinkParent) -and -not (Test-Path $nvmSymlinkParent)) {
+            New-Item -ItemType Directory -Path $nvmSymlinkParent -Force | Out-Null
+        }
+        if ((Test-Path $env:NVM_SYMLINK) -and (Get-Item $env:NVM_SYMLINK).PSIsContainer) {
+            Remove-Item $env:NVM_SYMLINK -Recurse -Force
         }
 
         $nvmSettingsPath = Join-Path $env:NVM_HOME 'settings.txt'
