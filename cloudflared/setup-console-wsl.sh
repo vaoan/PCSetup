@@ -73,7 +73,51 @@ fi
 
 # -- 1. Install dependencies --------------------------------------------------
 apt-get update -q
-apt-get install -y tmux openssh-server curl
+apt-get install -y tmux openssh-server curl ca-certificates gnupg ttyd
+
+install_nodesource_node() {
+    echo "[setup-console-wsl] Installing Node.js 22 for WSL services..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+}
+
+NODE_MAJOR=0
+if command -v node >/dev/null 2>&1; then
+    NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
+fi
+
+if [ "$NODE_MAJOR" -lt 20 ]; then
+    install_nodesource_node
+else
+    echo "[setup-console-wsl] Node.js $(node --version) already supports console services"
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+    echo "[setup-console-wsl] npm was not found after Node.js install"
+    exit 1
+fi
+
+install_native_pnpm() {
+    local corepack_path
+    corepack_path=$(command -v corepack || true)
+    if [ -z "$corepack_path" ]; then
+        echo "[setup-console-wsl] corepack is not available; skipping native pnpm provisioning"
+        return
+    fi
+
+    echo "[setup-console-wsl] Provisioning native pnpm for WSL shells..."
+    "$corepack_path" enable
+    "$corepack_path" prepare pnpm@10.22.0 --activate
+
+    cat > /usr/local/bin/pnpm << WRAPPER
+#!/bin/bash
+exec "$corepack_path" pnpm "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/pnpm
+    echo "[setup-console-wsl] Native pnpm wrapper installed at /usr/local/bin/pnpm"
+}
+
+install_native_pnpm
 
 # -- 2. Configure sshd --------------------------------------------------------
 # Needed because sshwifty connects as root via key auth
@@ -137,6 +181,20 @@ MOUNTSCRIPT
 chmod +x /usr/local/bin/mount-windows-drives.sh
 echo "[setup-console-wsl] mount-windows-drives.sh installed"
 
+# -- 4b. terminal-recovery helper ---------------------------------------------
+cat > /usr/local/bin/fix-terminal << 'FIXTERMINAL'
+#!/bin/bash
+stty sane 2>/dev/null || true
+if command -v tput >/dev/null 2>&1; then
+    tput rmkx 2>/dev/null || true
+fi
+printf '\e[?1l\e>\e[?2004l'
+echo
+echo "[fix-terminal] Reset terminal input modes (stty sane, normal cursor keys, bracketed paste off)."
+FIXTERMINAL
+chmod +x /usr/local/bin/fix-terminal
+echo "[setup-console-wsl] fix-terminal helper installed"
+
 # -- 5. wetty fallback shell script -------------------------------------------
 cat > /usr/local/bin/wetty-start-shell.sh << 'WETTYSHELL'
 #!/bin/bash
@@ -145,9 +203,9 @@ WETTYSHELL
 chmod +x /usr/local/bin/wetty-start-shell.sh
 
 # -- 6. Install wetty (fallback web terminal, runs on port 7681) --------------
-if ! command -v wetty &>/dev/null; then
+if [ ! -x /usr/local/bin/wetty ]; then
     echo "[setup-console-wsl] Installing wetty..."
-    npm install -g wetty@2.7.0
+    /usr/bin/npm install -g wetty@2.7.0
 fi
 
 cat > /etc/systemd/system/wetty.service << 'WETTYSERVICE'
@@ -180,11 +238,11 @@ for target_home in /root "$CODE_HOME"; do
     done
 done
 
-# -- 8. Install code-server if missing ----------------------------------------
-if ! command -v code-server &>/dev/null; then
-    echo "[setup-console-wsl] Installing code-server..."
-    curl -fsSL https://code-server.dev/install.sh | sh
-fi
+# -- 8. Install / upgrade code-server to latest -------------------------------
+# install.sh is idempotent: installs if missing, upgrades in place if already
+# present. Running it unconditionally keeps code.ffxivbe.org on the latest release.
+echo "[setup-console-wsl] Installing/upgrading code-server to latest..."
+curl -fsSL https://code-server.dev/install.sh | sh
 
 mkdir -p "$CODE_HOME/.config/code-server"
 cat > "$CODE_HOME/.config/code-server/config.yaml" << 'CODESERVERCONF'
@@ -204,6 +262,10 @@ cat > "$CODE_HOME/.local/share/code-server/User/settings.json" << 'CSSETTINGS'
   "window.menuBarVisibility": "classic",
 
   "workbench.panel.opensMaximized": "always",
+  "terminal.integrated.gpuAcceleration": "off",
+  "terminal.integrated.altClickMovesCursor": false,
+  "terminal.integrated.enablePersistentSessions": false,
+  "terminal.integrated.localEchoEnabled": false,
 
   "chat.commandCenter.enabled": false,
   "chat.agent.enabled": false,
@@ -211,6 +273,18 @@ cat > "$CODE_HOME/.local/share/code-server/User/settings.json" << 'CSSETTINGS'
   "security.workspace.trust.enabled": false
 }
 CSSETTINGS
+cat > "$CODE_HOME/.local/share/code-server/User/keybindings.json" << 'CSKEYBINDINGS'
+[
+  {
+    "key": "ctrl+r",
+    "command": "workbench.action.reloadWindow"
+  },
+  {
+    "key": "cmd+r",
+    "command": "workbench.action.reloadWindow"
+  }
+]
+CSKEYBINDINGS
 chown -R "$CODE_USER:$CODE_USER" "$CODE_HOME/.local"
 echo "[setup-console-wsl] code-server user settings written"
 
@@ -239,6 +313,7 @@ CSTERMS
 
 # Install Terminals Manager (auto-opens terminal in panel on workspace load)
 runuser -u "$CODE_USER" -- code-server --install-extension fabiospampinato.vscode-terminals 2>/dev/null || true
+runuser -u "$CODE_USER" -- code-server --install-extension GlobalArt.reload-window-button 2>/dev/null || true
 # Remove ChatGPT extension if present
 runuser -u "$CODE_USER" -- code-server --uninstall-extension openai.chatgpt 2>/dev/null || true
 
@@ -260,45 +335,42 @@ echo "[setup-console-wsl] code-server workspace + terminal auto-open configured 
 # -- 8b. Replace code-server icons with pink VS Code icon (transparent bg) ----
 apt-get install -y -q librsvg2-bin imagemagick
 MEDIA=/usr/lib/code-server/src/browser/media
-ORIG=/usr/lib/code-server/lib/vscode/out/vs/sessions/contrib/chat/browser/media/vscode-icon.svg
+ORIG=$(find /usr/lib/code-server -path '*vscode-icon.svg' -o -path '*code-icon.svg' 2>/dev/null | head -n 1)
 
-# Recolor the bundled VS Code icon SVG: blue shades -> pink equivalents
-# #0065A9 (dark blue)   -> #9C0054 (dark pink)
-# #007ACC (medium blue) -> #CC007A (medium pink)
-# #1F9CF0 (light blue)  -> #FF1493 (hot pink)
-sed \
-  -e 's/#0065A9/#9C0054/g' \
-  -e 's/#007ACC/#CC007A/g' \
-  -e 's/#1F9CF0/#FF1493/g' \
-  "$ORIG" > /tmp/cs-icon-pink.svg
+if [ -n "$ORIG" ] && [ -f "$ORIG" ] && [ -d "$MEDIA" ]; then
+    # Recolor the bundled VS Code icon SVG: blue shades -> pink equivalents.
+    sed \
+      -e 's/#0065A9/#9C0054/g' \
+      -e 's/#007ACC/#CC007A/g' \
+      -e 's/#1F9CF0/#FF1493/g' \
+      "$ORIG" > /tmp/cs-icon-pink.svg
 
-# SVG favicons (browsers render these directly, transparent bg preserved)
-cp /tmp/cs-icon-pink.svg "$MEDIA/favicon.svg"
-cp /tmp/cs-icon-pink.svg "$MEDIA/favicon-dark-support.svg"
+    cp /tmp/cs-icon-pink.svg "$MEDIA/favicon.svg"
+    cp /tmp/cs-icon-pink.svg "$MEDIA/favicon-dark-support.svg"
 
-# favicon.ico multi-size (16, 32, 48) for legacy browsers and OS pinning
-rsvg-convert -w 16 -h 16 /tmp/cs-icon-pink.svg -o /tmp/cs-fav16.png
-rsvg-convert -w 32 -h 32 /tmp/cs-icon-pink.svg -o /tmp/cs-fav32.png
-rsvg-convert -w 48 -h 48 /tmp/cs-icon-pink.svg -o /tmp/cs-fav48.png
-convert /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png "$MEDIA/favicon.ico"
+    rsvg-convert -w 16 -h 16 /tmp/cs-icon-pink.svg -o /tmp/cs-fav16.png
+    rsvg-convert -w 32 -h 32 /tmp/cs-icon-pink.svg -o /tmp/cs-fav32.png
+    rsvg-convert -w 48 -h 48 /tmp/cs-icon-pink.svg -o /tmp/cs-fav48.png
+    convert /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png "$MEDIA/favicon.ico"
 
-# PWA regular icons (transparent bg)
-rsvg-convert -w 192 -h 192 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-192.png"
-rsvg-convert -w 512 -h 512 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-512.png"
+    rsvg-convert -w 192 -h 192 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-192.png"
+    rsvg-convert -w 512 -h 512 /tmp/cs-icon-pink.svg -o "$MEDIA/pwa-icon-512.png"
 
-# Maskable icons: dark background (#1e1e1e, VS Code dark theme) with pink icon in safe zone
-cat > /tmp/cs-icon-maskable.svg << 'SVGEOF'
+    cat > /tmp/cs-icon-maskable.svg << 'SVGEOF'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
   <rect width="96" height="96" fill="#1e1e1e"/>
   <g transform="translate(16.8,16.8) scale(0.65)">
 SVGEOF
-sed -n '/<g filter/,/<\/svg>/p' /tmp/cs-icon-pink.svg | head -n -1 >> /tmp/cs-icon-maskable.svg
-echo '  </g></svg>' >> /tmp/cs-icon-maskable.svg
-rsvg-convert -w 192 -h 192 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-192.png"
-rsvg-convert -w 512 -h 512 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-512.png"
+    sed -n '/<g filter/,/<\/svg>/p' /tmp/cs-icon-pink.svg | head -n -1 >> /tmp/cs-icon-maskable.svg || true
+    echo '  </g></svg>' >> /tmp/cs-icon-maskable.svg
+    rsvg-convert -w 192 -h 192 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-192.png" || true
+    rsvg-convert -w 512 -h 512 /tmp/cs-icon-maskable.svg -o "$MEDIA/pwa-icon-maskable-512.png" || true
 
-rm -f /tmp/cs-icon-pink.svg /tmp/cs-icon-maskable.svg /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png
-echo "[setup-console-wsl] code-server icons replaced (pink VS Code shape, transparent bg)"
+    rm -f /tmp/cs-icon-pink.svg /tmp/cs-icon-maskable.svg /tmp/cs-fav16.png /tmp/cs-fav32.png /tmp/cs-fav48.png
+    echo "[setup-console-wsl] code-server icons replaced (pink VS Code shape, transparent bg)"
+else
+    echo "[setup-console-wsl] code-server icon source not found; skipping icon replacement"
+fi
 
 # -- 9. Configure tmux mouse mode and ttyd-console service --------------------
 grep -q "mouse on" /root/.tmux.conf 2>/dev/null || echo "set -g mouse on" >> /root/.tmux.conf
@@ -313,7 +385,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ttyd -p 7684 -b /persistent -W bash -l -c "tmux new-session -A -s phone"
+ExecStart=/usr/bin/ttyd -p 7684 -b /persistent -W bash -l -c "tmux new-session -A -s phone"
 Restart=on-failure
 RestartSec=3
 
@@ -328,7 +400,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ttyd -p 7685 -b /fresh -W bash -l
+ExecStart=/usr/bin/ttyd -p 7685 -b /fresh -W bash -l
 Restart=on-failure
 RestartSec=3
 
@@ -374,9 +446,29 @@ DASHSERVICE
 systemctl daemon-reload
 echo "[setup-console-wsl] dashboard service configured (port 7686)"
 
-# Install ungit if missing
-if ! command -v ungit &>/dev/null; then
-    npm install -g ungit
+# Install or repair ungit. Recent ungit dependencies require Node >=20, and
+# older broken installs can survive reruns unless the binary is validated.
+validate_ungit() {
+    local log=/tmp/pcsetup-ungit-validate.log
+    rm -f "$log"
+    if [ ! -x /usr/local/bin/ungit ]; then
+        return 1
+    fi
+
+    timeout 8 /usr/local/bin/ungit --port 17688 --no-launchBrowser --ungitBindIp 127.0.0.1 >"$log" 2>&1 || true
+    grep -q 'Ungit started' "$log"
+}
+
+if ! validate_ungit; then
+    echo "[setup-console-wsl] Installing/repairing ungit..."
+    /usr/bin/npm uninstall -g ungit >/dev/null 2>&1 || true
+    /usr/bin/npm install -g ungit@1.5.30
+fi
+
+if ! validate_ungit; then
+    echo "[setup-console-wsl] ungit validation failed"
+    cat /tmp/pcsetup-ungit-validate.log 2>/dev/null || true
+    exit 1
 fi
 
 cat > /etc/systemd/system/ungit.service << 'UNGITSERVICE'
@@ -386,7 +478,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ungit --port 7688 --no-launchBrowser --ungitBindIp 0.0.0.0
+ExecStart=/usr/local/bin/ungit --port 7688 --no-launchBrowser --ungitBindIp 0.0.0.0
 Restart=on-failure
 RestartSec=3
 

@@ -15,26 +15,24 @@ It does not own unrelated app repositories. If a hostname depends on a separate 
 
 Run these in order from `Z:\Users\Heiner\Documents\PCSetup`:
 
-1. Reinstall the base machine setup.
+1. Reinstall the base machine setup and mandatory prerequisites.
    ```powershell
+   .\0-init-prereqs.bat
    .\run-all.bat
    ```
-2. Restore secrets used by the scripts.
+   The init step is the required first pass for package managers and shared prerequisites. It keeps Chocolatey available, but prefers Scoop/winget for current installs and prepares WSL, Node, Git, nvm, .NET desktop runtimes, Java, redistributables, and other common prerequisites before the later scripts run.
+2. Install, start, and schedule the full Cloudflare stack.
    ```powershell
-   .\cloudflared\sync-secrets.bat
+   .\cloudflared\install-all.bat
    ```
-3. Install or refresh the tunnel runtime.
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\cloudflared\post-format-recovery.ps1
-   ```
-   This now ends by running the full Cloudflare verifier, not just the public route check.
-4. If you only need the web and SSH tunnel tasks, reinstall those directly.
+   This syncs secrets when needed, installs cloudflared from the official MSI path, configures the web/SSH/console tunnels, starts them, installs scheduled tasks, verifies WSL console readiness, and runs verification.
+3. If you only need the web and SSH tunnel tasks, reinstall those directly.
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\cloudflared\install-tunnel.ps1
    powershell -ExecutionPolicy Bypass -File .\cloudflared\install-ssh-tunnel.ps1
    powershell -ExecutionPolicy Bypass -File .\cloudflared\install-scheduled-tasks.ps1
    ```
-5. Restore the console tools if needed.
+4. Restore the console tools only if needed.
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\cloudflared\setup-console-windows.ps1
    ```
@@ -106,7 +104,7 @@ This is optional and belongs to the dev-console workflow. Install it only if tha
 1. Install Windows packages and base tooling.
 2. Sync secrets.
 3. Restore Cloudflared authentication.
-4. Run `post-format-recovery.ps1`.
+4. Run `cloudflared\install-all.bat`.
 5. Start Docker Desktop if the local origin stack needs it.
 6. Start the console stack with `cloudflared\start-console.bat`.
 7. Verify with `cloudflared\verify-console.ps1`.
@@ -116,9 +114,13 @@ This is optional and belongs to the dev-console workflow. Install it only if tha
 Use these checks after recovery:
 
 ```powershell
-try { (Invoke-WebRequest -UseBasicParsing https://ffxivbe.org -TimeoutSec 20).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }
-try { (Invoke-WebRequest -UseBasicParsing https://chat.ffxivbe.org -TimeoutSec 20).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-console.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-public-routes.ps1
 ```
+
+The public verifier temporarily disables Cloudflare Access policies for the console hostnames, waits for propagation, runs browser checks, and restores the original policies in `finally`. It must not count Cloudflare Access login pages, Cloudflare 1103/502/504 pages, or placeholder fallback pages as success.
+
+The code-server public check first verifies `https://code.ffxivbe.org/`. If that passes, it also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` and fails on missing folder content or any 5xx subresource response.
 
 For the repo test suite, use the pinned Pester entrypoint instead of calling `Invoke-Pester` directly:
 

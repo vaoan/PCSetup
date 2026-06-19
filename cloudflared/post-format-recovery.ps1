@@ -117,6 +117,232 @@ function Invoke-CloudflaredCommand {
     }
 }
 
+function Stop-CloudflaredTunnelProcesses {
+    param([string[]]$Patterns)
+
+    $processes = Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue
+    foreach ($process in @($processes)) {
+        $commandLine = [string]$process.CommandLine
+        if (-not $commandLine) { continue }
+        foreach ($pattern in $Patterns) {
+            if ($commandLine -like "*$pattern*") {
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+                break
+            }
+        }
+    }
+}
+
+function Invoke-ProcessCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    $stdoutPath = Join-Path $env:TEMP ("pcsetup-capture-{0}.out" -f [Guid]::NewGuid().ToString('N'))
+    $stderrPath = Join-Path $env:TEMP ("pcsetup-capture-{0}.err" -f [Guid]::NewGuid().ToString('N'))
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
+        $combinedOutput = "$stdout`n$stderr" -replace "`0", ''
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Output   = $combinedOutput
+        }
+    }
+    finally {
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-WslInstalled {
+    $wslFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue
+    if (-not $wslFeature -or $wslFeature.State -ne 'Enabled') {
+        return $false
+    }
+
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        $wslStatus = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')
+        if ($wslStatus.Output -match 'not installed') {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-WslDistroReady {
+    param([string]$DistroName = 'Ubuntu-24.04')
+
+    if (-not (Test-WslInstalled)) {
+        return $false
+    }
+
+    $stdoutPath = Join-Path $env:TEMP "wsl-list.out"
+    $stderrPath = Join-Path $env:TEMP "wsl-list.err"
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    $process = Start-Process -FilePath 'wsl.exe' -ArgumentList @('-l', '-q') -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $output = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+    Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+    if ($process.ExitCode -ne 0) {
+        return $false
+    }
+
+    $distros = @($output -split "`r?`n" | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ })
+    return ($distros -contains $DistroName)
+}
+
+function Install-WslPackage {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  winget is not available; skipping Microsoft.WSL package install." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  Installing/checking Microsoft.WSL via winget..." -ForegroundColor Gray
+    & winget install --id Microsoft.WSL -e --accept-source-agreements --accept-package-agreements --silent
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-HypervisorBoot {
+    Write-Host "  Ensuring Windows hypervisor launch settings..." -ForegroundColor Gray
+    bcdedit /set hypervisorlaunchtype auto | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  WARNING Could not set hypervisorlaunchtype=auto." -ForegroundColor Yellow
+    }
+
+    bcdedit /set vsmlaunchtype auto | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  WARNING Could not set vsmlaunchtype=auto." -ForegroundColor Yellow
+    }
+}
+
+function Test-WslDistroRegistered {
+    param([string]$DistroName = 'Ubuntu-24.04')
+
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $distros = (Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('-l', '-q')).Output -replace "`0", ''
+    return ($distros -match "(?m)^\s*$([regex]::Escape($DistroName))\s*$")
+}
+
+function Register-UbuntuDistro {
+    if (-not (Get-Command ubuntu2404.exe -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    Write-Host "  Registering Ubuntu-24.04 WSL distro..." -ForegroundColor Gray
+    $registration = Invoke-ProcessCapture -FilePath 'ubuntu2404.exe' -ArgumentList @('install', '--root')
+    if ($registration.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($registration.Output)) {
+        Write-Host $registration.Output.Trim() -ForegroundColor Yellow
+    }
+
+    return (Test-WslDistroRegistered -DistroName 'Ubuntu-24.04')
+}
+
+function Install-WslDistro {
+    param([string]$DistroName = 'Ubuntu-24.04')
+
+    if (Test-WslDistroRegistered -DistroName $DistroName) {
+        return $true
+    }
+
+    Write-Host "  Installing/checking WSL distro: $DistroName" -ForegroundColor Gray
+    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
+    if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
+        return $true
+    }
+
+    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', $DistroName)
+    if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
+        return $true
+    }
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  WSL CLI distro install did not finish; trying Ubuntu 24.04 via winget..." -ForegroundColor Gray
+        & winget install --id Canonical.Ubuntu.2404 -e --accept-source-agreements --accept-package-agreements --silent
+        if ($LASTEXITCODE -eq 0 -or (Get-Command ubuntu2404.exe -ErrorAction SilentlyContinue)) {
+            if (Register-UbuntuDistro) {
+                return $true
+            }
+            Write-Host "  Ubuntu 24.04 app is installed, but WSL could not register it in this boot." -ForegroundColor Yellow
+            return $true
+        }
+    }
+
+    Write-Host "  Ubuntu-24.04 installation is pending. $($distroInstall.Output.Trim())" -ForegroundColor Yellow
+    return $false
+}
+
+function Ensure-WslPrerequisites {
+    $requiresReboot = $false
+
+    foreach ($featureName in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V-All')) {
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName -ErrorAction SilentlyContinue
+        if ($feature -and $feature.State -eq 'Enabled') {
+            continue
+        }
+
+        Write-Host "  Enabling Windows feature: $featureName" -ForegroundColor Gray
+        dism.exe /Online /Enable-Feature "/FeatureName:$featureName" /All /NoRestart | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to enable Windows feature: $featureName"
+        }
+
+        $requiresReboot = $true
+    }
+
+    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+        $wslStatus = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')
+        if ($wslStatus.Output -match 'not installed') {
+            Install-WslPackage | Out-Null
+            Ensure-HypervisorBoot
+
+            Write-Host "  Installing WSL platform files..." -ForegroundColor Gray
+            $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution')
+            if ($wslInstall.ExitCode -ne 0) {
+                Write-Host "  WSL --no-distribution install did not finish; trying default WSL install..." -ForegroundColor Gray
+                $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install')
+                if ($wslInstall.ExitCode -ne 0) {
+                    throw "wsl --install failed. $($wslInstall.Output.Trim())"
+                }
+            }
+            $requiresReboot = $true
+        }
+
+        if ($wslStatus.Output -match 'virtualization is not enabled|Virtual Machine Platform') {
+            Install-WslPackage | Out-Null
+            Ensure-HypervisorBoot
+            $requiresReboot = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        RequiresReboot = $requiresReboot
+    }
+}
+
+function Complete-WithConsoleBlocked {
+    param([string]$Reason)
+
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "    BASE RECOVERY COMPLETE, CONSOLE BLOCKED" -ForegroundColor Yellow
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host $Reason -ForegroundColor Yellow
+    Write-Host "Public console routes will keep failing until the console stack is installed and verified." -ForegroundColor Yellow
+    Write-Host "Next steps:" -ForegroundColor Cyan
+    Write-Host "  1. Reboot Windows if WSL features were just enabled." -ForegroundColor White
+    Write-Host "  2. Finish Ubuntu-24.04 first-launch setup if Windows prompts for it." -ForegroundColor White
+    Write-Host "  3. Rerun cloudflared\install-all.bat." -ForegroundColor White
+    exit 2
+}
+
 # ============================================================================
 # AUTO-ELEVATE TO ADMINISTRATOR
 # ============================================================================
@@ -450,6 +676,7 @@ Write-Host ""
 Write-Host "[8/9] Creating Scheduled Tasks..." -ForegroundColor Yellow
 
 # Web Tunnel Task
+Stop-CloudflaredTunnelProcesses -Patterns @('config.yml', 'ffxivbe-tunnel')
 Unregister-ScheduledTask -TaskName $webTunnelName -Confirm:$false -ErrorAction SilentlyContinue
 $webLauncherPath = Join-Path $cfDir "web-tunnel-launcher.vbs"
 $webLauncherContent = @"
@@ -469,6 +696,7 @@ Start-ScheduledTask -TaskName $webTunnelName
 Write-Host "  OK $webTunnelName" -ForegroundColor Green
 
 # SSH Tunnel Task
+Stop-CloudflaredTunnelProcesses -Patterns @('ssh-config.yml', 'ssh-tunnel')
 Unregister-ScheduledTask -TaskName $sshTunnelName -Confirm:$false -ErrorAction SilentlyContinue
 $sshLauncherPath = Join-Path $cfDir "ssh-tunnel-launcher.vbs"
 $sshLauncherContent = @"
@@ -571,7 +799,7 @@ if (Test-Path $toggleClaudePath) {
 # ============================================================================
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "    RECOVERY COMPLETE!" -ForegroundColor Green
+Write-Host "    BASE TUNNEL RECOVERY COMPLETE" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -617,20 +845,29 @@ Write-Host "[10/10] Restoring Console Stack..." -ForegroundColor Yellow
 
 $consoleSetupWindows = Join-Path $scriptDir "setup-console-windows.ps1"
 $consoleSetupWsl = Join-Path $scriptDir "setup-console-wsl.sh"
+$wslInstalled = Test-WslInstalled
+$wslDistroReady = Test-WslDistroReady -DistroName 'Ubuntu-24.04'
 
-if (Test-Path $consoleSetupWindows) {
-    Write-Host "  Running setup-console-windows.ps1..." -ForegroundColor Gray
-    & powershell -ExecutionPolicy Bypass -File $consoleSetupWindows -SkipVerification
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  X Console Windows setup failed" -ForegroundColor Red
-        exit $LASTEXITCODE
+if (-not $wslInstalled) {
+    Write-Host "  WSL is not installed. Enabling WSL for the next reboot..." -ForegroundColor Yellow
+    try {
+        $wslPrep = Ensure-WslPrerequisites
+        if ($wslPrep.RequiresReboot) {
+            Complete-WithConsoleBlocked "WSL prerequisites were enabled and Windows must reboot before Ubuntu-24.04 and the console routes can be installed."
+        }
+    } catch {
+        Complete-WithConsoleBlocked "WSL prerequisite setup failed: $($_.Exception.Message)"
     }
-    Write-Host "  OK Console Windows setup complete" -ForegroundColor Green
-} else {
-    Write-Host "  SKIP setup-console-windows.ps1 not found" -ForegroundColor Yellow
-}
+} elseif (-not $wslDistroReady) {
+    Write-Host "  WSL features are enabled, but Ubuntu-24.04 is not ready yet." -ForegroundColor Yellow
+    try {
+        Install-WslDistro -DistroName 'Ubuntu-24.04' | Out-Null
+    } catch {
+        Write-Host "  Ubuntu-24.04 installation command failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 
-if (Test-Path $consoleSetupWsl) {
+    Complete-WithConsoleBlocked "Ubuntu-24.04 is not initialized yet. Finish distro setup, then rerun cloudflared\install-all.bat."
+} elseif (Test-Path $consoleSetupWsl) {
     Write-Host "  Running setup-console-wsl.sh..." -ForegroundColor Gray
     $consoleSetupWslUnix = ($consoleSetupWsl -replace '^Z:\\', '/mnt/z/' -replace '\\', '/')
     wsl -d Ubuntu-24.04 --user root bash $consoleSetupWslUnix
@@ -643,8 +880,22 @@ if (Test-Path $consoleSetupWsl) {
     Write-Host "  SKIP setup-console-wsl.sh not found" -ForegroundColor Yellow
 }
 
+if ($wslDistroReady -and (Test-Path $consoleSetupWindows)) {
+    Write-Host "  Running setup-console-windows.ps1..." -ForegroundColor Gray
+    & powershell -ExecutionPolicy Bypass -File $consoleSetupWindows -SkipVerification
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  X Console Windows setup failed" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+    Write-Host "  OK Console Windows setup complete" -ForegroundColor Green
+} elseif ($wslDistroReady) {
+    Write-Host "  SKIP setup-console-windows.ps1 not found" -ForegroundColor Yellow
+}
+
 $verifyScript = Join-Path $scriptDir "verify-console.ps1"
-if (Test-Path $verifyScript) {
+if (-not $wslDistroReady) {
+    Complete-WithConsoleBlocked "Full console verification skipped because WSL/Ubuntu-24.04 is not ready."
+} elseif (Test-Path $verifyScript) {
     Write-Host "[post-format-recovery] Running full post-install verification..." -ForegroundColor Yellow
     & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript
     if ($LASTEXITCODE -eq 0) {
@@ -655,4 +906,10 @@ if (Test-Path $verifyScript) {
     }
 } else {
     Write-Host "[post-format-recovery] Verification skipped: verify-console.ps1 not found." -ForegroundColor Yellow
+    exit 1
 }
+
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "    RECOVERY COMPLETE!" -ForegroundColor Green
+Write-Host "============================================" -ForegroundColor Cyan

@@ -8,6 +8,17 @@ if %errorlevel% neq 0 (
 )
 :after_admin_check
 
-echo Removing Windows AI features...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/zoicware/RemoveWindowsAI/main/RemoveWindowsAi.ps1'))) -nonInteractive -backupMode -EnableLogging -AllOptions"
-echo Done!
+setlocal
+set "SCRIPT=%~dp0sources\init-prereqs.ps1"
+if not exist "%SCRIPT%" (
+    echo ERROR: Missing prerequisite script: %SCRIPT%
+    exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%"
+if %errorlevel% neq 0 (
+    echo.
+    echo Prerequisite initialization failed with exit code %errorlevel%.
+    exit /b %errorlevel%
+)
+endlocal

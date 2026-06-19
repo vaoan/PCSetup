@@ -6,13 +6,14 @@ param(
 
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    if ($SkipVerification) { $arguments += " -SkipVerification" }
+    Start-Process PowerShell -ArgumentList $arguments -Verb RunAs
     exit
 }
 
 # First-time setup for the web console on Windows.
-# Run AFTER: sync-secrets.bat (to populate .secrets), 2-setup-windows.bat (for cloudflared + node),
-#            and `cloudflared tunnel login` (creates cert.pem for API auth — one-time browser login).
+# Run AFTER: install-all.ps1 or sync-secrets.bat plus the base Windows setup.
 #
 # What this does:
 #   1. Creates %USERPROFILE%\Documents\Cloudflare\{sshwifty,launcher} dirs
@@ -33,7 +34,7 @@ $sshwiftyDir      = "$cloudflareDir\sshwifty"
 $sshwiftyKeyDir   = "$sshwiftyDir\keys"
 $launcherDir      = "$cloudflareDir\launcher"
 $cfDir            = "$env:USERPROFILE\.cloudflared"
-$cfExe            = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
+$cfExe            = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 $devConfigPath    = "$cfDir\dev-config.yml"
 $sshwiftyConfPath = "$sshwiftyDir\sshwifty.conf.json"
 $tunnelName       = 'dev-console'
@@ -222,7 +223,7 @@ if (Test-Path $sshwiftyKeyDir) {
 
 # -- 3. Provision Cloudflare tunnel + DNS records -----------------------------
 Write-Log "Provisioning Cloudflare dev tunnel..."
-if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
+if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
 
 $tunnelId = $null
 
@@ -312,7 +313,20 @@ if (-not (Test-Path $sshwiftyExe)) {
     Write-Log "Downloading sshwifty binary..."
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    $releases  = Invoke-RestMethod -Uri 'https://api.github.com/repos/nirui/sshwifty/releases' -UseBasicParsing
+    $githubHeaders = @{
+        Accept = 'application/vnd.github+json'
+        'User-Agent' = 'PCSetup-cloudflared-installer'
+    }
+    try {
+        $githubToken = Read-Secret 'GH_PAT'
+        if (-not [string]::IsNullOrWhiteSpace($githubToken) -and $githubToken -ne 'replace_me') {
+            $githubHeaders.Authorization = "Bearer $githubToken"
+        }
+    } catch {
+        Write-Log "GH_PAT not available; using anonymous GitHub release lookup."
+    }
+
+    $releases  = Invoke-RestMethod -Uri 'https://api.github.com/repos/nirui/sshwifty/releases' -Headers $githubHeaders -UseBasicParsing
     $asset     = $releases[0].assets | Where-Object { $_.name -like '*windows_amd64*' } | Select-Object -First 1
     if (-not $asset) { Fail "Could not find sshwifty Windows AMD64 asset in latest release." }
 
@@ -320,7 +334,7 @@ if (-not (Test-Path $sshwiftyExe)) {
     $extractDir= [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
     try {
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tarPath -UseBasicParsing
+        Invoke-WebRequest -Uri $asset.browser_download_url -Headers $githubHeaders -OutFile $tarPath -UseBasicParsing
         tar -xzf $tarPath -C $extractDir
         $exeFile = Get-ChildItem -Path $extractDir -Filter '*.exe' -Recurse | Select-Object -First 1
         if (-not $exeFile) { Fail "No .exe found in sshwifty archive." }

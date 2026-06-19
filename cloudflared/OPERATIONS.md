@@ -55,7 +55,7 @@ Local listeners:
 - `127.0.0.1:7686` -> `tcp-relay.js` -> WSL dashboard on `7686`
 - `127.0.0.1:7687` -> `tcp-relay.js` -> WSL git proxy on `7687`
 
-This is the main stability improvement from this chat. The dev origins are now repo-owned relays instead of brittle shared Windows portproxy state.
+This is the main stability improvement from this chat. The dev origins are now repo-owned relays instead of brittle shared Windows portproxy state. The TCP relays connect directly to the current WSL IP with Node `net.connect`; they do not spawn `wsl nc` per request. That matters for code-server folder switching, because the old per-connection shell relay could return Cloudflare 502 after the UI changed the workspace folder.
 
 ## WSL runtime
 
@@ -65,24 +65,22 @@ WSL distro:
 
 Current code user:
 
-- `ubuntu`
+- detected by `verify-console.ps1` from WSL UID `1000`; falls back to `root` when no UID `1000` user is registered
 
 Current code-server service:
 
-- `code-server@ubuntu`
-
-Current code workspace:
-
-- `/home/ubuntu/dev.code-workspace`
+- `code-server@<detected-user>`
 
 Current code route behavior:
 
-- `https://code.ffxivbe.org/` redirects to `?workspace=/home/ubuntu/dev.code-workspace`
+- `https://code.ffxivbe.org/` may redirect to the last active code-server workspace or folder
+- public verification also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
+- local verification also probes `http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
 
 Current WSL services expected active:
 
 - `ssh`
-- `code-server@ubuntu`
+- `code-server@<detected-user>`
 - `ttyd-proxy`
 - `ttyd-persistent`
 - `ttyd-fresh`
@@ -158,6 +156,7 @@ Fix:
 
 - Added `tcp-relay.js`
 - `start-console.ps1` now starts relays on `8080`, `7683`, `7686`, `7687`
+- `tcp-relay.js` now uses direct TCP connections to the current WSL IP instead of spawning `wsl nc`
 - `setup-console-windows.ps1` now writes dev tunnel origins to `127.0.0.1` relay ports
 - `uninstall-console.ps1` now tears those relays down
 
@@ -174,13 +173,19 @@ Problems:
 
 - The public route verifier accepted Cloudflare Access login pages as success
 - It could also accept Cloudflare error pages if only the transport succeeded
+- It could accept placeholder route pages that said WSL was not ready
+- It did not prove code-server could switch to a requested folder after the base route loaded
 - It was browser-testing `dev.ffxivbe.org` even though that route is SSH, not HTTP
 
 Fixes:
 
 - `verify-public-routes.mjs` now fails on:
   - Cloudflare Access login pages
-  - Cloudflare error pages such as `502` or `504`
+  - Cloudflare error pages such as `1103`, `502`, or `504`
+  - placeholder fallback pages
+- `verify-public-routes.mjs` now checks `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
+- the code folder check waits for real folder content and fails if any subresource returns a 5xx response
+- `verify-console.ps1` now includes a local `code-server folder switch PCSetup` probe
 - `verify-public-routes.mjs` supports headed runs and saves screenshots for failures
 - `verify-public-routes.ps1` no longer includes `dev.ffxivbe.org` in browser checks
 
@@ -188,17 +193,21 @@ Files:
 
 - `cloudflared/verify-public-routes.mjs`
 - `cloudflared/verify-public-routes.ps1`
+- `cloudflared/verify-console.ps1`
 
-### 6. Temporary Access bypass creation was too invasive
+### 6. Public verification must test outside Zero Trust, then restore it
 
 Problem:
 
-- The verifier always created temporary Cloudflare Access bypass policies
+- A browser reaching a Cloudflare Access login page could be mistaken for a working public origin
+- The test needed to exercise public routes without permanently opening them
 
 Fix:
 
-- `verify-public-routes.ps1` now checks whether the permanent IP allowlist already covers the current public IP
-- It only creates temporary bypass policies when coverage is missing
+- `verify-public-routes.ps1` snapshots current Access policies for the protected routes
+- It temporarily removes those policies and installs an everyone-bypass policy only for verification
+- It waits 60 seconds for propagation
+- It restores the original policies in `finally`, even when verification fails
 
 Files:
 
@@ -229,9 +238,8 @@ Problem:
 Fix:
 
 - `setup-console-wsl.sh` now detects the Linux code user and provisions:
-  - `code-server@ubuntu`
-  - `/home/ubuntu/dev.code-workspace`
-  - user-scoped code-server config and settings
+  - `code-server@<detected-user>`
+  - user-scoped code-server config, workspace, and settings
 - WSL wrappers now expose:
   - `/usr/local/bin/codex`
   - `/usr/local/bin/claude`
@@ -300,7 +308,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\setup-console-
 
 ### What `start-console.ps1` does
 
-- resolves the current WSL IP for SSH relay purposes
+- resolves the current WSL IP for SSH and TCP relay targets
 - forces SSHwifty presets to `127.0.0.1:2222`
 - rewrites dev origins to local relay ports
 - removes stale portproxy entries
@@ -378,13 +386,14 @@ It checks:
 - public route reachability through Playwright
 - artifact presence such as the dev tunnel log and pid file
 
-Latest clean report from this chat:
+Latest clean report location:
 
-- `C:\Users\Heiner\.cloudflared\reports\post-install-20260528-181156.md`
+- `C:\Users\Heiner\.cloudflared\reports\latest.md`
+- `C:\Users\Heiner\.cloudflared\reports\public-routes-latest.md`
 
 Result:
 
-- `All 41 checks passed`
+- `verify-console.ps1` passed `43` checks, including local and public code-server folder-switch coverage
 
 ### 2. Public route Playwright checks
 
@@ -396,7 +405,11 @@ Used both headless and headed runs through:
 Behavior now:
 
 - fails on Cloudflare Access login pages
-- fails on Cloudflare 502/504 pages
+- fails on Cloudflare 1103/502/504 pages
+- fails on placeholder fallback pages
+- temporarily disables and restores Access policies for protected console routes
+- checks `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after `code.ffxivbe.org` passes
+- fails the code folder check on missing workspace text or subresource 5xx
 - can save screenshots for failing pages
 - can run headed for visible debugging
 - auto-installs `pnpm` if missing
@@ -577,9 +590,8 @@ After a clean install:
   - exactly one SSH tunnel process
   - exactly one dev tunnel process
 - WSL code environment:
-  - `code-server@ubuntu active enabled`
-  - `code-server@root inactive disabled`
-- commands available in WSL as `ubuntu`:
+  - `code-server@<detected-user> active enabled`
+- commands available in WSL as the detected code user:
   - `codex`
   - `claude`
 - public routes:
@@ -588,6 +600,7 @@ After a clean install:
   - `chat.ffxivbe.org`
   - `console.ffxivbe.org`
   - `code.ffxivbe.org`
+  - `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
   - `ttyd.ffxivbe.org`
   - `tools.ffxivbe.org`
   - `git.ffxivbe.org`

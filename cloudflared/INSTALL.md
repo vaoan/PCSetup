@@ -4,22 +4,48 @@
 
 | Script | Purpose | Sets up |
 |--------|---------|---------|
+| `install-all.bat` / `install-all.ps1` | Full post-format install | Syncs secrets if needed, installs cloudflared, configures tunnels, starts them, installs scheduled tasks, runs verification |
 | `install-tunnel.ps1` | Web tunnel | ffxivbe.org + chat/map hostnames, hidden boot/logon task |
 | `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxivbe.org for remote SSH, hidden boot/logon task |
 | `install-scheduled-tasks.ps1` | Auto-start only | Reinstall hidden boot/logon tasks for both tunnels |
 
-These installers only manage the `ffxivbe-tunnel` and `ssh-tunnel` tasks. They do not stop or rewrite other Cloudflare tunnels used by other apps.
+Use `install-all.bat` after a format. The lower-level installers are for targeted repairs.
+
+The web/SSH installers only manage the `ffxivbe-tunnel` and `ssh-tunnel` tasks. They do not stop or rewrite other Cloudflare tunnels used by other apps.
 
 ## Requirements
 
-Before running any installer:
-1. **Cloudflared CLI** installed (https://github.com/cloudflare/cloudflared/releases)
-2. **PowerShell** (comes with Windows)
+On a fresh Windows install, run the repo prereq bootstrap first:
+
+```powershell
+..\0-init-prereqs.bat
+```
+
+That bootstrap keeps Chocolatey installed for compatibility, but current package ownership is Scoop/winget-first where practical. It prepares Scoop buckets including `extras`, WSL/Ubuntu 24.04, Git, GitHub CLI, nvm/Node/npm, .NET desktop runtimes, Java, Visual C++ redistributables, and other shared prerequisites expected by the later scripts.
+
+`install-all.bat` also checks WSL installability and will install **cloudflared** from the official MSI if it is missing.
 
 For browser verification:
 1. **Node.js / npm** available on PATH
 2. `pnpm` does not need to be preinstalled manually
 3. The verification scripts will install `pnpm`, install the local Playwright dependency set, and install Chromium automatically when needed
+
+---
+
+## Full Install After Format
+
+```powershell
+.\install-all.bat
+```
+
+This is the normal recovery path. It:
+- syncs `.secrets` if the file is missing
+- installs `cloudflared` from the official MSI
+- writes web, SSH, and console tunnel configs
+- starts the tunnel scheduled tasks immediately
+- creates boot/logon triggers
+- refuses to report completion if the real WSL console stack is not ready, unless `-AllowIncompleteConsole` is explicitly supplied
+- runs the full verifier
 
 ---
 
@@ -108,7 +134,7 @@ This script:
 
 Use this after a format if you've restored the `.cloudflared` config files but lost the scheduled tasks.
 
-For a full rebuild after formatting the PC, use `cloudflared\post-format-recovery.ps1` from the repo root instead of running the tunnel installers one by one.
+For a full rebuild after formatting the PC, use `cloudflared\install-all.bat` from the repo root instead of running the tunnel installers one by one.
 
 ## Verification bootstrap
 
@@ -119,3 +145,7 @@ For a full rebuild after formatting the PC, use `cloudflared\post-format-recover
 - runs `pnpm exec playwright install chromium`
 
 This means a fresh machine does not need a prepopulated `cloudflared\node_modules` directory for verification to work.
+
+The public verifier temporarily disables Cloudflare Access for the protected console hostnames, waits for policy propagation, runs the browser checks, and restores the original policies even if a check fails. It treats Cloudflare Access login pages, Cloudflare error pages such as `1103`, `502`, or `504`, and placeholder fallback pages as failures.
+
+For code-server, the verifier first checks `https://code.ffxivbe.org/`. If that succeeds, it also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`, waits for the real workspace text, and fails if any subresource returns a 5xx response.

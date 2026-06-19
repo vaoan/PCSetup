@@ -1,10 +1,8 @@
 'use strict';
 
-const { spawn } = require('child_process');
 const net = require('net');
 
 const LISTEN_HOST = '127.0.0.1';
-const DISTRO = 'Ubuntu-24.04';
 
 function readArg(name) {
   const prefix = `--${name}=`;
@@ -14,6 +12,7 @@ function readArg(name) {
 
 const listenPort = Number(readArg('listen-port'));
 const targetPort = Number(readArg('target-port'));
+const targetHost = readArg('target-host') || '127.0.0.1';
 
 if (!Number.isInteger(listenPort) || !Number.isInteger(targetPort) || listenPort <= 0 || targetPort <= 0) {
   console.error('[tcp-relay] Missing or invalid --listen-port / --target-port');
@@ -21,40 +20,25 @@ if (!Number.isInteger(listenPort) || !Number.isInteger(targetPort) || listenPort
 }
 
 const server = net.createServer((client) => {
-  const upstream = spawn('wsl', ['-d', DISTRO, '--user', 'root', '--', 'nc', '127.0.0.1', String(targetPort)], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-
-  let closed = false;
-  const closeBoth = () => {
-    if (closed) return;
-    closed = true;
-    upstream.kill();
-    client.destroy();
-  };
+  const upstream = net.connect({ host: targetHost, port: targetPort });
 
   client.setNoDelay(true);
-  upstream.stdout.setNoDelay?.(true);
-
-  client.pipe(upstream.stdin);
-  upstream.stdout.pipe(client);
-
-  upstream.stderr.on('data', (chunk) => {
-    process.stderr.write(`[tcp-relay:${listenPort}] ${chunk.toString('utf8')}`);
-  });
+  upstream.setNoDelay(true);
 
   upstream.on('error', (error) => {
     process.stderr.write(`[tcp-relay:${listenPort}] upstream error: ${error.message}\n`);
-    closeBoth();
+    client.destroy();
   });
 
-  upstream.on('close', () => {
-    closeBoth();
+  client.on('error', () => {
+    upstream.destroy();
   });
 
-  client.on('error', closeBoth);
-  client.on('close', closeBoth);
+  client.on('close', () => upstream.destroy());
+  upstream.on('close', () => client.destroy());
+
+  client.pipe(upstream);
+  upstream.pipe(client);
 });
 
 server.on('error', (error) => {
@@ -63,5 +47,5 @@ server.on('error', (error) => {
 });
 
 server.listen(listenPort, LISTEN_HOST, () => {
-  process.stderr.write(`[tcp-relay:${listenPort}] ${LISTEN_HOST}:${listenPort} -> WSL 127.0.0.1:${targetPort}\n`);
+  process.stderr.write(`[tcp-relay:${listenPort}] ${LISTEN_HOST}:${listenPort} -> ${targetHost}:${targetPort}\n`);
 });

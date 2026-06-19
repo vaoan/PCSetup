@@ -226,9 +226,9 @@ function Test-SshwiftyHostTargets {
 function Invoke-PublicRoutePlaywrightCheck {
     param([string]$ReportDir)
 
-    $scriptPath = Join-Path $PSScriptRoot 'verify-public-routes.mjs'
+    $scriptPath = Join-Path $PSScriptRoot 'verify-public-routes.ps1'
     if (-not (Test-Path $scriptPath)) {
-        Add-Check 'Public' 'playwright verifier' 'Present' 'Missing' $false 'verify-public-routes.mjs not found'
+        Add-Check 'Public' 'playwright verifier' 'Present' 'Missing' $false 'verify-public-routes.ps1 not found'
         return
     }
 
@@ -241,7 +241,7 @@ function Invoke-PublicRoutePlaywrightCheck {
     $jsonPath = Join-Path $ReportDir 'public-routes-latest.json'
     Remove-Item $jsonPath -Force -ErrorAction SilentlyContinue
 
-    & node $scriptPath $ReportDir | Out-Null
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath -ReportDir $ReportDir | Out-Host
     $exitCode = $LASTEXITCODE
 
     if (-not (Test-Path $jsonPath)) {
@@ -259,7 +259,7 @@ function Invoke-PublicRoutePlaywrightCheck {
             Add-Check 'Public' $result.Name '200 or redirect' $actual ([bool]$result.Passed) $result.Detail
         }
         if ($exitCode -ne 0 -and -not @($report.Results | Where-Object { -not $_.Passed }).Count) {
-            Add-Check 'Public' 'playwright exit code' '0' "$exitCode" $false "verify-public-routes.mjs exited $exitCode"
+            Add-Check 'Public' 'playwright exit code' '0' "$exitCode" $false "verify-public-routes.ps1 exited $exitCode"
         }
     } catch {
         Add-Check 'Public' 'playwright verifier' 'Readable JSON report' 'Unreadable' $false $_.Exception.Message
@@ -291,6 +291,7 @@ Test-LocalHttp -Name 'console proxy' -Url 'http://127.0.0.1:7681/' -Headers @{ H
 Test-LocalHttp -Name 'dashboard' -Url 'http://127.0.0.1:7686/'
 Test-LocalHttp -Name 'git proxy' -Url 'http://127.0.0.1:7687/'
 Test-LocalHttp -Name 'code-server portproxy' -Url 'http://127.0.0.1:8080/'
+Test-LocalHttp -Name 'code-server folder switch PCSetup' -Url 'http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup'
 Test-LocalHttp -Name 'ttyd proxy' -Url 'http://127.0.0.1:7683/'
 Test-SshwiftyHostTargets
 

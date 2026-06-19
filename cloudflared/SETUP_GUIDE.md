@@ -4,132 +4,87 @@ Complete guide to set up the Cloudflare Tunnel after formatting your computer or
 
 ## Prerequisites
 
-1. **Cloudflared CLI**
-   - Install via Chocolatey: `choco install cloudflared`
-   - Or download from: https://github.com/cloudflare/cloudflared/releases
+1. **Repo prerequisite bootstrap**
+   ```powershell
+   .\0-init-prereqs.bat
+   ```
+   Run this from the repo root before Cloudflare setup on a fresh machine. It keeps Chocolatey installed for compatibility, but uses Scoop/winget for most current installs and prepares the shared base: Scoop buckets including `extras`, WSL/Ubuntu 24.04, Git, GitHub CLI, nvm/Node/npm, .NET desktop runtimes, Java, Visual C++ redistributables, and related prerequisites.
+
+2. **Cloudflared CLI**
+   - `cloudflared\install-all.bat` installs the official MSI when missing
+   - Expected path: `C:\Program Files (x86)\cloudflared\cloudflared.exe`
    - Verify: `cloudflared --version`
 
-2. **Cloudflare Account**
+3. **Cloudflare Account**
    - Domain: `ffxivbe.org` (or your domain)
 
-## Step 1: Cloudflare Authentication
+## Recommended Full Install
 
-1. Login to Cloudflare:
-   ```bash
-   cloudflared tunnel login
-   ```
-   - This opens a browser window
-   - Select your domain (`ffxivbe.org`)
-   - This creates `~/.cloudflared/cert.pem`
+After a format, use the single installer instead of piecing together tunnel commands manually:
 
-## Step 3: Create or Reuse Tunnel
-
-### Option A: Create New Tunnel
-```bash
-cloudflared tunnel create ffxivbe-tunnel
-```
-- Note the Tunnel ID (you'll need it)
-
-### Option B: Reuse Existing Tunnel
-If you have the tunnel ID from before:
-```bash
-# List existing tunnels
-cloudflared tunnel list
-
-# If tunnel exists, you can reuse it
-# Otherwise create a new one
-cloudflared tunnel create ffxivbe-tunnel
+```powershell
+.\cloudflared\install-all.bat
 ```
 
-**Save the Tunnel ID** - you'll need it for configuration.
+It syncs secrets if needed, restores `cert.pem` from `FFXIVBE_PEM_B64`, installs cloudflared from the official MSI, installs WSL prerequisites, configures the web/SSH/console tunnels, starts them, installs boot/logon scheduled tasks, checks console stack readiness, and runs verification.
 
-## Step 4: Configure Tunnel
+Use the lower-level scripts only for targeted repair:
 
-1. Create tunnel config directory:
-   ```bash
-   mkdir -p .cloudflared
-   ```
-
-2. Create/edit `.cloudflared/config.yml`:
-   ```yaml
-   tunnel: YOUR_TUNNEL_ID_HERE
-   credentials-file: C:\Users\Heiner\.cloudflared\YOUR_TUNNEL_ID_HERE.json
-
-    ingress:
-      - hostname: ffxivbe.org
-        service: http://127.0.0.1:7542
-      - hostname: www.ffxivbe.org
-        service: http://127.0.0.1:7542
-      - hostname: chat.ffxivbe.org
-        service: http://127.0.0.1:3000
-     - service: http_status:404
-   ```
-
-3. Replace `YOUR_TUNNEL_ID_HERE` with your actual tunnel ID (from Step 3)
-
-4. The credentials file should be at:
-   ```
-   C:\Users\Heiner\.cloudflared\YOUR_TUNNEL_ID_HERE.json
-   ```
-   - This is created automatically when you create the tunnel
-   - If missing, you may need to recreate the tunnel
-
-## Step 5: Update DNS Records
-
-1. Go to Cloudflare Dashboard → DNS → Records
-2. For `ffxivbe.org`:
-   - Type: `CNAME`
-   - Name: `@` (or `ffxivbe.org`)
-   - Target: `YOUR_TUNNEL_ID.cfargotunnel.com`
-   - Proxy: Enabled (orange cloud)
-3. For `www.ffxivbe.org`:
-   - Type: `CNAME`
-   - Name: `www`
-   - Target: `YOUR_TUNNEL_ID.cfargotunnel.com`
-   - Proxy: Enabled (orange cloud)
-
-## Step 6: Test Tunnel Manually
-
-1. Make sure the local services are running:
-   - app web stack on `7542`
-   - chat backend on `3000`
-
-2. Run tunnel manually to test:
-   ```bash
-   cloudflared tunnel --config C:\Users\Heiner\.cloudflared\config.yml run ffxivbe-tunnel
-   ```
-   - Keep this running
-   - Test: Open https://ffxivbe.org in browser
-   - Should show your local service
-
-3. If working, stop the tunnel (Ctrl+C)
-
-## Step 7: Set Up Scheduled Task + Desktop Shortcut
-
-Run the installer which handles both:
-```bash
-powershell -ExecutionPolicy Bypass -File install-tunnel.ps1
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-tunnel.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-ssh-tunnel.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\setup-console-windows.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-scheduled-tasks.ps1
 ```
 
-Or if you only need to reinstall the scheduled task:
-```bash
-powershell -ExecutionPolicy Bypass -File install-scheduled-tasks.ps1
+## What The Installer Owns
+
+### Web tunnel
+
+- Config: `%USERPROFILE%\.cloudflared\config.yml`
+- Task: `ffxivbe-tunnel`
+- Routes: `ffxivbe.org`, `www.ffxivbe.org`, `chat.ffxivbe.org`
+
+### SSH tunnel
+
+- Config: `%USERPROFILE%\.cloudflared\ssh-config.yml`
+- Task: `ssh-tunnel`
+- Route: `pc.ffxivbe.org`
+- Origin: Windows OpenSSH on `localhost:22`
+
+### Console tunnel
+
+- Config: `%USERPROFILE%\.cloudflared\dev-config.yml`
+- Tasks: `web-console`, `UpdateWSLPortProxy`
+- WSL distro: `Ubuntu-24.04`
+- Routes: `console.ffxivbe.org`, `code.ffxivbe.org`, `ttyd.ffxivbe.org`, `tools.ffxivbe.org`, `git.ffxivbe.org`
+- Local relays:
+  - `127.0.0.1:2222` -> WSL SSH
+  - `127.0.0.1:8080` -> WSL code-server
+  - `127.0.0.1:7683` -> WSL ttyd proxy
+  - `127.0.0.1:7686` -> WSL tools dashboard
+  - `127.0.0.1:7687` -> WSL git proxy
+
+The relays are repo-owned Node processes. They connect directly to the current WSL IP instead of shelling through `wsl nc` or depending on stale Windows portproxy entries.
+
+## Verification
+
+Run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-console.ps1
 ```
 
-This creates:
-- A Windows scheduled task that runs the tunnel hidden at login
-- A "Toggle Tunnel" desktop shortcut
+This verifies scheduled tasks, tunnel processes, local origins, local relay listeners, WSL services, local code-server folder switching, and public routes.
 
-## Step 8: Verify Everything Works
-
-1. Test public URL:
-- Open https://ffxivbe.org in browser
-- Should show your local service
-   - Also test `https://chat.ffxivbe.org`
-
-2. Test toggle shortcut:
-   - Double-click `Toggle Tunnel.lnk` on desktop
-   - Should start/stop the tunnel
+The public route verifier:
+- bootstraps `pnpm`, Playwright dependencies, and Chromium when missing
+- temporarily removes/restores Cloudflare Access policies for protected console routes
+- rejects Cloudflare Access login pages as failures
+- rejects Cloudflare `1103`, `502`, `504`, and other Cloudflare error pages
+- rejects placeholder fallback pages
+- verifies `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
+- fails the code folder check if expected folder content is missing or if any subresource returns a 5xx response
 
 ## Clean-Image Validation
 
@@ -213,10 +168,13 @@ Current Worker deployment caveat:
 - Look for "ffxivbe-tunnel" task
 - Verify it's enabled and set to run at logon
 
-### 503/1033 errors
-- Tunnel not connected - restart it
-- Local service not running - start the `7542` or `3000` origin that matches the hostname
-- Check firewall isn't blocking the local loopback origin
+### 1103/502/503/1033 errors
+- Run `powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-public-routes.ps1`; do not trust browser tests that stop at a Cloudflare Access login page.
+- Tunnel not connected: restart with `powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\start-console.ps1`.
+- Local service not running: start the origin that matches the hostname.
+- For `code.ffxivbe.org` folder changes, verify both `http://127.0.0.1:8080/` and `http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`.
+- If local code-server works but public folder switching returns 502, check the `tcp-relay.js` process for port `8080` and rerun `setup-console-windows.ps1` so the relay targets the current WSL IP.
+- Placeholder pages are not valid recovery. The verifier rejects pages that say a route is online while WSL is pending.
 
 ## Quick Reference
 
@@ -262,7 +220,7 @@ This automatically:
 - Creates the ssh-tunnel scheduled task
 - Starts the tunnel
 
-**Note:** Some Cloudflare Dashboard steps are still manual (DNS, Zero Trust route, WAF rule) - the script will remind you of these.
+**Note:** Tunnel and DNS provisioning are automated from the repo secrets. Keep external WAF or Zero Trust policy changes in Cloudflare automation if you maintain them outside this repo.
 
 To also set up SSH key authentication:
 ```bash

@@ -18,7 +18,7 @@ $cloudflareDir = "$env:USERPROFILE\Documents\Cloudflare"
 $sshwiftyDir   = "$cloudflareDir\sshwifty"
 $launcherDir   = "$cloudflareDir\launcher"
 $cfDir         = "$env:USERPROFILE\.cloudflared"
-$cfExe         = 'C:\ProgramData\chocolatey\lib\cloudflared\tools\cloudflared.exe'
+$cfExe         = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 $devConfigPath = "$cfDir\dev-config.yml"
 $sshwiftyExe   = "$sshwiftyDir\sshwifty_windows_amd64.exe"
 $sshwiftyConf  = "$sshwiftyDir\sshwifty.conf.json"
@@ -126,12 +126,12 @@ function Start-TcpRelay {
     Start-Sleep -Milliseconds 200
 
     $proc = Start-Process -FilePath $NodePath `
-        -ArgumentList $ScriptPath, "--listen-port=$Port", "--target-port=$Port" `
+        -ArgumentList $ScriptPath, "--listen-port=$Port", "--target-host=$wslIp", "--target-port=$Port" `
         -RedirectStandardError $logFile `
         -WindowStyle Hidden `
         -PassThru
     $proc.Id | Out-File -FilePath $pidFile -Encoding utf8
-    Write-Log "TCP relay: started (PID $($proc.Id)) -> 127.0.0.1:$Port"
+    Write-Log "TCP relay: started (PID $($proc.Id)) -> ${wslIp}:$Port"
 }
 
 Set-SshwiftyWslHost -ConfigPath $sshwiftyConf -TargetHost '127.0.0.1:2222'
@@ -216,7 +216,7 @@ $proxyProc.Id | Out-File -FilePath $proxyPidFile -Encoding utf8
 Write-Log "Launcher proxy: started (PID $($proxyProc.Id)) -> 127.0.0.1:7681"
 
 # -- 6. Restart cloudflared (detached, hidden, logs to file) ------------------
-if (-not (Test-Path $cfExe))        { Fail "cloudflared.exe not found at $cfExe. Run 2-setup-windows.bat first." }
+if (-not (Test-Path $cfExe))        { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
 if (-not (Test-Path $devConfigPath)) { Fail "dev-config.yml not found. Run setup-console-windows.ps1 first." }
 
 if (Test-Path $cfPidFile) {

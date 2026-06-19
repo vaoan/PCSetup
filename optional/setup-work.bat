@@ -8,18 +8,15 @@ if %errorlevel% neq 0 (
 
 echo === Work Apps Setup ===
 
-:: Install Chocolatey if not present
-where choco >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Installing Chocolatey...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
-    set "PATH=%PATH%;%ALLUSERSPROFILE%\chocolatey\bin"
-)
-
 echo.
-echo Installing Chocolatey packages...
-choco install slack -y --ignore-checksums
-choco install awscli -y --ignore-checksums
+echo Installing Scoop packages...
+where scoop >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Scoop is missing. Run ..\0-init-prereqs.bat first.
+    exit /b 1
+)
+scoop install slack
+scoop install aws
 
 echo.
 echo Installing Winget packages...
@@ -31,7 +28,7 @@ winget install Codeium.Windsurf --silent --accept-package-agreements --accept-so
 :: Refresh environment variables
 echo.
 echo Refreshing environment variables...
-refreshenv >nul 2>&1
+set "PATH=%PATH%;%USERPROFILE%\scoop\shims;%ProgramData%\scoop\shims"
 
 echo.
 echo === Setup Complete ===

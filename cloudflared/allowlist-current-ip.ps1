@@ -1,6 +1,6 @@
 param(
     [string]$AccountId = 'd34896e6a0f8b2fba5e03dec659eac50',
-    [string]$IpCidr,
+    [string[]]$IpCidr,
     [switch]$DryRun
 )
 
@@ -38,22 +38,19 @@ function Find-AccessAppForHostname {
 }
 
 function Get-CurrentPublicIpCidr {
-    param([string]$Value)
+    param([string[]]$Value)
 
     if ($Value) {
-        return $Value.Trim()
+        return @($Value | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
     }
 
-    $publicIp = Get-CloudflareCurrentPublicIp
-    return "$publicIp/32"
+    return @(Get-CloudflareCurrentPublicIpCidrs)
 }
 
 function Get-ExistingMatchingPolicy {
     param(
         [Parameter(Mandatory = $true)]
         [string]$AppId,
-        [Parameter(Mandatory = $true)]
-        [string]$CurrentIpCidr,
         [Parameter(Mandatory = $true)]
         [string]$Hostname
     )
@@ -69,14 +66,14 @@ function Get-ExistingMatchingPolicy {
     }
 
     return $policies | Where-Object {
-        [string]$_.name -eq "$policyPrefix - $Hostname - $CurrentIpCidr"
-    } | Select-Object -First 1
+        [string]$_.name -like "$policyPrefix - $Hostname*"
+    }
 }
 
 New-Item -ItemType Directory -Path (Join-Path $env:USERPROFILE '.cloudflared\reports') -Force | Out-Null
 
-$currentIpCidr = Get-CurrentPublicIpCidr -Value $IpCidr
-Write-Log "Using public IP allowlist CIDR: $currentIpCidr"
+$currentIpCidrs = @(Get-CurrentPublicIpCidr -Value $IpCidr)
+Write-Log "Using public IP allowlist CIDRs: $($currentIpCidrs -join ', ')"
 
 $apps = Get-CloudflareAccessApps -RepoRoot $repoRoot -AccountId $AccountId
 $selectedApps = foreach ($route in $routes) {
@@ -93,19 +90,45 @@ $selectedApps = foreach ($route in $routes) {
 }
 
 foreach ($item in $selectedApps) {
-    $existing = Get-ExistingMatchingPolicy -AppId $item.AppId -CurrentIpCidr $currentIpCidr -Hostname $item.Hostname
-    if ($existing) {
-        Write-Log "Already present for $($item.Hostname): $($existing.name)"
-        continue
-    }
+    $existingPolicies = @(Get-ExistingMatchingPolicy -AppId $item.AppId -Hostname $item.Hostname)
+    $allPolicies = @(Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$AccountId/access/apps/$($item.AppId)/policies")
+    $emailPolicies = @($allPolicies | Where-Object { $_.name -match '^Allow ' -and $_.decision -eq 'allow' })
 
     if ($DryRun) {
-        Write-Log "Dry run: would add allowlist for $($item.Hostname) via $($item.AppName)"
+        foreach ($existing in $existingPolicies) {
+            Write-Log "Dry run: would remove old allowlist for $($item.Hostname): $($existing.name)"
+        }
+        foreach ($existing in $emailPolicies) {
+            Write-Log "Dry run: would reorder email policy for $($item.Hostname): $($existing.name)"
+        }
+        Write-Log "Dry run: would add this-PC allowlist for $($item.Hostname) via $($item.AppName): $($currentIpCidrs -join ', ')"
         continue
     }
 
-    Write-Log "Adding permanent allowlist for $($item.Hostname) via $($item.AppName)"
-    $null = New-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -Name "$policyPrefix - $($item.Hostname) - $currentIpCidr" -IpCidr $currentIpCidr -Precedence 0
+    foreach ($existing in $existingPolicies) {
+        Write-Log "Removing old allowlist for $($item.Hostname): $($existing.name)"
+        Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -PolicyId $existing.id
+    }
+    foreach ($existing in $emailPolicies) {
+        Write-Log "Temporarily removing email policy for $($item.Hostname): $($existing.name)"
+        Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -PolicyId $existing.id
+    }
+
+    Write-Log "Adding permanent this-PC allowlist for $($item.Hostname) via $($item.AppName): $($currentIpCidrs -join ', ')"
+    $null = New-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -Name "$policyPrefix - $($item.Hostname) - this PC" -IpCidr $currentIpCidrs -Precedence 1
+
+    foreach ($existing in $emailPolicies) {
+        Write-Log "Recreating email policy for $($item.Hostname): $($existing.name)"
+        $body = @{
+            name       = $existing.name
+            decision   = $existing.decision
+            precedence = 2
+            include    = $existing.include
+            require    = @($existing.require)
+            exclude    = @($existing.exclude)
+        }
+        $null = Invoke-CloudflareApi -RepoRoot $repoRoot -Method POST -Path "/accounts/$AccountId/access/apps/$($item.AppId)/policies" -Body $body
+    }
 }
 
 Write-Log "Permanent IP allowlist completed for $($selectedApps.Count) route(s)."

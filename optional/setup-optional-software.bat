@@ -10,17 +10,12 @@ setlocal
 
 echo === HYTE Nexus + Driver Booster Setup ===
 
-:: Install Chocolatey if not present
-where choco >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Installing Chocolatey...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
-    set "PATH=%PATH%;%ALLUSERSPROFILE%\chocolatey\bin"
-)
-
 echo.
 echo Installing Driver Booster...
-choco install driverbooster -y --ignore-checksums
+winget install --id IObit.DriverBooster -e --silent --accept-package-agreements --accept-source-agreements
+if %errorlevel% neq 0 (
+    echo WARNING: Driver Booster winget install failed with code %errorlevel%.
+)
 
 echo.
 echo Checking ASUS DriverHub...

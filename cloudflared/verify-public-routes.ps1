@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $accountId = 'd34896e6a0f8b2fba5e03dec659eac50'
-$policyPrefix = 'Temporary IP bypass'
+$policyPrefix = 'Temporary public route verifier bypass'
 $routes = @(
     'console.ffxivbe.org',
     'code.ffxivbe.org',
@@ -30,11 +30,11 @@ function Fail {
 function Ensure-Pnpm {
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     if ($pnpmCmd) {
-        return $pnpmCmd.Source
+        return [string](@($pnpmCmd)[0].Source)
     }
 
     Write-Log "pnpm not found; installing globally with npm..."
-    & npm.cmd install -g pnpm
+    & npm.cmd install -g pnpm | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         Fail "Failed to install pnpm via npm."
     }
@@ -44,7 +44,7 @@ function Ensure-Pnpm {
         Fail "pnpm install reported success but pnpm is still not on PATH."
     }
 
-    return $pnpmCmd.Source
+    return [string](@($pnpmCmd)[0].Source)
 }
 
 function Ensure-PlaywrightDependencies {
@@ -57,25 +57,44 @@ function Ensure-PlaywrightDependencies {
 
     $lockPath = Join-Path $WorkingDir 'pnpm-lock.yaml'
     $nodeModulesPath = Join-Path $WorkingDir 'node_modules'
+    $previousCi = $env:CI
+    $previousConfirmModulesPurge = $env:PNPM_CONFIG_CONFIRM_MODULES_PURGE
 
-    if ((-not (Test-Path $lockPath)) -or (-not (Test-Path $nodeModulesPath))) {
-        Write-Log "Installing Playwright dependencies with pnpm..."
-        & $PnpmPath install --dir $WorkingDir
-        if ($LASTEXITCODE -ne 0) {
-            Fail "pnpm install failed in $WorkingDir"
-        }
-    } else {
-        Write-Log "Refreshing Playwright dependencies from pnpm lockfile..."
-        & $PnpmPath install --dir $WorkingDir --frozen-lockfile
-        if ($LASTEXITCODE -ne 0) {
-            Fail "pnpm install --frozen-lockfile failed in $WorkingDir"
-        }
-    }
+    try {
+        $env:CI = 'true'
+        $env:PNPM_CONFIG_CONFIRM_MODULES_PURGE = 'false'
 
-    Write-Log "Ensuring Playwright Chromium browser is installed..."
-    & $PnpmPath --dir $WorkingDir exec playwright install chromium
-    if ($LASTEXITCODE -ne 0) {
-        Fail "pnpm exec playwright install chromium failed"
+        if ((-not (Test-Path $lockPath)) -or (-not (Test-Path $nodeModulesPath))) {
+            Write-Log "Installing Playwright dependencies with pnpm..."
+            & $PnpmPath install --dir $WorkingDir
+            if ($LASTEXITCODE -ne 0) {
+                Fail "pnpm install failed in $WorkingDir"
+            }
+        } else {
+            Write-Log "Refreshing Playwright dependencies from pnpm lockfile..."
+            & $PnpmPath install --dir $WorkingDir --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) {
+                Fail "pnpm install --frozen-lockfile failed in $WorkingDir"
+            }
+        }
+
+        Write-Log "Ensuring Playwright Chromium browser is installed..."
+        & $PnpmPath --dir $WorkingDir exec playwright install chromium
+        if ($LASTEXITCODE -ne 0) {
+            Fail "pnpm exec playwright install chromium failed"
+        }
+    } finally {
+        if ($null -eq $previousCi) {
+            Remove-Item Env:CI -ErrorAction SilentlyContinue
+        } else {
+            $env:CI = $previousCi
+        }
+
+        if ($null -eq $previousConfirmModulesPurge) {
+            Remove-Item Env:PNPM_CONFIG_CONFIRM_MODULES_PURGE -ErrorAction SilentlyContinue
+        } else {
+            $env:PNPM_CONFIG_CONFIRM_MODULES_PURGE = $previousConfirmModulesPurge
+        }
     }
 }
 
@@ -100,9 +119,7 @@ function Find-AccessAppForHostname {
 function Remove-TemporaryPolicies {
     param(
         [Parameter(Mandatory = $true)]
-        [object[]]$Apps,
-        [Parameter(Mandatory = $true)]
-        [string]$CurrentIpCidr
+        [object[]]$Apps
     )
 
     foreach ($app in $Apps) {
@@ -125,53 +142,105 @@ function Remove-TemporaryPolicies {
                 continue
             }
 
-            $includedIp = $false
-            foreach ($rule in @($policy.include)) {
-                if ($rule.PSObject.Properties.Name -contains 'ip' -and $rule.ip.PSObject.Properties.Name -contains 'ip') {
-                    if ($rule.ip.ip -eq $CurrentIpCidr) {
-                        $includedIp = $true
-                        break
-                    }
-                }
-            }
-
-            if ($includedIp) {
-                Write-Log "Removing stale policy '$policyName' from $appName"
-                Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $appId -PolicyId $policy.id
-            }
+            Write-Log "Removing stale policy '$policyName' from $appName"
+            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $appId -PolicyId $policy.id
         }
     }
 }
 
-function Test-IpPolicyExists {
+function Convert-AccessPolicyToCreateBody {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$AppId,
+        [object]$Policy
+    )
+
+    $body = @{
+        name       = $Policy.name
+        decision   = $Policy.decision
+        precedence = $Policy.precedence
+        include    = @($Policy.include)
+    }
+
+    if ($Policy.PSObject.Properties.Name -contains 'require' -and $Policy.require) {
+        $body.require = @($Policy.require)
+    }
+    if ($Policy.PSObject.Properties.Name -contains 'exclude' -and $Policy.exclude) {
+        $body.exclude = @($Policy.exclude)
+    }
+
+    return $body
+}
+
+function Get-AccessPolicies {
+    param(
         [Parameter(Mandatory = $true)]
-        [string]$CurrentIpCidr
+        [string]$AppId
     )
 
     $policiesResponse = Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$accountId/access/apps/$AppId/policies"
-    $policies = @()
     if ($policiesResponse -is [System.Array]) {
-        $policies = @($policiesResponse)
-    } elseif ($policiesResponse.PSObject.Properties.Name -contains 'result') {
-        $policies = @($policiesResponse.result)
-    } else {
-        $policies = @($policiesResponse)
+        return @($policiesResponse)
     }
+    if ($policiesResponse.PSObject.Properties.Name -contains 'result') {
+        return @($policiesResponse.result)
+    }
+    return @($policiesResponse)
+}
 
-    foreach ($policy in $policies) {
-        foreach ($rule in @($policy.include)) {
-            if ($rule.PSObject.Properties.Name -contains 'ip' -and $rule.ip.PSObject.Properties.Name -contains 'ip') {
-                if ($rule.ip.ip -eq $CurrentIpCidr) {
-                    return $true
-                }
-            }
+function Disable-AccessForVerification {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Apps,
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IList]$Snapshots,
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IList]$CreatedPolicies
+    )
+
+    foreach ($item in $Apps) {
+        $policies = @(Get-AccessPolicies -AppId $item.AppId)
+        $Snapshots.Add([pscustomobject]@{
+            AppId    = $item.AppId
+            Hostname = $item.Hostname
+            Policies = $policies
+        }) | Out-Null
+
+        foreach ($policy in $policies) {
+            Write-Log "Temporarily removing Access policy for $($item.Hostname): $($policy.name)"
+            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $item.AppId -PolicyId $policy.id
+        }
+
+        $policyName = "$policyPrefix - $($item.Hostname)"
+        Write-Log "Temporarily disabling Access for $($item.Hostname) via $($item.AppName)"
+        $policy = New-CloudflareEveryoneBypassPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $item.AppId -Name $policyName -Precedence 1
+        $CreatedPolicies.Add([pscustomobject]@{
+            AppId    = $item.AppId
+            Hostname = $item.Hostname
+            PolicyId = $policy.id
+            Name     = $policy.name
+        }) | Out-Null
+    }
+}
+
+function Restore-AccessPolicies {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IList]$Snapshots
+    )
+
+    foreach ($snapshot in $Snapshots) {
+        $currentPolicies = @(Get-AccessPolicies -AppId $snapshot.AppId)
+        foreach ($policy in $currentPolicies) {
+            Write-Log "Clearing verification policy for $($snapshot.Hostname): $($policy.name)"
+            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $snapshot.AppId -PolicyId $policy.id
+        }
+
+        foreach ($policy in @($snapshot.Policies | Sort-Object precedence)) {
+            Write-Log "Restoring Access policy for $($snapshot.Hostname): $($policy.name)"
+            $body = Convert-AccessPolicyToCreateBody -Policy $policy
+            $null = Invoke-CloudflareApi -RepoRoot $repoRoot -Method POST -Path "/accounts/$accountId/access/apps/$($snapshot.AppId)/policies" -Body $body
         }
     }
-
-    return $false
 }
 
 function Invoke-PublicRouteVerification {
@@ -198,10 +267,6 @@ New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null
 $pnpmPath = Ensure-Pnpm
 Ensure-PlaywrightDependencies -WorkingDir $PSScriptRoot -PnpmPath $pnpmPath
 
-$publicIp = Get-CloudflareCurrentPublicIp
-$currentIpCidr = "$publicIp/32"
-Write-Log "Current public IP: $currentIpCidr"
-
 $apps = Get-CloudflareAccessApps -RepoRoot $repoRoot -AccountId $accountId
 $selectedApps = foreach ($route in $routes) {
     $app = Find-AccessAppForHostname -Apps $apps -Hostname $route
@@ -218,36 +283,14 @@ $selectedApps = foreach ($route in $routes) {
 }
 
 $createdPolicies = New-Object System.Collections.Generic.List[object]
+$policySnapshots = New-Object System.Collections.Generic.List[object]
 
 try {
-    $allRoutesCovered = $true
-    foreach ($item in $selectedApps) {
-        if (-not (Test-IpPolicyExists -AppId $item.AppId -CurrentIpCidr $currentIpCidr)) {
-            $allRoutesCovered = $false
-            break
-        }
-    }
+    Remove-TemporaryPolicies -Apps $selectedApps
+    Disable-AccessForVerification -Apps $selectedApps -Snapshots $policySnapshots -CreatedPolicies $createdPolicies
 
-    if ($allRoutesCovered) {
-        Write-Log "Current IP is already allowlisted for all protected routes; skipping temporary bypass creation"
-    } else {
-        Remove-TemporaryPolicies -Apps $selectedApps -CurrentIpCidr $currentIpCidr
-
-        foreach ($item in $selectedApps) {
-            $policyName = "$policyPrefix - $($item.Hostname) - $currentIpCidr"
-            Write-Log "Creating bypass for $($item.Hostname) via $($item.AppName)"
-            $policy = New-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $item.AppId -Name $policyName -IpCidr $currentIpCidr -Precedence 0
-            $createdPolicies.Add([pscustomobject]@{
-                AppId    = $item.AppId
-                Hostname = $item.Hostname
-                PolicyId = $policy.id
-                Name     = $policy.name
-            }) | Out-Null
-        }
-
-        Write-Log "Waiting for Access policy propagation..."
-        Start-Sleep -Seconds 10
-    }
+    Write-Log "Waiting 60 seconds for Access policy propagation..."
+    Start-Sleep -Seconds 60
 
     $verifyScript = Join-Path $PSScriptRoot 'verify-public-routes.mjs'
     if (-not (Test-Path $verifyScript)) {
@@ -266,13 +309,10 @@ try {
         Write-Log "Report written to $latestMd"
     }
 } finally {
-    for ($i = $createdPolicies.Count - 1; $i -ge 0; $i--) {
-        $policy = $createdPolicies[$i]
-        try {
-            Write-Log "Removing bypass policy for $($policy.Hostname)"
-            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $policy.AppId -PolicyId $policy.PolicyId
-        } catch {
-            Write-Log "WARNING: failed to remove policy $($policy.PolicyId) for $($policy.Hostname): $_"
-        }
+    try {
+        Restore-AccessPolicies -Snapshots $policySnapshots
+    } catch {
+        Write-Log "WARNING: failed to restore Access policies: $_"
+        throw
     }
 }

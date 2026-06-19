@@ -3,19 +3,39 @@
 $ErrorActionPreference = 'Stop'
 $IsCI = $env:PCSETUP_CI -eq '1'
 
-# ─────────────────────────────────────────────
-# 1 — delete-node-modules
-# ─────────────────────────────────────────────
-Describe "1-delete-node-modules" {
-    It "script exists" {
-        Test-Path (Join-Path $PSScriptRoot "..\1-delete-node-modules.bat") | Should -BeTrue
+BeforeAll {
+    function Test-WingetPackageInstalled {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Id
+        )
+
+        $output = winget list --id $Id -e --accept-source-agreements 2>&1 | Out-String
+        return ($LASTEXITCODE -eq 0 -and $output -match [regex]::Escape($Id))
+    }
+
+    function Get-CloudflaredPublicRoutes {
+        $script = Get-Content (Join-Path $PSScriptRoot '..\cloudflared\verify-public-routes.mjs') -Raw
+        $matches = [regex]::Matches($script, "\['([^']+)',\s*'([^']+)'\]")
+        foreach ($match in $matches) {
+            [pscustomobject]@{
+                Hostname = $match.Groups[1].Value
+                Url      = $match.Groups[2].Value
+            }
+        }
     }
 }
 
-# ─────────────────────────────────────────────
-# 2 — setup-windows
-# ─────────────────────────────────────────────
-Describe "2-setup-windows" {
+# -----------------------------
+# 0 - init-prereqs
+# -----------------------------
+Describe "0-init-prereqs" {
+    It "script exists" {
+        Test-Path (Join-Path $PSScriptRoot "..\0-init-prereqs.bat") | Should -BeTrue
+    }
+    It "Scoop installed" {
+        (scoop --version 2>&1) | Should -Match '\S+'
+    }
     It "Chocolatey installed" {
         (choco --version 2>&1) | Should -Match '\d+\.\d+'
     }
@@ -23,71 +43,141 @@ Describe "2-setup-windows" {
         (git --version 2>&1) | Should -Match 'git version'
     }
     It "Git binary exists" {
-        Test-Path 'C:\Program Files\Git\bin\git.exe' | Should -BeTrue
+        ((Get-Command git -ErrorAction SilentlyContinue).Source) | Should -Not -BeNullOrEmpty
     }
+    It "GitHub CLI installed" {
+        (gh --version 2>&1 | Out-String) | Should -Match 'gh version'
+    }
+    It "nvm installed" {
+        $onPath = (Get-Command nvm -ErrorAction SilentlyContinue) -ne $null
+        $atPath = Test-Path "$env:APPDATA\nvm\nvm.exe"
+        ($onPath -or $atPath) | Should -BeTrue
+    }
+    It "Node.js installed" {
+        (node --version 2>&1) | Should -Match 'v\d+'
+    }
+    It "npm installed" {
+        (npm --version 2>&1) | Should -Match '\d+\.\d+'
+    }
+    It "initialization owns WSL prerequisites for console routes" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match 'Enable-WslPrerequisites'
+        $script | Should -Match 'Microsoft-Windows-Subsystem-Linux'
+        $script | Should -Match 'VirtualMachinePlatform'
+        $script | Should -Match 'HypervisorPlatform'
+        $script | Should -Match 'Microsoft-Hyper-V-All'
+        $script | Should -Match 'Ubuntu-24\.04'
+        $script | Should -Match 'Microsoft\.WSL'
+        $script | Should -Match 'Canonical\.Ubuntu\.2404'
+        $script | Should -Match 'ubuntu2404\.exe'
+        $script | Should -Match "install', '--root"
+        $script | Should -Match 'hypervisorlaunchtype auto'
+        $script | Should -Match "--install', '--no-distribution"
+        $script | Should -Match "--install'\)"
+    }
+    It ".NET 6 desktop runtime installed" -Skip:($IsCI) {
+        (dotnet --list-runtimes 2>&1 | Out-String) | Should -Match 'Microsoft\.WindowsDesktop\.App 6\.'
+    }
+    It ".NET 8 desktop runtime installed" -Skip:($IsCI) {
+        (dotnet --list-runtimes 2>&1 | Out-String) | Should -Match 'Microsoft\.WindowsDesktop\.App 8\.'
+    }
+    It ".NET 9 desktop runtime installed" -Skip:($IsCI) {
+        (dotnet --list-runtimes 2>&1 | Out-String) | Should -Match 'Microsoft\.WindowsDesktop\.App 9\.'
+    }
+}
+
+# -----------------------------
+# 1 - delete-node-modules
+# -----------------------------
+Describe "1-delete-node-modules" {
+    It "script exists" {
+        Test-Path (Join-Path $PSScriptRoot "..\1-delete-node-modules.bat") | Should -BeTrue
+    }
+}
+
+# -----------------------------
+# 2 - setup-windows
+# -----------------------------
+Describe "2-setup-windows" {
     It "Python installed" {
         (python --version 2>&1) | Should -Match 'Python \d+\.\d+'
     }
     It "7-Zip installed" {
-        Test-Path 'C:\Program Files\7-Zip\7z.exe' | Should -BeTrue
+        (Get-Command 7z -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "Notepad++ installed" {
-        Test-Path 'C:\Program Files\Notepad++\notepad++.exe' | Should -BeTrue
+        (Get-Command notepad++ -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "PuTTY installed" {
-        Test-Path 'C:\Program Files\PuTTY\putty.exe' | Should -BeTrue
+        (Get-Command putty -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "VS Code installed" {
-        Test-Path 'C:\Program Files\Microsoft VS Code\Code.exe' | Should -BeTrue
-    }
-    It "GitHub CLI installed" {
-        (gh --version 2>&1) | Should -Match 'gh version'
+        (Get-Command code -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "cloudflared installed (MSI)" {
-        Test-Path 'C:\Program Files (x86)\cloudflared\cloudflared.exe' | Should -BeTrue
+        (Get-Command cloudflared -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "cloudflared runs" {
-        (& 'C:\Program Files (x86)\cloudflared\cloudflared.exe' --version 2>&1) | Should -Match 'cloudflared version'
-    }
-    It ".NET 6 desktop runtime installed" -Skip:($IsCI) {
-        (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 6\.'
-    }
-    It ".NET 8 desktop runtime installed" -Skip:($IsCI) {
-        (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 8\.'
-    }
-    It ".NET 9 desktop runtime installed" -Skip:($IsCI) {
-        (dotnet --list-runtimes 2>&1) | Should -Match 'Microsoft\.WindowsDesktop\.App 9\.'
+        (cloudflared --version 2>&1) | Should -Match 'cloudflared version'
     }
     # GUI/winget-only — skip in CI containers
     It "WinRAR installed" -Skip:($IsCI) {
         Test-Path 'C:\Program Files\WinRAR\WinRAR.exe' | Should -BeTrue
     }
     It "VLC installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'vlc'
+        Test-Path 'C:\Program Files\VideoLAN\VLC\vlc.exe' | Should -BeTrue
     }
     It "Firefox installed" -Skip:($IsCI) {
-        Test-Path 'C:\Program Files\Mozilla Firefox\firefox.exe' | Should -BeTrue
+        $installed = (Get-Command firefox -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:ProgramFiles\Mozilla Firefox\firefox.exe") -or
+            (Test-Path "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe") -or
+            (Test-WingetPackageInstalled -Id 'Mozilla.Firefox')
+        [bool]$installed | Should -BeTrue
     }
     It "WinSCP installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'winscp'
+        (Get-Command winscp -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "EarTrumpet installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'eartrumpet'
+        (Get-Command EarTrumpet -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
     It "Sourcetree installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'sourcetree'
+        $installed = (Get-Command SourceTree -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:LOCALAPPDATA\SourceTree\SourceTree.exe") -or
+            (Test-Path "$env:ProgramFiles\Atlassian\Sourcetree\SourceTree.exe") -or
+            (Test-WingetPackageInstalled -Id 'Atlassian.Sourcetree')
+        [bool]$installed | Should -BeTrue
     }
     It "GitHub Desktop installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'github-desktop'
+        $installed = (Get-Command GitHubDesktop -ErrorAction SilentlyContinue) -or (Test-Path "$env:LOCALAPPDATA\GitHubDesktop\GitHubDesktop.exe")
+        $installed | Should -BeTrue
     }
     It "ProtonVPN installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'protonvpn'
+        $installed = (Get-Command protonvpn -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:ProgramFiles\Proton\VPN\ProtonVPN.exe") -or
+            (Test-Path "$env:ProgramFiles\Proton\VPN\Proton VPN.exe") -or
+            (Test-WingetPackageInstalled -Id 'Proton.ProtonVPN')
+        [bool]$installed | Should -BeTrue
+    }
+    It "AdGuard installed" -Skip:($IsCI) {
+        $installed = (Get-Command Adguard -ErrorAction SilentlyContinue) -or
+            (Get-Command AdGuard -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:ProgramFiles\Adguard\Adguard.exe") -or
+            (Test-Path "$env:ProgramFiles\AdGuard\AdGuard.exe") -or
+            (Test-WingetPackageInstalled -Id 'AdGuard.AdGuard')
+        [bool]$installed | Should -BeTrue
     }
     It "Streamlabs OBS installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'streamlabs-obs'
+        $installed = (Get-Command streamlabs-obs -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:ProgramFiles\Streamlabs OBS\Streamlabs OBS.exe") -or
+            (Test-Path "$env:ProgramFiles\Streamlabs\Streamlabs Desktop\Streamlabs Desktop.exe") -or
+            (Test-WingetPackageInstalled -Id 'Streamlabs.Streamlabs')
+        [bool]$installed | Should -BeTrue
     }
     It "PowerShell 7 installed" -Skip:($IsCI) {
-        Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe' | Should -BeTrue
+        $installed = (Get-Command pwsh -ErrorAction SilentlyContinue) -or
+            (Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe') -or
+            (Test-WingetPackageInstalled -Id 'Microsoft.PowerShell')
+        [bool]$installed | Should -BeTrue
     }
     It "WezTerm installed" -Skip:($IsCI) {
         Test-Path 'C:\Program Files\WezTerm\wezterm-gui.exe' | Should -BeTrue
@@ -144,7 +234,8 @@ Describe "5-move-profile-folders" {
 # ─────────────────────────────────────────────
 Describe "6-setup-games" {
     It "Steam installed" -Skip:($IsCI) {
-        (choco list --local-only 2>&1) | Should -Match 'steam'
+        $installed = (Get-Command steam -ErrorAction SilentlyContinue) -or (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
+        $installed | Should -BeTrue
     }
 }
 
@@ -193,7 +284,7 @@ Describe "9-context-menu-take-ownership" {
     }
     It "Take Ownership entry exists for files" {
         $key = 'HKLM:\SOFTWARE\Classes\*\shell\TakeOwnership'
-        (Get-Item $key -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        (Get-Item -LiteralPath $key -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
 }
 
@@ -229,6 +320,15 @@ Describe "99-remove-windows-ai" {
     It "script exists" {
         Test-Path (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") | Should -BeTrue
     }
+    It "runs RemoveWindowsAI unattended with all options" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") -Raw
+        $script | Should -Match 'RemoveWindowsAi\.ps1'
+        $script | Should -Match '-nonInteractive'
+        $script | Should -Match '-AllOptions'
+        $script | Should -Match '-backupMode'
+        $script | Should -Match '-EnableLogging'
+        $script | Should -Match 'powershell\.exe'
+    }
 }
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -255,6 +355,11 @@ Describe "cloudflared scheduled tasks" {
 }
 
 Describe "cloudflared staging recovery" {
+    It "single full installer entrypoint exists" {
+        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\install-all.bat") | Should -BeTrue
+        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\install-all.ps1") | Should -BeTrue
+    }
+
     It "clean-install smoke test script exists" {
         Test-Path (Join-Path $PSScriptRoot "..\cloudflared\test-clean-install.ps1") | Should -BeTrue
     }
@@ -272,7 +377,97 @@ Describe "cloudflared staging recovery" {
     It "post-format recovery ends with full verification" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\post-format-recovery.ps1") -Raw
         $script | Should -Match 'verify-console\.ps1'
-        $script | Should -Not -Match 'verify-public-routes\.ps1'
+    }
+
+    It "console verifier uses Access-aware public route wrapper" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-console.ps1") -Raw
+        $script | Should -Match 'verify-public-routes\.ps1'
+        $script | Should -Match 'powershell -NoProfile -ExecutionPolicy Bypass -File \$scriptPath -ReportDir \$ReportDir'
+        $script | Should -Not -Match '& node \$scriptPath \$ReportDir'
+    }
+
+    It "console verifier checks local code-server folder switching" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-console.ps1") -Raw
+        $script | Should -Match 'code-server folder switch PCSetup'
+        $script | Should -Match 'http://127\.0\.0\.1:8080/\?folder=/mnt/z/Users/Heiner/Documents/PCSetup'
+    }
+
+    It "WSL console setup installs Node 22 and repairs ungit" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\setup-console-wsl.sh") -Raw
+        $script | Should -Match 'https://deb\.nodesource\.com/setup_22\.x'
+        $script | Should -Match 'NODE_MAJOR'
+        $script | Should -Match 'validate_ungit'
+        $script | Should -Match 'npm uninstall -g ungit'
+        $script | Should -Match 'npm install -g ungit@1\.5\.30'
+        $script | Should -Match 'Ungit started'
+    }
+
+    It "post-format recovery exits incomplete when WSL blocks console setup" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\post-format-recovery.ps1") -Raw
+        $script | Should -Match 'Ensure-WslPrerequisites'
+        $script | Should -Match 'Complete-WithConsoleBlocked'
+        $script | Should -Match 'exit 2'
+        $script | Should -Match 'Public console routes will keep failing'
+        $script | Should -Match 'Microsoft\.WSL'
+        $script | Should -Match 'Canonical\.Ubuntu\.2404'
+        $script | Should -Match 'ubuntu2404\.exe'
+        $script | Should -Match "install', '--root"
+        $script | Should -Match 'HypervisorPlatform'
+        $script | Should -Match 'Microsoft-Hyper-V-All'
+        $script | Should -Match "--install', '--no-distribution"
+        $script | Should -Match "--install'\)"
+        $script | Should -Not -Match 'setup-console-fallback\.ps1'
+        $script | Should -Not -Match 'Fallback public routes are online'
+    }
+
+    It "install-all gates completion on console stack readiness" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\install-all.ps1") -Raw
+        $script | Should -Match 'Assert-ConsoleStackReady'
+        $script | Should -Match 'Test-ConsoleStackReady'
+        $script | Should -Match 'AllowIncompleteConsole'
+        $script | Should -Not -Match 'Test-ConsoleFallbackReady'
+        $script | Should -Not -Match 'ConsoleFallbackActive'
+        $script | Should -Match 'Ensure-WslInstallables'
+        $script | Should -Match 'foreach \(\$scope in ''CurrentUser'', ''LocalMachine''\)'
+        $script | Should -Match 'Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope \$scope -Force -ErrorAction Stop'
+        $script | Should -Match 'Get-ExecutionPolicy -Scope \$scope'
+        $script | Should -Match 'process-scope override'
+        $script | Should -Match 'Microsoft\.WSL'
+        $script | Should -Match 'Canonical\.Ubuntu\.2404'
+        $script | Should -Match 'ubuntu2404\.exe'
+        $script | Should -Match "install', '--root"
+        $script | Should -Match 'HypervisorPlatform'
+        $script | Should -Match 'Microsoft-Hyper-V-All'
+        $script | Should -Match 'hypervisorlaunchtype auto'
+        $script | Should -Match 'dev-config\.yml'
+        $script | Should -Match '7687'
+        $script.IndexOf('Assert-ConsoleStackReady') | Should -BeLessThan $script.IndexOf('Cloudflare full install complete')
+    }
+
+    It "public verifier rejects console fallback placeholders" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.mjs") -Raw
+        $script | Should -Match 'looksLikeFallbackPage'
+        $script | Should -Match 'placeholder fallback page'
+        $script | Should -Match 'Route online'
+        $script | Should -Match 'WSL setup is pending'
+    }
+
+    It "console scripts use official cloudflared MSI path" {
+        $setupScript = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\setup-console-windows.ps1") -Raw
+        $startScript = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\start-console.ps1") -Raw
+        $setupScript | Should -Match 'C:\\Program Files \(x86\)\\cloudflared\\cloudflared\.exe'
+        $startScript | Should -Match 'C:\\Program Files \(x86\)\\cloudflared\\cloudflared\.exe'
+        $setupScript | Should -Not -Match 'chocolatey\\lib\\cloudflared'
+        $startScript | Should -Not -Match 'chocolatey\\lib\\cloudflared'
+    }
+
+    It "Windows TCP relay connects directly to WSL IP for code-server stability" {
+        $relayScript = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\tcp-relay.js") -Raw
+        $startScript = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\start-console.ps1") -Raw
+        $relayScript | Should -Match 'target-host'
+        $relayScript | Should -Match 'net\.connect'
+        $relayScript | Should -Not -Match ([regex]::Escape("spawn('wsl'"))
+        $startScript | Should -Match '--target-host=\$wslIp'
     }
 
     It "public route verifier bootstraps pnpm and Chromium" {
@@ -280,6 +475,58 @@ Describe "cloudflared staging recovery" {
         $script | Should -Match 'Ensure-Pnpm'
         $script | Should -Match 'npm\.cmd install -g pnpm'
         $script | Should -Match 'pnpm install'
+        $script | Should -Match "PNPM_CONFIG_CONFIRM_MODULES_PURGE = 'false'"
+        $script | Should -Match "\$env:CI = 'true'"
         $script | Should -Match 'playwright install chromium'
+    }
+
+    It "public route verifier temporarily disables Access during checks" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.ps1") -Raw
+        $script | Should -Match 'New-CloudflareEveryoneBypassPolicy'
+        $script | Should -Match 'Remove-CloudflareAccessPolicy'
+        $script | Should -Match 'Temporary public route verifier bypass'
+        $script | Should -Match 'Start-Sleep -Seconds 60'
+        $script | Should -Match 'finally'
+    }
+
+    It "public route verifier rejects Cloudflare Access login pages" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.mjs") -Raw
+        $script | Should -Match 'isCloudflareAccessLoginUrl'
+        $script | Should -Match 'hitAccessLogin'
+        $script | Should -Match 'Cloudflare Access login page'
+    }
+
+    It "public route verifier exercises code-server folder switching" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.mjs") -Raw
+        $script | Should -Match 'codeFolderChecks'
+        $script | Should -Match 'code\.ffxivbe\.org folder switch PCSetup'
+        $script | Should -Match 'folder=/mnt/z/Users/Heiner/Documents/PCSetup'
+        $script | Should -Match 'failOnSubresourceErrors'
+        $script | Should -Match 'subresource 5xx'
+        $script | Should -Match 'expected folder content missing'
+        $script | Should -Match "name === 'code\.ffxivbe\.org' && lastResult\.Passed"
+    }
+
+    It "public installable endpoints pass full verifier" -Skip:($IsCI) {
+        $routes = @(Get-CloudflaredPublicRoutes)
+        $routes.Count | Should -BeGreaterThan 0
+
+        $reportDir = Join-Path $env:TEMP ("pcsetup-public-routes-" + [Guid]::NewGuid().ToString('N'))
+        $verifier = Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.ps1"
+        $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $verifier -ReportDir $reportDir 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+
+        $latestJson = Join-Path $reportDir 'public-routes-latest.json'
+        if (Test-Path $latestJson) {
+            $result = Get-Content $latestJson -Raw | ConvertFrom-Json
+            $failures = @($result.Results | Where-Object { -not $_.Passed } | ForEach-Object {
+                '{0}: {1}' -f $_.Name, $_.Detail
+            })
+            @($failures) | Should -BeNullOrEmpty
+        }
+
+        $output | Should -Not -Match 'Cloudflare Access login page'
+        $output | Should -Not -Match 'Error\s*1103|cloudflare tunnel error|bad gateway|gateway timeout|host error'
+        $exitCode | Should -Be 0
     }
 }

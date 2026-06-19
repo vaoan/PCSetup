@@ -2,7 +2,25 @@
 
 Cloudflare Tunnel setup for web proxying and SSH remote access.
 
-## Quick Setup (Auto-Installers)
+## Quick Setup
+
+After a format, run one script:
+
+```powershell
+.\install-all.bat
+```
+
+It syncs secrets when needed, installs `cloudflared` from the official MSI location, configures the web and SSH tunnels, restores the WSL-backed console tunnel, starts the stack, installs the boot/logon scheduled tasks, and runs verification.
+
+Run the repo-level prereq bootstrap first on a fresh Windows install:
+
+```powershell
+..\0-init-prereqs.bat
+```
+
+That script keeps Chocolatey available for compatibility, but the current setup prefers Scoop/winget and centralizes shared prerequisites such as WSL, Git, nvm/Node, .NET desktop runtimes, Java, redistributables, and package-manager buckets.
+
+## Maintenance Installers
 
 ### Web Tunnel (ffxivbe.org)
 ```powershell
@@ -32,7 +50,10 @@ Runs the full post-install report:
 - tunnel processes
 - local HTTP origins
 - WSL service state
+- local code-server folder switching
 - public hostname checks
+
+The public hostname leg uses Playwright through `verify-public-routes.ps1`. It temporarily removes/restores Cloudflare Access policies for the protected console routes, rejects Access login pages and Cloudflare error pages, rejects placeholder fallback pages, and checks the real `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` workspace after the base code route passes.
 
 Reports are written to:
 - `%USERPROFILE%\.cloudflared\reports\latest.md`
@@ -64,10 +85,7 @@ Reports are written to:
 
 ## Setup After Format
 
-1. Install **cloudflared**: https://github.com/cloudflare/cloudflared/releases
-2. Run `install-tunnel.ps1` (web tunnel)
-3. Run `install-ssh-tunnel.ps1` (SSH tunnel)
-4. Or run `post-format-recovery.ps1` to restore the full Windows-side tunnel and SSH setup in one pass.
+Run `install-all.bat`. Use the individual installers only when repairing one specific piece.
 
 See **[SETUP_GUIDE.md](SETUP_GUIDE.md)** for detailed steps.
 See **[INSTALL.md](INSTALL.md)** for installer details.

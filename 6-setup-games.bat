@@ -25,10 +25,20 @@ echo.
 echo Write-Host "Installing game-related applications..." -ForegroundColor Cyan
 echo Write-Host ""
 echo.
-echo # Install game platforms and Java via Chocolatey
-echo choco install steam epicgameslauncher prismlauncher temurin17 temurin8 -y
+echo function Install-ScoopApp([string]$package, [string]$displayName = $package^) {
+echo     if ^(-not ^(Get-Command scoop -ErrorAction SilentlyContinue^)^) { throw "Scoop is missing. Run 0-init-prereqs.bat first." }
+echo     $installed = ^& scoop list 2^>^$null ^| Out-String
+echo     if ^($installed -match "(?m)^\s*$([regex]::Escape($package))\s+"^) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
+echo     Write-Host "Installing $displayName via Scoop..." -ForegroundColor Cyan
+echo     try { ^& scoop install $package } catch { Write-Host "$displayName install failed: $($_.Exception.Message)" -ForegroundColor Yellow }
+echo }
 echo.
-echo # CurseForge via winget ^(Chocolatey package is not published on the public feed^)
+echo # Install game platforms via Scoop. Java is installed by 0-init-prereqs.bat.
+echo Install-ScoopApp "steam" "Steam"
+echo Install-ScoopApp "epic-games-launcher" "Epic Games Launcher"
+echo Install-ScoopApp "prismlauncher" "Prism Launcher"
+echo.
+echo # CurseForge via winget
 echo winget install --id Overwolf.CurseForge -e --accept-package-agreements --accept-source-agreements
 echo.
 echo # XIVLauncher via winget ^(auto-skips if installed^)

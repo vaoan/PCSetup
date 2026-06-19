@@ -1,6 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
 Describe "container base scripts" {
+    It "init prereqs script exists" {
+        Test-Path (Join-Path $PSScriptRoot "..\0-init-prereqs.bat") | Should -BeTrue
+    }
+
     It "run-all exists" {
         Test-Path (Join-Path $PSScriptRoot "..\run-all.bat") | Should -BeTrue
     }
@@ -23,6 +27,10 @@ Describe "container base scripts" {
 }
 
 Describe "container installed toolchain" {
+    It "Scoop installed" {
+        (scoop --version 2>&1 | Out-String) | Should -Match '\S+'
+    }
+
     It "Chocolatey installed" {
         (choco --version 2>&1 | Out-String) | Should -Match '\d+\.\d+'
     }
