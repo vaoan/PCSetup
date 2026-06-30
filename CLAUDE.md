@@ -276,7 +276,9 @@ Browser (Cloudflare Access auth)
 
 ### Daily use
 
-Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel` and `UpdateWSLPortProxy` scheduled tasks also run at logon automatically.
+Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel`, `UpdateWSLPortProxy`, and `WSLKeepAlive` scheduled tasks also run at logon automatically.
+
+> **`WSLKeepAlive` task (important):** WSL2 shuts the VM down when no session is held open. When that happens, code-server (`code.ffxivbe.org`) and the other WSL-backed services die, and on restart WSL can grab a new IP that the Windows TCP relays no longer point at — so console hostnames start returning 502. The `WSLKeepAlive` scheduled task runs `wsl -d Ubuntu-24.04 --user root -- sleep infinity` at logon/startup to hold the VM open. If `code.ffxivbe.org` is down, first check `Get-ScheduledTask WSLKeepAlive` is `Running` and that `wsl --list --running` shows the distro; if not, run `Start-ScheduledTask WSLKeepAlive` then `cloudflared\start-console.bat`.
 
 ### Console scripts
 

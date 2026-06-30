@@ -398,6 +398,43 @@ Register-ScheduledTask -TaskName $proxyTaskName -Action $proxyAction -Trigger $p
     -Settings $proxySettings -Principal $proxyPrincipal -Force | Out-Null
 Write-Log "Scheduled task '$proxyTaskName' created (runs at logon + boot/resume, elevated)"
 
+# -- 9. WSLKeepAlive scheduled task -------------------------------------------
+# Holds the WSL2 VM open. Without it, WSL shuts the VM down when idle -> code-server
+# (code.ffxivbe.org), the dashboard (tools.ffxivbe.org) and the other WSL-backed
+# services die, and the WSL IP can change out from under the TCP relays -> 502.
+# A single `sleep infinity` session is fragile (it gets terminated and the VM then
+# idles down), so the task runs a self-healing loop: if the held session is ever
+# killed, it respawns within ~2s, so the VM effectively never drops.
+Write-Log "Creating WSLKeepAlive scheduled task..."
+$kaTaskName   = "WSLKeepAlive"
+$kaScriptPath = "$cfDir\wsl-keepalive.ps1"
+$kaScript     = @"
+# WSL keepalive — holds the WSL2 VM open so code-server and the other WSL-backed
+# console services stay up and the WSL IP stays stable. Self-healing loop.
+`$distro = '$distro'
+while (`$true) {
+    try { & wsl.exe -d `$distro --user root -- sleep infinity } catch {}
+    Start-Sleep -Seconds 2
+}
+"@
+[IO.File]::WriteAllText($kaScriptPath, $kaScript, [Text.Encoding]::UTF8)
+
+$kaAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$kaScriptPath`""
+$kaTriggers  = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME),
+    (New-ScheduledTaskTrigger -AtStartup)   # also fires on resume from sleep
+)
+$kaSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+$kaPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+
+Unregister-ScheduledTask -TaskName $kaTaskName -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $kaTaskName -Action $kaAction -Trigger $kaTriggers `
+    -Settings $kaSettings -Principal $kaPrincipal -Force | Out-Null
+Start-ScheduledTask -TaskName $kaTaskName -ErrorAction SilentlyContinue
+Write-Log "Scheduled task '$kaTaskName' created (self-healing loop, holds WSL VM open)"
+
 # -- Done ----------------------------------------------------------------------
 Write-Host ""
 Write-Host "[setup-console] Setup complete." -ForegroundColor Green

@@ -30,6 +30,7 @@ $sshProxyScript = "$PSScriptRoot\ssh-proxy.js"
 $sshProxyLog   = "$launcherDir\ssh-proxy.log"
 $sshProxyPidFile = "$launcherDir\ssh-proxy.pid"
 $tcpRelayScript = "$PSScriptRoot\tcp-relay.js"
+$wslKeepalivePidFile = "$launcherDir\wsl-keepalive.pid"
 $cfLog         = "$cfDir\cloudflared-dev.log"
 $cfPidFile     = "$cfDir\cloudflared-dev.pid"
 $nodeCmd       = Get-Command node -ErrorAction SilentlyContinue
@@ -64,6 +65,34 @@ if (-not $wslIp) { Fail "Could not determine WSL2 IP. Is $distro running?" }
 Write-Log "WSL2 IP: $wslIp"
 $codeUser = Get-CodeServerUser
 Write-Log "code-server user: $codeUser"
+
+# Keep the WSL2 VM alive. Without a held-open session WSL shuts the VM down when
+# idle, which kills code-server/dashboard/etc. and (on restart) changes the WSL
+# IP out from under the TCP relays -> console hostnames (code.ffxivbe.org) return
+# 502. The durable holder is the 'WSLKeepAlive' scheduled task (a persistent
+# `sleep infinity` session); prefer it. Fall back to a hidden session if the task
+# isn't registered yet (e.g. start-console run before setup-console-windows.ps1).
+if (-not (Test-Path $launcherDir)) { New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null }
+$keepaliveTask = Get-ScheduledTask -TaskName 'WSLKeepAlive' -ErrorAction SilentlyContinue
+if ($keepaliveTask) {
+    if ($keepaliveTask.State -ne 'Running') { Start-ScheduledTask -TaskName 'WSLKeepAlive' }
+    Write-Log "WSL keepalive: scheduled task ensured running -> holds $distro VM open"
+} else {
+    $kaLive = $false
+    if (Test-Path $wslKeepalivePidFile) {
+        $kaPid = (Get-Content $wslKeepalivePidFile -ErrorAction SilentlyContinue).Trim()
+        if ($kaPid -match '^\d+$' -and (Get-Process -Id ([int]$kaPid) -ErrorAction SilentlyContinue)) { $kaLive = $true }
+    }
+    if ($kaLive) {
+        Write-Log "WSL keepalive: fallback session already running (PID $kaPid)"
+    } else {
+        $kaProc = Start-Process -FilePath "wsl.exe" `
+            -ArgumentList "-d", $distro, "--user", "root", "--", "sh", "-c", "exec sleep infinity" `
+            -WindowStyle Hidden -PassThru
+        $kaProc.Id | Out-File -FilePath $wslKeepalivePidFile -Encoding utf8
+        Write-Log "WSL keepalive: fallback session started (PID $($kaProc.Id)); run setup-console-windows.ps1 to install the task"
+    }
+}
 
 function Set-SshwiftyWslHost {
     param(

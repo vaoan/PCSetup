@@ -75,6 +75,19 @@ Get-CimInstance Win32_Process | Where-Object {
 }
 Write-Log "console-related processes: stopped"
 
+# Stop the WSL keepalive. Kill the self-healing loop host FIRST, otherwise it
+# would just respawn the session we kill next.
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'wsl-keepalive' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" | Where-Object { $_.CommandLine -match 'sleep infinity' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+$wslKeepalivePidFile = "$cloudflareDir\launcher\wsl-keepalive.pid"
+if (Test-Path $wslKeepalivePidFile) {
+    $kaPid = (Get-Content $wslKeepalivePidFile -ErrorAction SilentlyContinue).Trim()
+    if ($kaPid -match '^\d+$') { Stop-Process -Id ([int]$kaPid) -Force -ErrorAction SilentlyContinue }
+    Remove-Item $wslKeepalivePidFile -Force -ErrorAction SilentlyContinue
+}
+Remove-FileIfExists "$cfDir\wsl-keepalive.ps1"
+Write-Log "WSL keepalive: stopped"
+
 Stop-ListenerOnPort -Port 2222
 Stop-ListenerOnPort -Port 7681
 Stop-ListenerOnPort -Port 8080
@@ -84,7 +97,7 @@ Stop-ListenerOnPort -Port 7687
 Write-Log "stale localhost listeners: cleared"
 
 # -- 3. Remove scheduled tasks ------------------------------------------------
-foreach ($taskName in @("web-console", "UpdateWSLPortProxy", "CloudflaredDevTunnel", "dev-tunnel")) {
+foreach ($taskName in @("web-console", "UpdateWSLPortProxy", "WSLKeepAlive", "CloudflaredDevTunnel", "dev-tunnel")) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 }
 Write-Log "scheduled tasks: removed"
