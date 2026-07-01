@@ -61,6 +61,7 @@ mkdir -p "$APP_DIR"
 cp "$SRC_DIR/package.json" "$APP_DIR/package.json"
 cp "$SRC_DIR/bot.js" "$APP_DIR/bot.js"
 cp "$SRC_DIR/dj.js" "$APP_DIR/dj.js"
+cp "$SRC_DIR/accounts.js" "$APP_DIR/accounts.js"
 echo "[setup-spotify-discord] Installing npm dependencies..."
 ( cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund )
 

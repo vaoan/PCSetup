@@ -276,6 +276,7 @@ function createDJ({ ensureVoiceForInteraction }) {
         { name: '🔊 Summon', value: '`/summon` — pull me into your voice channel and move playback here\n`/leave` — disconnect me' },
         { name: '⏯️ Controls', value: '`/skip` · `/pause` · `/resume` · `/nowplaying` · `/volume <0-100>`' },
         { name: '🎶 Queue', value: '`/queue` — show it\n`/move <from> <to>` · `/remove <position>` · `/shuffle` · `/clear`' },
+        { name: '🔑 Whose account', value: '`/account` — show who’s playing. Admins can switch the source account with `/login` → `/logincode`, and `/resetaccount` to restore the owner.' },
         { name: '💡 Tip', value: 'You can also control everything from the Spotify app — pick **Discord** in the devices menu. Requires Spotify Premium.' },
       );
     return ix.reply({ embeds: [e] });

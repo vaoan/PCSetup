@@ -35,6 +35,7 @@ const {
   entersState,
 } = require('@discordjs/voice');
 const dj = require('./dj');
+const accounts = require('./accounts');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -226,6 +227,7 @@ const djEngine = dj.createDJ({ ensureVoiceForInteraction });
 
 const commands = [
   ...dj.SLASH_COMMANDS,
+  ...accounts.SLASH_COMMANDS,
   ...[
     new SlashCommandBuilder().setName('leave').setDescription('Disconnect the bot from voice'),
     new SlashCommandBuilder().setName('reconnect').setDescription('Restart the audio stream'),
@@ -250,6 +252,7 @@ client.once(Events.ClientReady, async (c) => {
   // never fails playback with ENXIO ("no such device or address"), even before
   // the bot has joined a voice channel.
   try { ensureFifoKeepAlive(); } catch (err) { console.error('[bot] fifo keep-alive:', err.message); }
+  try { accounts.init(); } catch (err) { console.error('[bot] accounts init:', err.message); }
   try {
     await registerCommands(c.user.id);
   } catch (err) {
@@ -284,6 +287,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // DJ engine handles all music commands (play, radio, summon, queue, …).
   if (await djEngine.handleInteraction(interaction)) return;
+  // Account switching (login/logincode/resetaccount/account).
+  if (await accounts.handleInteraction(interaction)) return;
 
   if (interaction.commandName === 'leave') {
     leaveVoice();
