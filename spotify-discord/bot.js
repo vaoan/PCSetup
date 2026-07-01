@@ -140,6 +140,7 @@ player.on(AudioPlayerStatus.Idle, () => {
 // ── Voice connection ──────────────────────────────────────────────────────────
 let connection = null;
 let channelBitrate = null; // the target channel's max bitrate (caps OPUS_BITRATE)
+const VOICE_DEBUG = process.env.DEBUG_VOICE === '1'; // verbose voice/UDP logging (off by default)
 
 async function connectTo(guild, channelId) {
   // Cap the encoder to the channel's own bitrate limit (96k unboosted, more when
@@ -155,7 +156,7 @@ async function connectTo(guild, channelId) {
     adapterCreator: guild.voiceAdapterCreator,
     selfDeaf: true,
     selfMute: false,
-    debug: true,
+    debug: VOICE_DEBUG,
   });
 
   connection.on('stateChange', (oldS, newS) => {
@@ -163,7 +164,8 @@ async function connectTo(guild, channelId) {
       ? ` (reason=${newS.reason}${newS.closeCode !== undefined ? ` closeCode=${newS.closeCode}` : ''})`
       : '';
     log(`voice: ${oldS.status} -> ${newS.status}${extra}`);
-    // Attach to the underlying networking layer to see UDP/websocket detail.
+    if (!VOICE_DEBUG) return;
+    // Verbose UDP/websocket detail (enable with DEBUG_VOICE=1).
     const net = newS.networking;
     if (net && !net.__dbgHooked) {
       net.__dbgHooked = true;
@@ -173,7 +175,7 @@ async function connectTo(guild, channelId) {
     }
   });
   connection.on('error', (err) => console.error('[bot] voice connection error:', err.message));
-  connection.on('debug', (m) => log('voicedbg: ' + String(m).slice(0, 300)));
+  if (VOICE_DEBUG) connection.on('debug', (m) => log('voicedbg: ' + String(m).slice(0, 300)));
 
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
     try {
