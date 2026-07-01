@@ -71,6 +71,7 @@ fi
 echo "[setup-cloud] Fetching bot + config from GitHub..."
 mkdir -p "$APP_DIR" "$CONFIG_DIR"
 curl -fsSL "$REPO_RAW/bot.js"       -o "$APP_DIR/bot.js"
+curl -fsSL "$REPO_RAW/dj.js"        -o "$APP_DIR/dj.js"
 curl -fsSL "$REPO_RAW/package.json" -o "$APP_DIR/package.json"
 curl -fsSL "$REPO_RAW/config.yml"   -o "$CONFIG_DIR/config.yml"
 echo "[setup-cloud] Installing npm dependencies..."
@@ -84,6 +85,8 @@ DISCORD_GUILD_ID=${DISCORD_GUILD_ID:-replace_me}
 DISCORD_VOICE_CHANNEL_ID=${DISCORD_VOICE_CHANNEL_ID:-}
 SPOTIFY_FIFO=$FIFO
 SPOTIFY_PIPE_RATE=44100
+SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
 ENVEOF
     chmod 600 "$ENV_FILE"
     echo "[setup-cloud] Wrote $ENV_FILE"

@@ -60,6 +60,7 @@ echo "[setup-spotify-discord] config.yml deployed to $CONFIG_DIR"
 mkdir -p "$APP_DIR"
 cp "$SRC_DIR/package.json" "$APP_DIR/package.json"
 cp "$SRC_DIR/bot.js" "$APP_DIR/bot.js"
+cp "$SRC_DIR/dj.js" "$APP_DIR/dj.js"
 echo "[setup-spotify-discord] Installing npm dependencies..."
 ( cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund )
 
@@ -89,6 +90,8 @@ DISCORD_GUILD_ID=${DISCORD_GUILD_ID_VAL:-replace_me}
 DISCORD_VOICE_CHANNEL_ID=${DISCORD_VOICE_CHANNEL_ID_VAL}
 SPOTIFY_FIFO=$FIFO
 SPOTIFY_PIPE_RATE=44100
+SPOTIFY_CLIENT_ID=$(read_secret SPOTIFY_CLIENT_ID)
+SPOTIFY_CLIENT_SECRET=$(read_secret SPOTIFY_CLIENT_SECRET)
 ENVEOF
     chmod 600 "$ENV_FILE"
     echo "[setup-spotify-discord] Wrote $ENV_FILE"

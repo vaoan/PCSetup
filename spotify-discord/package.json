@@ -16,6 +16,7 @@
     "@discordjs/voice": "^0.19.2",
     "@noble/ciphers": "^1.2.1",
     "discord.js": "^14.16.0",
-    "libsodium-wrappers": "^0.7.13"
+    "libsodium-wrappers": "^0.7.13",
+    "ws": "^8.18.0"
   }
 }

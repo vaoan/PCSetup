@@ -34,6 +34,7 @@ const {
   VoiceConnectionStatus,
   entersState,
 } = require('@discordjs/voice');
+const dj = require('./dj');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -210,12 +211,27 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
+// Voice helper the DJ engine uses to pull the bot into the caller's channel.
+async function ensureVoiceForInteraction(ix) {
+  const channel = ix.member?.voice?.channel;
+  if (!channel) return { error: 'Join a voice channel first, then try again.' };
+  const currentId = connection?.joinConfig?.channelId || null;
+  if (!connection || currentId !== channel.id) {
+    leaveVoice();
+    await connectTo(ix.guild, channel.id);
+  }
+  return { channelName: channel.name };
+}
+const djEngine = dj.createDJ({ ensureVoiceForInteraction });
+
 const commands = [
-  new SlashCommandBuilder().setName('join').setDescription('Bring the Spotify speaker into your current voice channel'),
-  new SlashCommandBuilder().setName('leave').setDescription('Disconnect the Spotify speaker'),
-  new SlashCommandBuilder().setName('reconnect').setDescription('Restart the audio stream'),
-  new SlashCommandBuilder().setName('status').setDescription('Show bridge status'),
-].map((c) => c.toJSON());
+  ...dj.SLASH_COMMANDS,
+  ...[
+    new SlashCommandBuilder().setName('leave').setDescription('Disconnect the bot from voice'),
+    new SlashCommandBuilder().setName('reconnect').setDescription('Restart the audio stream'),
+    new SlashCommandBuilder().setName('status').setDescription('Show bridge status'),
+  ].map((c) => c.toJSON()),
+];
 
 async function registerCommands(appId) {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
@@ -266,21 +282,8 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === 'join') {
-    const channel = interaction.member?.voice?.channel;
-    if (!channel) {
-      return interaction.reply({ content: 'Join a voice channel first.', ephemeral: true });
-    }
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      leaveVoice();
-      await connectTo(interaction.guild, channel.id);
-      await interaction.editReply(`🎵 Joined **${channel.name}**. Pick **Discord** in your Spotify Connect menu.`);
-    } catch (err) {
-      await interaction.editReply(`Failed to join: ${err.message}`);
-    }
-    return;
-  }
+  // DJ engine handles all music commands (play, radio, summon, queue, …).
+  if (await djEngine.handleInteraction(interaction)) return;
 
   if (interaction.commandName === 'leave') {
     leaveVoice();
@@ -289,7 +292,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'reconnect') {
     if (!connection) {
-      return interaction.reply({ content: 'Not connected. Use /join first.', ephemeral: true });
+      return interaction.reply({ content: 'Not connected. Use /summon in a voice channel first.', ephemeral: true });
     }
     startStream();
     return interaction.reply({ content: '🔄 Restarted the audio stream.', ephemeral: true });
@@ -299,7 +302,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const state = connection ? connection.state.status : 'not connected';
     const ff = ffmpeg ? 'running' : 'stopped';
     return interaction.reply({
-      content: `Voice: **${state}**\nffmpeg: **${ff}**\nFIFO: \`${FIFO}\` @ ${PIPE_RATE} Hz`,
+      content: `Voice: **${state}**\nffmpeg: **${ff}**\nsearch: **${dj.SEARCH_ENABLED ? 'on' : 'off (links only)'}**`,
       ephemeral: true,
     });
   }
