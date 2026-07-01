@@ -1,0 +1,38 @@
+# go-librespot config — deployed to ~/.config/go-librespot/config.yml by the
+# WSL setup script. Streams a Spotify Connect device into a named pipe that the
+# Discord bot reads.
+#
+# Docs: https://github.com/devgianlu/go-librespot
+
+device_name: Discord
+device_type: speaker
+
+# 320 kbps = Premium "Very High". Requires Spotify Premium.
+bitrate: 320
+
+# Write raw PCM to a named pipe instead of a sound card. The bot's ffmpeg reads
+# this. s16le @ 44100 Hz stereo is what bot.js expects (SPOTIFY_PIPE_RATE).
+audio_backend: pipe
+audio_output_pipe: /tmp/spotify-discord.fifo
+audio_output_pipe_format: s16le
+
+# Don't pause/normalize quirks — keep it simple and gapless-ish.
+normalisation_disabled: false
+
+# Log into your Spotify account via OAuth (one-time interactive browser login).
+# This makes the "Discord" device appear in your Spotify Connect list on ALL
+# your devices over the internet — not just the local network. zeroconf mode
+# would only work on the same LAN and breaks under WSL2's NAT, so we use OAuth.
+credentials:
+  type: interactive
+  interactive:
+    # Fixed OAuth callback port so a stable netsh portproxy can bridge the
+    # browser redirect from Windows into WSL (WSL2 localhost forwarding is
+    # unreliable on long-running VMs). Only used during the one-time login.
+    callback_port: 8898
+
+# Local control/status API (used by nothing yet, handy for future controls).
+server:
+  enabled: true
+  address: 127.0.0.1
+  port: 3678

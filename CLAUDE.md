@@ -280,6 +280,17 @@ Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all 
 
 > **`WSLKeepAlive` task (important):** WSL2 shuts the VM down when no session is held open. When that happens, code-server (`code.ffxivbe.org`) and the other WSL-backed services die, and on restart WSL can grab a new IP that the Windows TCP relays no longer point at — so console hostnames start returning 502. The `WSLKeepAlive` scheduled task runs `wsl -d Ubuntu-24.04 --user root -- sleep infinity` at logon/startup to hold the VM open. If `code.ffxivbe.org` is down, first check `Get-ScheduledTask WSLKeepAlive` is `Running` and that `wsl --list --running` shows the distro; if not, run `Start-ScheduledTask WSLKeepAlive` then `cloudflared\start-console.bat`.
 
+> **Mirrored networking (WSL2):** this machine runs WSL in **mirrored** mode
+> (`networkingMode=mirrored` + `hostAddressLoopback=true` in `%USERPROFILE%\.wslconfig`,
+> written by `spotify-discord\setup-wsl-mirrored.ps1`) — required for the
+> Spotify→Discord bridge's voice/UDP. In mirrored mode WSL and Windows **share the
+> network stack**, so: (1) the Windows `tcp-relay.js`/`ssh-proxy.js` relays are
+> **not used** — cloudflared reaches WSL services directly on `127.0.0.1`; and
+> (2) WSL sshd runs on **2222** (Windows OpenSSH keeps 22). `start-console.ps1`
+> auto-detects the mode (`wslinfo --networking-mode`) and skips relays + fixes the
+> ssh port accordingly. If you ever revert to NAT, the same script restores the
+> relay behaviour automatically. `netsh portproxy` is not used in mirrored mode.
+
 ### Console scripts
 
 | File | Purpose |
@@ -483,6 +494,58 @@ choco uninstall cloudflared -y
 Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi' -OutFile "$env:TEMP\cloudflared.msi"
 Start-Process msiexec.exe -ArgumentList '/i', "$env:TEMP\cloudflared.msi", '/quiet' -Wait
 ```
+
+## Spotify → Discord Bridge (`spotify-discord/`)
+
+Makes a Discord bot act as a **Spotify Connect speaker**. Pick **Discord** from
+the Connect/devices menu in any Spotify app (phone/PC/web) and audio plays into a
+Discord voice channel. Playback is controlled from Spotify; the bot is just the
+output device. Requires **Spotify Premium**.
+
+```
+Spotify app → go-librespot (Connect device, OAuth login) → /tmp/spotify-discord.fifo
+  → bot.js → ffmpeg (44.1→48 kHz) → @discordjs/voice → Discord voice channel
+```
+
+Runs as two **WSL systemd services** (`go-librespot`, `spotify-discord-bot`),
+enabled at boot, held alive by `WSLKeepAlive`, and (re)started at logon by the
+`SpotifyDiscordBridge` scheduled task. OAuth login (not LAN zeroconf) is used so
+the device appears in Connect over the internet.
+
+> **Requires WSL2 mirrored networking** (`networkingMode=mirrored` +
+> `hostAddressLoopback=true` in `%USERPROFILE%\.wslconfig`). Discord voice's UDP
+> handshake and the OAuth callback are unreliable under WSL2 NAT. See the "Web
+> Console" section note — mirrored mode also changes how the console is wired.
+
+> **The critical fix: `@discordjs/voice` ≥ 0.19 (voice gateway v8).** Older 0.18
+> uses v4, which Discord now rejects (voice ws opens, gets Hello, then closes →
+> "operation was aborted", `net-state 1 → 6`, never reaches UDP). NAT vs mirrored
+> was a red herring *for voice* — the outdated library was the real blocker.
+
+### Setup / restore
+
+1. Secrets: add `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_VOICE_CHANNEL_ID`
+   to GitHub Secrets, then `cloudflared\sync-secrets.bat` (or edit
+   `/etc/spotify-discord.env` in WSL directly).
+2. Install: `spotify-discord\setup-spotify-discord.bat` — runs mirrored-networking
+   setup → WSL install → `SpotifyDiscordBridge` scheduled task, in that order.
+3. One-time Spotify OAuth (can't live in a secret):
+   `powershell -ExecutionPolicy Bypass -File spotify-discord\login-spotify.ps1`
+   — opens the auth URL; log in, Agree (a "connection reset" page after Agree is fine).
+
+Slash commands: `/join`, `/leave`, `/reconnect`, `/status`.
+Logs: `journalctl -u go-librespot -u spotify-discord-bot -f`.
+Full details + gotchas in `spotify-discord/README.md`.
+
+| File | Purpose |
+|---|---|
+| `spotify-discord/bot.js` | discord.js bot: reads pipe, joins voice, streams |
+| `spotify-discord/config.yml` | go-librespot config (pipe output + OAuth, callback_port 8898) |
+| `spotify-discord/setup-spotify-discord.bat` | One-click: mirrored net → WSL install → task |
+| `spotify-discord/setup-wsl-mirrored.ps1` | Sets WSL mirrored networking (prereq) |
+| `spotify-discord/setup-spotify-discord-wsl.sh` | WSL installer + systemd services |
+| `spotify-discord/install-scheduled-task.ps1` | Registers `SpotifyDiscordBridge` logon task |
+| `spotify-discord/login-spotify.ps1` | One-time Spotify OAuth (mirrored-aware) |
 
 ## Source Files (`sources/`)
 

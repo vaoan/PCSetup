@@ -58,6 +58,17 @@ function Stop-ListenerOnPort {
     }
 }
 
+# -- 0. Detect WSL networking mode --------------------------------------------
+# In MIRRORED mode WSL shares the Windows network stack, so:
+#   * Windows reaches WSL services directly on 127.0.0.1 (hostAddressLoopback) —
+#     the Windows tcp-relay.js / ssh-proxy.js relays are NOT used (they would
+#     squat the very ports the WSL services need to bind).
+#   * WSL sshd cannot use port 22 (Windows OpenSSH owns it) — it runs on 2222,
+#     which sshwifty already targets (127.0.0.1:2222).
+$netMode = (wsl -d $distro --user root -- wslinfo --networking-mode 2>$null | Out-String).Trim()
+$mirrored = ($netMode -eq 'mirrored')
+Write-Log "WSL networking mode: $netMode$(if ($mirrored) { ' (relays disabled)' })"
+
 # -- 1. Resolve WSL IP and normalize local origin targets ---------------------
 Write-Log "Resolving WSL2 IP..."
 $wslIp = (wsl -d $distro --user root -- bash -c "hostname -I | cut -d ' ' -f1").Trim()
@@ -175,33 +186,54 @@ foreach ($port in 8080, 7683, 7686, 7687) {
 Write-Log "portproxy: removed for dev origins (replaced by local TCP relays)"
 
 # -- 2. Ensure SSH and WSL services are running -------------------------------
-wsl -d $distro --user root -- bash -c "service ssh start 2>/dev/null || true" | Out-Null
-Write-Log "WSL SSH: started"
+if ($mirrored) {
+    # Windows OpenSSH owns port 22 on the shared stack, so WSL sshd must listen
+    # on 2222 (socket activation on :22 would fail). sshwifty targets :2222.
+    wsl -d $distro --user root -- bash -c "grep -qE '^Port 2222' /etc/ssh/sshd_config || sed -i -E 's/^\s*#?\s*Port\s+.*/Port 2222/' /etc/ssh/sshd_config; grep -qE '^Port 2222' /etc/ssh/sshd_config || echo 'Port 2222' >> /etc/ssh/sshd_config; systemctl disable --now ssh.socket 2>/dev/null; systemctl mask ssh.socket 2>/dev/null; systemctl restart ssh 2>/dev/null || service ssh restart 2>/dev/null || true" | Out-Null
+    Write-Log "WSL SSH: listening on 2222 (mirrored)"
+} else {
+    wsl -d $distro --user root -- bash -c "service ssh start 2>/dev/null || true" | Out-Null
+    Write-Log "WSL SSH: started"
+}
 
 wsl -d $distro --user root -- bash -c "systemctl start code-server@$codeUser ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
 Write-Log "WSL services: started"
 
-if (Test-Path $sshProxyPidFile) {
-    $oldSshProxyPid = (Get-Content $sshProxyPidFile -ErrorAction SilentlyContinue).Trim()
-    if ($oldSshProxyPid -match '^\d+$') {
-        Stop-Process -Id ([int]$oldSshProxyPid) -Force -ErrorAction SilentlyContinue
+if ($mirrored) {
+    # No Windows relays in mirrored mode — cloudflared reaches WSL on 127.0.0.1
+    # directly. Kill any stale relays that would squat the WSL service ports.
+    if (Test-Path $sshProxyPidFile) {
+        $oldSshProxyPid = (Get-Content $sshProxyPidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldSshProxyPid -match '^\d+$') { Stop-Process -Id ([int]$oldSshProxyPid) -Force -ErrorAction SilentlyContinue }
+        Remove-Item $sshProxyPidFile -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item $sshProxyPidFile -Force -ErrorAction SilentlyContinue
-}
-Stop-ListenerOnPort -Port 2222
-Start-Sleep -Milliseconds 300
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'tcp-relay\.js|ssh-proxy\.js' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Write-Log "Windows relays: not needed in mirrored mode (skipped)"
+} else {
+    if (Test-Path $sshProxyPidFile) {
+        $oldSshProxyPid = (Get-Content $sshProxyPidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldSshProxyPid -match '^\d+$') {
+            Stop-Process -Id ([int]$oldSshProxyPid) -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item $sshProxyPidFile -Force -ErrorAction SilentlyContinue
+    }
+    Stop-ListenerOnPort -Port 2222
+    Start-Sleep -Milliseconds 300
 
-$sshProxyProc = Start-Process -FilePath $nodeExe `
-    -ArgumentList $sshProxyScript, "--target=${wslIp}:22" `
-    -RedirectStandardError $sshProxyLog `
-    -WindowStyle Hidden `
-    -PassThru
-$sshProxyProc.Id | Out-File -FilePath $sshProxyPidFile -Encoding utf8
-Write-Log "SSH relay: started (PID $($sshProxyProc.Id)) -> 127.0.0.1:2222"
+    $sshProxyProc = Start-Process -FilePath $nodeExe `
+        -ArgumentList $sshProxyScript, "--target=${wslIp}:22" `
+        -RedirectStandardError $sshProxyLog `
+        -WindowStyle Hidden `
+        -PassThru
+    $sshProxyProc.Id | Out-File -FilePath $sshProxyPidFile -Encoding utf8
+    Write-Log "SSH relay: started (PID $($sshProxyProc.Id)) -> 127.0.0.1:2222"
 
-if (-not (Test-Path $tcpRelayScript)) { Fail "TCP relay script not found: $tcpRelayScript" }
-foreach ($port in 8080, 7683, 7686, 7687) {
-    Start-TcpRelay -Port $port -NodePath $nodeExe -ScriptPath $tcpRelayScript -LauncherPath $launcherDir
+    if (-not (Test-Path $tcpRelayScript)) { Fail "TCP relay script not found: $tcpRelayScript" }
+    foreach ($port in 8080, 7683, 7686, 7687) {
+        Start-TcpRelay -Port $port -NodePath $nodeExe -ScriptPath $tcpRelayScript -LauncherPath $launcherDir
+    }
 }
 
 # -- 3. Kill stale tmux console session so drives remount on next connect -----
