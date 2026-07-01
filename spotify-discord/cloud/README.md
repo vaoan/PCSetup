@@ -28,9 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/vaoan/PCSetup/main/spotify-discord/
 DISCORD_BOT_TOKEN='...' DISCORD_GUILD_ID='...' DISCORD_VOICE_CHANNEL_ID='...' bash setup-cloud.sh
 ```
 
-Get the three values from your GitHub Secrets (or `.secrets` after
-`sync-secrets.bat`). This installs go-librespot, Node, ffmpeg, the bot, and
-enables both as systemd services.
+Get the values from your GitHub Secrets (or `.secrets` after `sync-secrets.bat`).
+This installs go-librespot, Node, ffmpeg, the bot, and enables both as systemd
+services.
+
+**Login-free rebuild:** also pass `SPOTIFY_GO_LIBRESPOT_STATE_B64='...'` (stored in
+your secrets after the first login) and the installer drops the saved Spotify
+credentials straight in — skipping step 3 entirely. Refresh that secret anytime
+with `ssh root@<vps-ip> "base64 -w0 ~/.config/go-librespot/state.json"`.
 
 ## 3. One-time Spotify login (SSH tunnel)
 

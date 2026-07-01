@@ -51,6 +51,16 @@ tar -xzf /tmp/glr.tar.gz -C /usr/local/bin go-librespot
 chmod +x "$BIN"
 rm -f /tmp/glr.tar.gz
 
+# -- Restore saved go-librespot credentials (skip OAuth on rebuild) -----------
+# Pass SPOTIFY_GO_LIBRESPOT_STATE_B64=... (from GitHub Secrets / .secrets) to
+# drop the reusable Spotify credentials straight in — no login step needed.
+mkdir -p "$CONFIG_DIR"
+if [ -n "${SPOTIFY_GO_LIBRESPOT_STATE_B64:-}" ] && [ ! -f "$CONFIG_DIR/state.json" ]; then
+    echo "$SPOTIFY_GO_LIBRESPOT_STATE_B64" | base64 -d > "$CONFIG_DIR/state.json" 2>/dev/null \
+        && echo "[setup-cloud] Restored saved Spotify credentials (no login needed)." \
+        || echo "[setup-cloud] Could not decode SPOTIFY_GO_LIBRESPOT_STATE_B64; will need login."
+fi
+
 # -- App files (from the repo, so the VPS needs no local checkout) ------------
 echo "[setup-cloud] Fetching bot + config from GitHub..."
 mkdir -p "$APP_DIR" "$CONFIG_DIR"
