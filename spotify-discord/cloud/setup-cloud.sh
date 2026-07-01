@@ -27,6 +27,12 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y ffmpeg curl ca-certificates tar build-essential python3
 
+# Stop needrestart (used by unattended-upgrades) from auto-restarting services on
+# library updates — otherwise a security-update cycle bounces go-librespot and the
+# bot mid-stream, dropping the playback session ("no sound"). 'l' = list only.
+mkdir -p /etc/needrestart/conf.d
+printf "%s\n" "\$nrconf{restart} = 'l';" > /etc/needrestart/conf.d/99-no-autorestart.conf
+
 # -- Node.js 22 ---------------------------------------------------------------
 NODE_MAJOR=0
 command -v node >/dev/null 2>&1 && NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)

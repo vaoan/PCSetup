@@ -41,7 +41,11 @@ $password = Get-Secret 'RACKNERD_VPS_PASSWORD'
 $hostkey  = Get-Secret 'RACKNERD_VPS_HOSTKEY'
 $plink    = Find-Plink
 
-$common = @('-batch', '-hostkey', $hostkey, '-ssh', '-pw', $password, "$user@$ip")
+# RACKNERD_VPS_HOSTKEY may hold multiple fingerprints (RSA + ed25519), whitespace-
+# separated, since plink negotiates whichever host-key algorithm — pin them all.
+$common = @('-batch')
+foreach ($hk in ($hostkey -split '\s+' | Where-Object { $_ })) { $common += @('-hostkey', $hk) }
+$common += @('-ssh', '-pw', $password, "$user@$ip")
 
 if ($Tunnel -gt 0) {
     Write-Host "[vps-ssh] Opening tunnel 127.0.0.1:$Tunnel -> ${ip}:$Tunnel (Ctrl+C to close)"
