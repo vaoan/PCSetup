@@ -8,7 +8,7 @@
 // otherwise it's links-only.
 
 const WebSocket = require('ws');
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const LIBRESPOT = process.env.GO_LIBRESPOT_API || 'http://127.0.0.1:3678';
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || '';
@@ -78,6 +78,7 @@ const trackFrom = (t, addedBy) => ({
   artists: (t.artists || []).map((a) => a.name).join(', '),
   durationMs: t.duration_ms,
   url: t.external_urls?.spotify,
+  albumArt: t.album?.images?.[0]?.url,
   addedBy,
 });
 async function searchTrack(query, addedBy) {
@@ -113,11 +114,13 @@ async function resolveInput(input, addedBy) {
 }
 
 // ── Queue + player engine ─────────────────────────────────────────────────────
-function createDJ({ ensureVoiceForInteraction }) {
+function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   const queue = [];        // upcoming tracks (reorderable)
   let current = null;      // now playing
   let advancing = false;   // guard against double-advance
   let radioMode = false;   // radio: let go-librespot autoplay drive, don't use our queue
+  let paused = false;      // playback paused state (from events)
+  let playerMessage = null; // the live "now playing" card message
 
   async function playNext() {
     const t = queue.shift();
@@ -130,29 +133,74 @@ function createDJ({ ensureVoiceForInteraction }) {
   function onEvent(evt) {
     const type = evt.type;
     const data = evt.data || {};
-    // In radio mode go-librespot's autoplay picks the next songs; track them so
-    // /nowplaying stays accurate, and DON'T advance our (unused) queue.
+    if (type === 'playing') paused = false;
+    if (type === 'paused') paused = true;
+
     if (radioMode) {
+      // go-librespot's autoplay picks the next songs; track them for the card.
       if ((type === 'metadata' || type === 'playing') && data.uri) {
-        current = { uri: data.uri, name: data.name || current?.name || '(loading…)', artists: (data.artist_names || []).join(', '), durationMs: data.duration || 0, addedBy: current?.addedBy };
+        current = { uri: data.uri, name: data.name || current?.name || '(loading…)', artists: (data.artist_names || []).join(', '), durationMs: data.duration || 0, albumArt: data.album_cover_url || current?.albumArt, addedBy: current?.addedBy };
       }
-      return;
-    }
-    // Queue mode: a finished track (not_playing for the current uri) → play next.
-    if (type === 'not_playing' && current && data.uri === current.uri && !advancing) {
-      advancing = true;
-      playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
-    }
-    // Backfill metadata for links-only-added tracks once go-librespot loads them.
-    if (type === 'metadata' && current && data.uri === current.uri) {
-      if (!current.name || current.name === '(loading…)') {
-        current.name = data.name || current.name;
-        current.artists = (data.artist_names || []).join(', ') || current.artists;
-        current.durationMs = data.duration || current.durationMs;
+    } else {
+      // Queue mode: a finished track (not_playing for the current uri) → play next.
+      if (type === 'not_playing' && current && data.uri === current.uri && !advancing) {
+        advancing = true;
+        playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
+      }
+      // Backfill metadata + album art once go-librespot loads the track.
+      if (type === 'metadata' && current && data.uri === current.uri) {
+        current.name = (!current.name || current.name === '(loading…)') ? (data.name || current.name) : current.name;
+        current.artists = current.artists || (data.artist_names || []).join(', ');
+        current.durationMs = current.durationMs || data.duration || 0;
+        current.albumArt = current.albumArt || data.album_cover_url;
       }
     }
+    if (['metadata', 'playing', 'paused', 'not_playing', 'stopped'].includes(type)) updatePlayerCard();
   }
   connectEvents(onEvent);
+
+  // ── Live "now playing" card (embed + control buttons) ───────────────────────
+  function buildPlayerEmbed() {
+    const e = new EmbedBuilder().setColor(0x1db954);
+    if (!current) return e.setTitle('⏹️ Nothing playing').setDescription('Start with `/play` or `/radio`.');
+    e.setTitle(radioMode ? '📻 Radio' : paused ? '⏸️ Paused' : '▶️ Now Playing')
+      .setDescription(`**${current.name}**\n${current.artists || ''}`);
+    if (current.albumArt) e.setThumbnail(current.albumArt);
+    const foot = [radioMode ? 'Radio' : `${queue.length} queued`, current.addedBy ? `added by ${current.addedBy}` : null].filter(Boolean).join(' • ');
+    if (foot) e.setFooter({ text: foot });
+    return e;
+  }
+  function buildPlayerRow() {
+    return new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('player:playpause').setEmoji(paused ? '▶️' : '⏸️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('player:skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('player:stop').setEmoji('⏹️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('player:leave').setEmoji('👋').setStyle(ButtonStyle.Danger),
+    );
+  }
+  async function updatePlayerCard() {
+    if (!playerMessage) return;
+    try { await playerMessage.edit({ embeds: [buildPlayerEmbed()], components: [buildPlayerRow()] }); }
+    catch { playerMessage = null; }
+  }
+  async function ensurePlayerCard(channel) {
+    if (playerMessage || !channel || typeof channel.send !== 'function') return;
+    try { playerMessage = await channel.send({ embeds: [buildPlayerEmbed()], components: [buildPlayerRow()] }); }
+    catch (e) { log('post player card failed:', e.message); }
+  }
+  async function handleButton(ix) {
+    if (!ix.customId || !ix.customId.startsWith('player:')) return false;
+    const action = ix.customId.split(':')[1];
+    try {
+      await ix.deferUpdate();
+      if (action === 'playpause') { if (paused) await api.resume(); else await api.pause(); }
+      else if (action === 'skip') { if (radioMode) await api.next().catch(() => {}); else await playNext(); }
+      else if (action === 'stop') { queue.length = 0; radioMode = false; await api.pause().catch(() => {}); }
+      else if (action === 'leave' && leaveVoice) leaveVoice();
+      await updatePlayerCard();
+    } catch (e) { log('button', action, 'error:', e.message); }
+    return true;
+  }
 
   // ── command implementations ────────────────────────────────────────────────
   async function cmdPlay(ix) {
@@ -170,6 +218,7 @@ function createDJ({ ensureVoiceForInteraction }) {
     const startedIdle = !current && queue.length === 0;
     queue.push(...r.tracks);
     if (!current) await playNext();
+    await ensurePlayerCard(ix.channel);
 
     if (r.tracks.length === 1) {
       const t = r.tracks[0];
@@ -201,6 +250,7 @@ function createDJ({ ensureVoiceForInteraction }) {
     queue.length = 0;
     current = seed;
     await api.play(seed.uri);
+    await ensurePlayerCard(ix.channel);
     return ix.editReply(`📻 Started radio from **${seed.name}** — ${seed.artists}. Similar songs will keep playing. Use \`/skip\` to move on, or \`/play\` to go back to the queue.`);
   }
   async function cmdPause(ix) { await api.pause().catch(() => {}); return ix.reply('⏸️ Paused.'); }
@@ -265,7 +315,18 @@ function createDJ({ ensureVoiceForInteraction }) {
     if (current) { await api.resume().catch(() => {}); }
     else if (queue.length) { await playNext(); }
     else { try { await api.resume(); } catch {} }
+    await ensurePlayerCard(ix.channel);
     return ix.editReply(`🔊 I'm in **${joined?.channelName || 'your channel'}** — playback is here now. ${current ? '' : 'Add songs with `/play`, or pick **Discord** in your Spotify app.'}`);
+  }
+  async function cmdPlayer(ix) {
+    // Post the live card as a normal message (editable long-term, unlike an
+    // interaction reply which expires after 15 min).
+    if (playerMessage) { try { await playerMessage.delete(); } catch {} playerMessage = null; }
+    await ensurePlayerCard(ix.channel);
+    return ix.reply({
+      content: playerMessage ? '🎛️ Player posted below — it’ll update as songs change.' : '⚠️ I need **Send Messages** + **Embed Links** permission in this channel to post the player card.',
+      ephemeral: true,
+    });
   }
   async function cmdHelp(ix) {
     const e = new EmbedBuilder().setColor(0x1db954).setTitle('🎧 Spotify Bridge — how to use it')
@@ -275,6 +336,7 @@ function createDJ({ ensureVoiceForInteraction }) {
         { name: '📻 Radio', value: '`/radio <song>` — endless station of similar songs from a seed track' },
         { name: '🔊 Summon', value: '`/summon` — pull me into your voice channel and move playback here\n`/leave` — disconnect me' },
         { name: '⏯️ Controls', value: '`/skip` · `/pause` · `/resume` · `/nowplaying` · `/volume <0-100>`' },
+        { name: '🎛️ Player', value: '`/player` — a live card with album art + ▶️/⏸️ ⏭️ ⏹️ 👋 buttons (auto-updates as songs change)' },
         { name: '🎶 Queue', value: '`/queue` — show it\n`/move <from> <to>` · `/remove <position>` · `/shuffle` · `/clear`' },
         { name: '🔑 Whose account', value: '`/account` — show who’s playing. Admins can switch the source account with `/login` → `/logincode`, and `/resetaccount` to restore the owner.' },
         { name: '💡 Tip', value: 'You can also control everything from the Spotify app — pick **Discord** in the devices menu. Requires Spotify Premium.' },
@@ -285,7 +347,7 @@ function createDJ({ ensureVoiceForInteraction }) {
   const handlers = {
     play: cmdPlay, radio: cmdRadio, skip: cmdSkip, pause: cmdPause, resume: cmdResume,
     queue: cmdQueue, move: cmdMove, remove: cmdRemove, shuffle: cmdShuffle,
-    clear: cmdClear, volume: cmdVolume, nowplaying: cmdNowPlaying,
+    clear: cmdClear, volume: cmdVolume, nowplaying: cmdNowPlaying, player: cmdPlayer,
     summon: cmdSummon, help: cmdHelp,
   };
   async function handleInteraction(ix) {
@@ -298,7 +360,7 @@ function createDJ({ ensureVoiceForInteraction }) {
     }
     return true;
   }
-  return { handleInteraction, get current() { return current; }, get queue() { return queue; } };
+  return { handleInteraction, handleButton, get current() { return current; }, get queue() { return queue; } };
 }
 
 // WebSocket to go-librespot /events with auto-reconnect.
@@ -324,6 +386,7 @@ const SLASH_COMMANDS = [
   new SlashCommandBuilder().setName('pause').setDescription('Pause playback'),
   new SlashCommandBuilder().setName('resume').setDescription('Resume playback'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show the current track'),
+  new SlashCommandBuilder().setName('player').setDescription('Show the live player card with control buttons'),
   new SlashCommandBuilder().setName('queue').setDescription('Show the queue'),
   new SlashCommandBuilder().setName('move').setDescription('Move a queued track to a new position')
     .addIntegerOption((o) => o.setName('from').setDescription('Current position').setRequired(true))

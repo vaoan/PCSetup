@@ -264,7 +264,7 @@ async function ensureVoiceForInteraction(ix) {
   }
   return { channelName: channel.name };
 }
-const djEngine = dj.createDJ({ ensureVoiceForInteraction });
+const djEngine = dj.createDJ({ ensureVoiceForInteraction, leaveVoice });
 
 const commands = [
   ...dj.SLASH_COMMANDS,
@@ -324,6 +324,8 @@ client.once(Events.ClientReady, async (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Player card buttons (▶️/⏸️ ⏭️ ⏹️ 👋).
+  if (interaction.isButton()) { try { await djEngine.handleButton(interaction); } catch (e) { log('button error: ' + e.message); } return; }
   if (!interaction.isChatInputCommand()) return;
 
   // DJ engine handles all music commands (play, radio, summon, queue, …).
