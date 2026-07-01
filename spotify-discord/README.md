@@ -92,6 +92,15 @@ This bridge requires **WSL2 mirrored networking** (`networkingMode=mirrored` in
 5. **Use it** — open Spotify, hit the Connect/devices icon, pick **Discord**, and
    play. The bot auto-joins `DISCORD_VOICE_CHANNEL_ID` (or use `/join`).
 
+## Run it on a cloud VPS (always-on, better sound)
+
+For 24/7 availability and cleaner audio (no WSL CPU jitter), run the bridge on a
+cheap always-on Linux VPS instead of your PC. A real VPS has proper outbound UDP,
+so none of the mirrored-networking setup is needed. See **`cloud/README.md`** —
+it's a one-command installer plus an SSH-tunnel login. Recommended: any KVM VPS
+with ≥ 1 GB RAM (a private music bot uses ~5–10% CPU / ~150 MB RAM / ~50 MB per
+hour of listening).
+
 ## Slash commands
 
 | Command | Action |
