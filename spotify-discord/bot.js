@@ -41,6 +41,19 @@ const DEFAULT_CHANNEL_ID = process.env.DISCORD_VOICE_CHANNEL_ID;
 const FIFO = process.env.SPOTIFY_FIFO || '/tmp/spotify-discord.fifo';
 const PIPE_RATE = process.env.SPOTIFY_PIPE_RATE || '44100';
 
+// ── Audio quality / resilience tuning ─────────────────────────────────────────
+// Opus bitrate in bits/s. Discord voice defaults low (~64k); 96k is safe on any
+// server, higher if the server is boosted (128/256/384k at tiers 1/2/3).
+const OPUS_BITRATE = parseInt(process.env.SPOTIFY_OPUS_BITRATE || '128000', 10);
+// Inband Forward Error Correction: Opus embeds recovery data so brief packet loss
+// doesn't cause audible dropouts. The main reliability win.
+const OPUS_FEC = (process.env.SPOTIFY_OPUS_FEC || '1') !== '0';
+// Expected packet-loss percentage (0..1) FEC optimises for.
+const OPUS_PLP = parseFloat(process.env.SPOTIFY_OPUS_PLP || '0.05');
+// ffmpeg resampler for 44.1→48 kHz. 'soxr' = high quality; set empty to use the
+// default resampler if a build lacks libsoxr.
+const RESAMPLER = process.env.hasOwnProperty('SPOTIFY_RESAMPLER') ? process.env.SPOTIFY_RESAMPLER : 'soxr';
+
 if (!TOKEN) {
   console.error('[bot] DISCORD_BOT_TOKEN is not set. Edit /etc/spotify-discord.env');
   process.exit(1);
@@ -85,13 +98,10 @@ function startStream() {
 
   // Read the raw pipe (s16le @ PIPE_RATE stereo) → emit s16le @ 48k stereo,
   // which @discordjs/voice's opus encoder consumes directly (StreamType.Raw).
-  ffmpeg = spawn('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error',
-    '-f', 's16le', '-ar', PIPE_RATE, '-ac', '2',
-    '-i', FIFO,
-    '-f', 's16le', '-ar', '48000', '-ac', '2',
-    'pipe:1',
-  ], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const ffArgs = ['-hide_banner', '-loglevel', 'error', '-f', 's16le', '-ar', PIPE_RATE, '-ac', '2', '-i', FIFO];
+  if (RESAMPLER) ffArgs.push('-af', `aresample=resampler=${RESAMPLER}:precision=28`);
+  ffArgs.push('-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1');
+  ffmpeg = spawn('ffmpeg', ffArgs, { stdio: ['ignore', 'pipe', 'inherit'] });
 
   ffmpeg.on('exit', (code, signal) => {
     log(`ffmpeg exited (code=${code}, signal=${signal}); restarting in 1s`);
@@ -99,8 +109,24 @@ function startStream() {
   });
 
   const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw });
+  tuneEncoder(resource);
   player.play(resource);
-  log('streaming pipe → voice');
+  log(`streaming pipe → voice (bitrate=${OPUS_BITRATE}, fec=${OPUS_FEC}, resampler=${RESAMPLER || 'default'})`);
+}
+
+// Tune the Opus encoder for music quality + packet-loss resilience. Guarded so
+// it degrades gracefully if the encoder API differs.
+function tuneEncoder(resource) {
+  try {
+    const enc = resource.encoder;
+    if (!enc) return;
+    const bitrate = channelBitrate ? Math.min(OPUS_BITRATE, channelBitrate) : OPUS_BITRATE;
+    if (typeof enc.setBitrate === 'function') enc.setBitrate(bitrate);
+    if (OPUS_FEC && typeof enc.setFEC === 'function') enc.setFEC(true);
+    if (typeof enc.setPLP === 'function') enc.setPLP(OPUS_PLP);
+  } catch (err) {
+    log('encoder tuning skipped: ' + err.message);
+  }
 }
 
 player.on('error', (err) => console.error('[bot] player error:', err.message));
@@ -111,8 +137,16 @@ player.on(AudioPlayerStatus.Idle, () => {
 
 // ── Voice connection ──────────────────────────────────────────────────────────
 let connection = null;
+let channelBitrate = null; // the target channel's max bitrate (caps OPUS_BITRATE)
 
 async function connectTo(guild, channelId) {
+  // Cap the encoder to the channel's own bitrate limit (96k unboosted, more when
+  // the server is boosted) so we never exceed it.
+  try {
+    const ch = await guild.channels.fetch(channelId);
+    channelBitrate = ch && ch.bitrate ? ch.bitrate : null;
+  } catch { channelBitrate = null; }
+
   connection = joinVoiceChannel({
     channelId,
     guildId: guild.id,
