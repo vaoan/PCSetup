@@ -141,6 +141,10 @@ player.on(AudioPlayerStatus.Idle, () => {
 let connection = null;
 let channelBitrate = null; // the target channel's max bitrate (caps OPUS_BITRATE)
 const VOICE_DEBUG = process.env.DEBUG_VOICE === '1'; // verbose voice/UDP logging (off by default)
+// Auto-leave when no humans are in the channel (0 disables). Grace period avoids
+// leaving on brief disconnects.
+const EMPTY_DISCONNECT_MS = Math.max(0, parseInt(process.env.EMPTY_DISCONNECT_SECONDS || '90', 10)) * 1000;
+let emptyTimer = null;
 
 async function connectTo(guild, channelId) {
   // Cap the encoder to the channel's own bitrate limit (96k unboosted, more when
@@ -195,9 +199,11 @@ async function connectTo(guild, channelId) {
   connection.subscribe(player);
   startStream();
   log(`connected to voice channel ${channelId}`);
+  checkListeners(); // handle joining an already-empty channel
 }
 
 function leaveVoice() {
+  if (emptyTimer) { clearTimeout(emptyTimer); emptyTimer = null; }
   if (connection) {
     try { connection.destroy(); } catch { /* ignore */ }
     connection = null;
@@ -206,6 +212,39 @@ function leaveVoice() {
     ffmpeg.removeAllListeners('exit');
     try { ffmpeg.kill('SIGKILL'); } catch { /* ignore */ }
     ffmpeg = null;
+  }
+}
+
+// ── Auto-leave when only bots remain ──────────────────────────────────────────
+// Counts real humans in the bot's channel — every bot (this one, the TTS bot,
+// other music bots) has user.bot === true and is excluded. If zero humans remain
+// past the grace period, disconnect and pause playback.
+function humanListeners() {
+  if (!connection || !connection.joinConfig) return -1;
+  const guild = client.guilds.cache.get(connection.joinConfig.guildId);
+  const channel = guild && guild.channels.cache.get(connection.joinConfig.channelId);
+  if (!channel || !channel.members) return -1;
+  return channel.members.filter((m) => !m.user?.bot).size;
+}
+
+function checkListeners() {
+  const humans = humanListeners();
+  if (humans === -1) return; // not connected
+  if (humans === 0) {
+    if (!emptyTimer && EMPTY_DISCONNECT_MS > 0) {
+      log(`no human listeners — leaving in ${EMPTY_DISCONNECT_MS / 1000}s unless someone joins`);
+      emptyTimer = setTimeout(async () => {
+        emptyTimer = null;
+        if (humanListeners() === 0) {
+          log('still only bots — disconnecting and pausing playback');
+          try { await fetch('http://127.0.0.1:3678/player/pause', { method: 'POST' }); } catch { /* ignore */ }
+          leaveVoice();
+        }
+      }, EMPTY_DISCONNECT_MS);
+    }
+  } else if (emptyTimer) {
+    clearTimeout(emptyTimer);
+    emptyTimer = null;
   }
 }
 
@@ -314,6 +353,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 });
+
+// Re-evaluate whenever anyone joins/leaves/moves voice channels.
+client.on(Events.VoiceStateUpdate, () => { try { checkListeners(); } catch (e) { log('listener check:', e.message); } });
 
 function shutdown() {
   log('shutting down');
