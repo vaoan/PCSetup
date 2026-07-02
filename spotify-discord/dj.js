@@ -136,28 +136,47 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     if (type === 'playing') paused = false;
     if (type === 'paused') paused = true;
 
-    if (radioMode) {
-      // go-librespot's autoplay picks the next songs; track them for the card.
-      if ((type === 'metadata' || type === 'playing') && data.uri) {
-        current = { uri: data.uri, name: data.name || current?.name || '(loading…)', artists: (data.artist_names || []).join(', '), durationMs: data.duration || 0, albumArt: data.album_cover_url || current?.albumArt, addedBy: current?.addedBy };
-      }
-    } else {
-      // Queue mode: a finished track (not_playing for the current uri) → play next.
-      if (type === 'not_playing' && current && data.uri === current.uri && !advancing) {
-        advancing = true;
-        playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
-      }
-      // Backfill metadata + album art once go-librespot loads the track.
-      if (type === 'metadata' && current && data.uri === current.uri) {
-        current.name = (!current.name || current.name === '(loading…)') ? (data.name || current.name) : current.name;
-        current.artists = current.artists || (data.artist_names || []).join(', ');
-        current.durationMs = current.durationMs || data.duration || 0;
-        current.albumArt = current.albumArt || data.album_cover_url;
-      }
+    // Always mirror go-librespot's ACTUAL current track — whether playback is
+    // driven by our queue, radio autoplay, OR the Spotify app directly.
+    if ((type === 'metadata' || type === 'playing') && data.uri) {
+      const same = current && current.uri === data.uri;
+      current = {
+        uri: data.uri,
+        name: data.name || (same ? current.name : '(loading…)'),
+        artists: (data.artist_names || []).join(', ') || (same ? current.artists : ''),
+        durationMs: data.duration || (same ? current.durationMs : 0),
+        albumArt: data.album_cover_url || (same ? current.albumArt : undefined),
+        addedBy: same ? current.addedBy : undefined,
+      };
+    }
+    if (type === 'stopped') current = null;
+
+    // Advance OUR managed queue only when we have upcoming songs (not radio, not
+    // app-driven playback — those manage their own progression).
+    if (!radioMode && type === 'not_playing' && queue.length > 0 && !advancing) {
+      advancing = true;
+      playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
     }
     if (['metadata', 'playing', 'paused', 'not_playing', 'stopped'].includes(type)) updatePlayerCard();
   }
   connectEvents(onEvent);
+
+  // Backstop: poll go-librespot's status so the card is accurate even for
+  // app-driven playback and after missed events. Updates only on change.
+  async function syncFromStatus() {
+    try {
+      const st = await api.status();
+      paused = !!st.paused;
+      const t = !st.stopped && st.track ? st.track : null;
+      if (!t) { if (current) { current = null; updatePlayerCard(); } return; }
+      if (!current || current.uri !== t.uri || (!current.albumArt && t.album_cover_url)) {
+        const same = current && current.uri === t.uri;
+        current = { uri: t.uri, name: t.name, artists: (t.artist_names || []).join(', '), durationMs: t.duration, albumArt: t.album_cover_url, addedBy: same ? current.addedBy : undefined };
+        updatePlayerCard();
+      }
+    } catch { /* ignore */ }
+  }
+  setInterval(syncFromStatus, 12000);
 
   // ── Live "now playing" card (embed + control buttons) ───────────────────────
   function buildPlayerEmbed() {
@@ -315,6 +334,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     if (current) { await api.resume().catch(() => {}); }
     else if (queue.length) { await playNext(); }
     else { try { await api.resume(); } catch {} }
+    await syncFromStatus();
     await ensurePlayerCard(ix.channel);
     return ix.editReply(`🔊 I'm in **${joined?.channelName || 'your channel'}** — playback is here now. ${current ? '' : 'Add songs with `/play`, or pick **Discord** in your Spotify app.'}`);
   }
@@ -322,6 +342,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     // Post the live card as a normal message (editable long-term, unlike an
     // interaction reply which expires after 15 min).
     if (playerMessage) { try { await playerMessage.delete(); } catch {} playerMessage = null; }
+    await syncFromStatus();
     await ensurePlayerCard(ix.channel);
     return ix.reply({
       content: playerMessage ? '🎛️ Player posted below — it’ll update as songs change.' : '⚠️ I need **Send Messages** + **Embed Links** permission in this channel to post the player card.',
