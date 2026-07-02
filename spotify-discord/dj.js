@@ -212,7 +212,11 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     const action = ix.customId.split(':')[1];
     try {
       await ix.deferUpdate();
-      if (action === 'playpause') { if (paused) await api.resume(); else await api.pause(); }
+      if (action === 'playpause') {
+        // Decide from go-librespot's ACTUAL state, not a possibly-stale flag.
+        const st = await api.status().catch(() => ({}));
+        if (st.paused) { await api.resume(); paused = false; } else { await api.pause(); paused = true; }
+      }
       else if (action === 'skip') { if (radioMode) await api.next().catch(() => {}); else await playNext(); }
       else if (action === 'stop') { queue.length = 0; radioMode = false; await api.pause().catch(() => {}); }
       else if (action === 'leave' && leaveVoice) leaveVoice();
