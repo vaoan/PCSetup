@@ -37,9 +37,9 @@ async function lrs(path, body) {
 const api = {
   status: () => lrs('/status'),
   play: (uri, opts = {}) => lrs('/player/play', { uri, paused: false, skip_to_uri: opts.skipToUri }),
-  resume: () => lrs('/player/resume'),
-  pause: () => lrs('/player/pause'),
-  stop: () => lrs('/player/stop'),
+  resume: () => lrs('/player/resume', {}),
+  pause: () => lrs('/player/pause', {}),
+  stop: () => lrs('/player/stop', {}),
   next: () => lrs('/player/next', {}),
   prev: () => lrs('/player/prev', {}),
   seek: (position) => lrs('/player/seek', { position }),
