@@ -134,6 +134,38 @@ SERVICEEOF
 systemctl daemon-reload
 systemctl enable go-librespot spotify-discord-bot >/dev/null 2>&1 || true
 
+# -- go-librespot dealer watchdog ---------------------------------------------
+# go-librespot's Spotify "dealer" connection can go stale and it won't reconnect
+# on its own — new tracks then fail (HTTP 500 / "context deadline exceeded").
+# This restarts it when the pong-loss errors persist (>=3 in 3 min).
+cat > /usr/local/bin/golibrespot-watchdog.sh <<'WD'
+#!/bin/bash
+DEAD=$(journalctl -u go-librespot --since '3 minutes ago' --no-pager 2>/dev/null | grep -c 'did not receive last pong from dealer')
+if [ "${DEAD:-0}" -ge 3 ]; then
+  logger -t golibrespot-watchdog "dealer stale (${DEAD} pong losses/3min) — restarting go-librespot"
+  systemctl restart go-librespot
+fi
+WD
+chmod +x /usr/local/bin/golibrespot-watchdog.sh
+cat > /etc/systemd/system/golibrespot-watchdog.service <<'WD'
+[Unit]
+Description=go-librespot dealer-stall watchdog
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/golibrespot-watchdog.sh
+WD
+cat > /etc/systemd/system/golibrespot-watchdog.timer <<'WD'
+[Unit]
+Description=Run the go-librespot watchdog every 2 minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+WD
+systemctl daemon-reload
+systemctl enable golibrespot-watchdog.timer >/dev/null 2>&1 || true
+
 # -- First-run check ----------------------------------------------------------
 if ls "$CONFIG_DIR"/*.json >/dev/null 2>&1; then
     systemctl restart go-librespot spotify-discord-bot
