@@ -12,6 +12,8 @@ SSHWIFTY_KEY_DIR="/mnt/c/Users/$WIN_USER/Documents/Cloudflare/sshwifty/keys"
 PCSETUP_DIR="/mnt/z/Users/Heiner/Documents/PCSetup"
 ECLIPSE_DIR="/mnt/z/Github/eclipse-con"
 CANDYSHOP_DIR="/mnt/z/Github/candystore"
+PUCK_DIR="/mnt/z/Github/puck"
+AELEOS_DIR="/mnt/z/Github/aeleos"
 CODE_USER=$(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" && $7 !~ /(false|nologin)$/ { print $1; exit }')
 if [ -z "$CODE_USER" ]; then
     CODE_USER="root"
@@ -54,6 +56,10 @@ ensure_keypair "$SSHWIFTY_KEY_DIR/candystore" 'sshwifty-candystore'
 ensure_keypair "$SSHWIFTY_KEY_DIR/candystore-shell" 'sshwifty-candystore-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/eclipse-con" 'sshwifty-eclipse-con'
 ensure_keypair "$SSHWIFTY_KEY_DIR/eclipse-con-shell" 'sshwifty-eclipse-con-shell'
+ensure_keypair "$SSHWIFTY_KEY_DIR/puck" 'sshwifty-puck'
+ensure_keypair "$SSHWIFTY_KEY_DIR/puck-shell" 'sshwifty-puck-shell'
+ensure_keypair "$SSHWIFTY_KEY_DIR/aeleos" 'sshwifty-aeleos'
+ensure_keypair "$SSHWIFTY_KEY_DIR/aeleos-shell" 'sshwifty-aeleos-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup" 'sshwifty-pcsetup'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup-shell" 'sshwifty-pcsetup-shell'
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-terminal"
@@ -62,6 +68,10 @@ restrict_key_permissions "$SSHWIFTY_KEY_DIR/candystore"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/candystore-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/eclipse-con"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/eclipse-con-shell"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/puck"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/puck-shell"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/aeleos"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/aeleos-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup-shell"
 
@@ -142,6 +152,10 @@ command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session 
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/candystore && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/candystore-shell.pub") sshwifty-candystore-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s eclipse-con -c /mnt/z/Github/eclipse-con'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/eclipse-con.pub") sshwifty-eclipse-con
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/eclipse-con && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/eclipse-con-shell.pub") sshwifty-eclipse-con-shell
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s puck -c /mnt/z/Github/puck'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/puck.pub") sshwifty-puck
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/puck && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/puck-shell.pub") sshwifty-puck-shell
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s aeleos -c /mnt/z/Github/aeleos'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/aeleos.pub") sshwifty-aeleos
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/aeleos && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/aeleos-shell.pub") sshwifty-aeleos-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s pcsetup -c /mnt/z/Users/Heiner/Documents/PCSetup'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup.pub") sshwifty-pcsetup
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Users/Heiner/Documents/PCSetup && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup-shell.pub") sshwifty-pcsetup-shell
 AUTHKEYS
@@ -522,6 +536,6 @@ echo "  SSH listening on port 22 (exposed to Windows as localhost:2222 via portp
 echo "  code-server: port 8080 (exposed to Windows as localhost:8080 via portproxy)"
 echo "  ttyd (tmux): port 7683 (exposed to Windows as localhost:7683 via portproxy)"
 echo "  Wetty fallback: port 7681 (systemd service)"
-echo "  8 console presets configured in authorized_keys"
+echo "  $(grep -c '^command=' /root/.ssh/authorized_keys) console presets configured in authorized_keys"
 echo ""
 echo "  Next: run setup-console-windows.ps1 on the Windows side."

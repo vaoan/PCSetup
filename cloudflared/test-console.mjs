@@ -65,6 +65,10 @@ const presetTitles = [
   'Candystore (Fresh)',
   'Eclipse-con (Persistent)',
   'Eclipse-con (Fresh)',
+  'Puck (Persistent)',
+  'Puck (Fresh)',
+  'AeleOS (Persistent)',
+  'AeleOS (Fresh)',
   'PCSetup (Persistent)',
   'PCSetup (Fresh)',
 ];

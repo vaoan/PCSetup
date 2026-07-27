@@ -11,6 +11,10 @@
     { group: 'Candystore',    sub: 'Fresh',      title: 'Candystore (Fresh)'        },
     { group: 'Eclipse-con',   sub: 'Persistent', title: 'Eclipse-con (Persistent)'  },
     { group: 'Eclipse-con',   sub: 'Fresh',      title: 'Eclipse-con (Fresh)'       },
+    { group: 'Puck',          sub: 'Persistent', title: 'Puck (Persistent)'         },
+    { group: 'Puck',          sub: 'Fresh',      title: 'Puck (Fresh)'              },
+    { group: 'AeleOS',        sub: 'Persistent', title: 'AeleOS (Persistent)'       },
+    { group: 'AeleOS',        sub: 'Fresh',      title: 'AeleOS (Fresh)'            },
     { group: 'PCSetup',       sub: 'Persistent', title: 'PCSetup (Persistent)'      },
     { group: 'PCSetup',       sub: 'Fresh',      title: 'PCSetup (Fresh)'           },
   ];
@@ -19,6 +23,8 @@
     'WSL':         '#4caf82',
     'Candystore':  '#7b6fcf',
     'Eclipse-con': '#d17a5b',
+    'Puck':        '#c76fa0',
+    'AeleOS':      '#e0a54a',
     'PCSetup':     '#4f8fdf',
   };
 

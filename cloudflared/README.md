@@ -81,7 +81,7 @@ Reports are written to:
 - **SSH Hostname**: `pc.ffxivbe.org`
 - **Tunnel Configs**: `C:\Users\Heiner\.cloudflared\`
 - **Verification Reports**: `C:\Users\Heiner\.cloudflared\reports\`
-- **Console presets**: `console.ffxivbe.org` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, and `PCSetup` in persistent and fresh variants.
+- **Console presets**: `console.ffxivbe.org` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, `Puck`, `AeleOS`, and `PCSetup` in persistent and fresh variants.
 
 ## Setup After Format
 

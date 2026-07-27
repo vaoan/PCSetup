@@ -198,6 +198,10 @@ if (Test-Path $sshwiftyKeyDir) {
         @{ Title = 'Candystore (Fresh)';      KeyBase = 'candystore-shell' },
         @{ Title = 'Eclipse-con (Persistent)'; KeyBase = 'eclipse-con' },
         @{ Title = 'Eclipse-con (Fresh)';      KeyBase = 'eclipse-con-shell' },
+        @{ Title = 'Puck (Persistent)';        KeyBase = 'puck' },
+        @{ Title = 'Puck (Fresh)';             KeyBase = 'puck-shell' },
+        @{ Title = 'AeleOS (Persistent)';      KeyBase = 'aeleos' },
+        @{ Title = 'AeleOS (Fresh)';           KeyBase = 'aeleos-shell' },
         @{ Title = 'PCSetup (Persistent)';     KeyBase = 'pcsetup' },
         @{ Title = 'PCSetup (Fresh)';          KeyBase = 'pcsetup-shell' }
     )
@@ -216,7 +220,7 @@ if (Test-Path $sshwiftyKeyDir) {
     }
 
     [IO.File]::WriteAllText($sshwiftyConfPath, ($sshwiftyConfig | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
-    Write-Log "sshwifty presets synchronized (Candystore, Eclipse-con, PCSetup) -> $wslSshHost"
+    Write-Log "sshwifty presets synchronized (Candystore, Eclipse-con, Puck, AeleOS, PCSetup) -> $wslSshHost"
 } else {
     Fail "Missing generated key directory: $sshwiftyKeyDir. Run setup-console-wsl.sh before setup-console-windows.ps1."
 }
@@ -275,6 +279,23 @@ try {
     Fail "DNS route provisioning failed: $_"
 }
 
+# -- 3b. Gate every console hostname behind Zero Trust Access -----------------
+# Critical: the tunnel + DNS above would otherwise expose these hostnames with
+# NO Access app in front of them (fully public). setup-access-apps.ps1 (re)creates
+# the reusable email-allow + this-PC IP-bypass policies and points every app at
+# them with the max session duration. Idempotent — safe to run every setup.
+Write-Log "Provisioning Zero Trust Access gating (reusable policies)..."
+$accessAppsScript = Join-Path $PSScriptRoot 'setup-access-apps.ps1'
+if (Test-Path $accessAppsScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $accessAppsScript
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Access gating provisioning failed (setup-access-apps.ps1 exited $LASTEXITCODE)."
+    }
+    Write-Log "Zero Trust Access gating provisioned"
+} else {
+    Fail "setup-access-apps.ps1 not found at $accessAppsScript"
+}
+
 # -- 4. Write dev-config.yml --------------------------------------------------
 Write-Log "Writing cloudflared dev-config.yml..."
 $devConfig = @"
@@ -303,9 +324,15 @@ ingress:
 Write-Log "Copying launcher scripts..."
 Copy-Item "$PSScriptRoot\console-proxy.js"    "$launcherDir\console-proxy.js"    -Force
 Copy-Item "$PSScriptRoot\console-launcher.js" "$launcherDir\console-launcher.js" -Force
+# PWA assets served by console-proxy.js (SSH Console installable app)
+Copy-Item "$PSScriptRoot\console-pwa-manifest.webmanifest" "$launcherDir\console-pwa-manifest.webmanifest" -Force
+Copy-Item "$PSScriptRoot\console-pwa-sw.js"                "$launcherDir\console-pwa-sw.js"                -Force
+Copy-Item "$PSScriptRoot\console-pwa-icon-192.png"         "$launcherDir\console-pwa-icon-192.png"         -Force
+Copy-Item "$PSScriptRoot\console-pwa-icon-512.png"         "$launcherDir\console-pwa-icon-512.png"         -Force
 Copy-Item "$PSScriptRoot\ssh-proxy.js"        "$cloudflareDir\ssh-proxy.js"      -Force
 Copy-Item "$PSScriptRoot\tcp-relay.js"        "$cloudflareDir\tcp-relay.js"      -Force
 Copy-Item "$PSScriptRoot\start-console.ps1"   "$cloudflareDir\start-console.ps1" -Force
+Copy-Item "$PSScriptRoot\tunnel-supervisor.ps1" "$cloudflareDir\tunnel-supervisor.ps1" -Force
 
 # -- 6. Download sshwifty binary if missing -----------------------------------
 $sshwiftyExe = "$sshwiftyDir\sshwifty_windows_amd64.exe"
@@ -364,7 +391,7 @@ $wcTriggers  = @(
     (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME),
     (New-ScheduledTaskTrigger -AtStartup)   # also fires on resume from sleep
 )
-$wcSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+$wcSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew
 $wcPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
 Unregister-ScheduledTask -TaskName $wcTaskName -Confirm:$false -ErrorAction SilentlyContinue
