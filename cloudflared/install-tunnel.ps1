@@ -159,7 +159,7 @@ protocol: http2
 # Worker. The web stack lives on www.ffxiv.be.
 ingress:
   - hostname: www.ffxiv.be
-    service: http://127.0.0.1:9000
+    service: http://127.0.0.1:7542
   - hostname: chat.ffxiv.be
     service: http://127.0.0.1:3000
   - service: http_status:404
@@ -277,7 +277,7 @@ Write-Host ""
 Write-Host "Tunnel Status: $taskStatus" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  - Make sure the local web stack is running on 9000 and 3000 as needed" -ForegroundColor Gray
+Write-Host "  - Make sure the local web stack is running on 7542 and 3000 as needed" -ForegroundColor Gray
 Write-Host "  - Test: https://www.ffxiv.be, https://chat.ffxiv.be" -ForegroundColor Gray
 Write-Host "  - Toggle tunnel: Double-click 'Toggle Tunnel' on desktop" -ForegroundColor Gray
 Write-Host "  - Or run: toggle-tunnel.bat" -ForegroundColor Gray

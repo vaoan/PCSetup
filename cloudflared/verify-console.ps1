@@ -307,7 +307,7 @@ Test-ProcessMatch -Name 'SSHwifty' -Pattern 'sshwifty_windows_amd64\.exe'
 Test-ProcessMatch -Name 'console proxy' -Pattern 'console-proxy\.js'
 
 # Local origin checks for the web tunnel
-Test-LocalHttp -Name 'ffxivbe origin' -Url 'http://127.0.0.1:9000/'
+Test-LocalHttp -Name 'web origin' -Url 'http://127.0.0.1:7542/'
 Test-LocalHttp -Name 'chat origin' -Url 'http://127.0.0.1:3000/'
 
 # Console / WSL checks

@@ -21,7 +21,10 @@ $PSNativeCommandUseErrorActionPreference = $false
 # ============================================================================
 $webTunnelId = "c552cb9c-62bd-4c8b-9ec6-16627b1b8af3"
 $webTunnelName = "ffxivbe-tunnel"
-$webHostname = "www.ffxiv.be"
+# Zone root. Subdomains are composed as www.$webHostname / chat.$webHostname.
+# The apex itself is NOT routed through this tunnel - it belongs to the
+# ffxiv-be-shortener Worker - so the ingress below starts at www.
+$webHostname = "ffxiv.be"
 
 $sshTunnelId = "8dffdb51-77cc-43ca-8dc8-8a0c720607a5"
 $sshTunnelName = "ssh-tunnel"
@@ -371,7 +374,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "This will install and configure:" -ForegroundColor White
 Write-Host "  - Cloudflared (official MSI)" -ForegroundColor Gray
-Write-Host "  - Web tunnel: $webHostname + chat/map + app subdomains" -ForegroundColor Gray
+Write-Host "  - Web tunnel: www.$webHostname + chat" -ForegroundColor Gray
 Write-Host "  - SSH tunnel: $sshHostname" -ForegroundColor Gray
 Write-Host "  - Dev tunnel: $devHostname (VS Code Remote SSH)" -ForegroundColor Gray
 Write-Host "  - OpenSSH Server + key auth" -ForegroundColor Gray
@@ -439,7 +442,7 @@ if (-not (Test-Path $configDir)) {
 # STEP 3: Setup Web Tunnel Config
 # ============================================================================
 Write-Host ""
-Write-Host "[3/9] Setting up Web Tunnel ($webHostname)..." -ForegroundColor Yellow
+Write-Host "[3/9] Setting up Web Tunnel (www.$webHostname)..." -ForegroundColor Yellow
 
 $webConfigPath = Join-Path $configDir "config.yml"
 $webCredentialsPath = Join-Path $configDir "$webTunnelId.json"
@@ -451,10 +454,8 @@ credentials-file: $webCredentialsPath
 protocol: http2
 
 ingress:
-  - hostname: $webHostname
-    service: http://127.0.0.1:9000
   - hostname: www.$webHostname
-    service: http://127.0.0.1:9000
+    service: http://127.0.0.1:7542
   - hostname: chat.$webHostname
     service: http://127.0.0.1:3000
   - service: http_status:404
@@ -544,10 +545,8 @@ try {
 
     Write-Host "  Provisioning DNS routes for web and SSH tunnels..." -ForegroundColor Gray
     Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $webTunnelId -Hostnames @(
-        $webHostname,
         "www.$webHostname",
-        "chat.$webHostname",
-        "map.$webHostname"
+        "chat.$webHostname"
     )
     Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $sshTunnelId -Hostnames @($sshHostname)
     Write-Host "  OK DNS routes provisioned" -ForegroundColor Green
@@ -691,7 +690,7 @@ $trigger = @(
 )
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-Register-ScheduledTask -TaskName $webTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Web tunnel for $webHostname (silent, boot-started)" | Out-Null
+Register-ScheduledTask -TaskName $webTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Web tunnel for www.$webHostname (silent, boot-started)" | Out-Null
 Start-ScheduledTask -TaskName $webTunnelName
 Write-Host "  OK $webTunnelName" -ForegroundColor Green
 
@@ -819,9 +818,8 @@ if ($devTunnelReady) {
 
 Write-Host ""
 Write-Host "Test URLs:" -ForegroundColor Cyan
-Write-Host "  Web: https://$webHostname" -ForegroundColor White
+Write-Host "  Web: https://www.$webHostname" -ForegroundColor White
 Write-Host "  Chat: https://chat.$webHostname" -ForegroundColor White
-Write-Host "  Map: https://map.$webHostname" -ForegroundColor White
 Write-Host "  SSH: ssh windows-remote (from Mac)" -ForegroundColor White
 Write-Host "  Dev: ssh dev-windows (VS Code Remote SSH)" -ForegroundColor White
 
