@@ -34,7 +34,7 @@ if (Test-Path $sshTogglePath) {
     Write-Host "  Created: Toggle SSH Tunnel.lnk" -ForegroundColor Green
 }
 
-# Toggle Claude Sessions (claude, claimangel, snd)
+# Toggle Claude Sessions (claude, snd)
 $claudeTogglePath = Join-Path $scriptPath "toggle-claude-session.bat"
 if (Test-Path $claudeTogglePath) {
     # Claude session
@@ -46,16 +46,6 @@ if (Test-Path $claudeTogglePath) {
     $shortcut.Description = "Toggle Claude Code tmux session (Start/Stop)"
     $shortcut.Save()
     Write-Host "  Created: Toggle Claude.lnk" -ForegroundColor Green
-
-    # ClaimAngel session
-    $shortcut = $ws.CreateShortcut("$desktop\Toggle ClaimAngel.lnk")
-    $shortcut.TargetPath = $claudeTogglePath
-    $shortcut.Arguments = "claimangel"
-    $shortcut.WorkingDirectory = $scriptPath
-    $shortcut.IconLocation = "shell32.dll,24"
-    $shortcut.Description = "Toggle ClaimAngel Claude Code tmux session (Start/Stop)"
-    $shortcut.Save()
-    Write-Host "  Created: Toggle ClaimAngel.lnk" -ForegroundColor Green
 
     # SND session
     $shortcut = $ws.CreateShortcut("$desktop\Toggle SND.lnk")

@@ -5,7 +5,6 @@
 .DESCRIPTION
     This script creates scheduled tasks for:
     - claude: General Claude Code session (Z:\Users\Heiner\Documents\Cloudflare)
-    - claimangel: ClaimAngel project (Z:\Github\ClaimAngel\frontend)
     - snd: SND project - bash only (Z:\Users\Heiner\Documents\Luas\SND)
 
     All tasks run at Windows logon with elevated (Admin) privileges.
@@ -15,7 +14,7 @@
     Remove all scheduled tasks
 
 .PARAMETER Session
-    Install only a specific session (claude, claimangel, snd, or all)
+    Install only a specific session (claude, snd, or all)
 
 .NOTES
     Run as Administrator for scheduled task creation.
@@ -26,7 +25,7 @@
 
 param(
     [switch]$Uninstall,
-    [ValidateSet("all", "claude", "claimangel", "snd")]
+    [ValidateSet("all", "claude", "snd")]
     [string]$Session = "all"
 )
 
@@ -44,12 +43,6 @@ $Sessions = @{
         WorkingDir = "/z/Users/Heiner/Documents/Cloudflare"
         NoClaude = $false
         Description = "Claude Code in MSYS2 tmux (Cloudflare project)"
-    }
-    "claimangel" = @{
-        TaskName = "claimangel-session"
-        WorkingDir = "/z/Github/ClaimAngel/frontend"
-        NoClaude = $false
-        Description = "Claude Code in MSYS2 tmux (ClaimAngel project)"
     }
     "snd" = @{
         TaskName = "snd-session"
@@ -206,7 +199,7 @@ if (-not $Uninstall) {
         Write-Host "  tmux attach -t $s"
     }
     Write-Host ""
-    Write-Host "Or use aliases: claude, claimangel, snd" -ForegroundColor Yellow
+    Write-Host "Or use aliases: claude, snd" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "IMPORTANT:" -ForegroundColor Red
     Write-Host "  Browser-based MCP servers will NOT work in remote sessions."

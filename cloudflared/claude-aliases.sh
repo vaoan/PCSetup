@@ -14,16 +14,6 @@ claude() {
     fi
 }
 
-# Attach to ClaimAngel session (or start if not running)
-claimangel() {
-    if tmux has-session -t claimangel 2>/dev/null; then
-        tmux attach -t claimangel
-    else
-        echo "Starting claimangel session..."
-        "$CLOUDFLARE_DIR/start-claude-session.sh" claimangel "/z/Github/ClaimAngel/frontend"
-    fi
-}
-
 # Attach to SND session (or start if not running)
 snd() {
     if tmux has-session -t snd 2>/dev/null; then
@@ -52,4 +42,4 @@ killsession() {
     tmux kill-session -t "$session" 2>/dev/null && echo "Session '$session' killed" || echo "Session '$session' not found"
 }
 
-echo "Claude session aliases loaded: claude, claimangel, snd, sessions, killsession"
+echo "Claude session aliases loaded: claude, snd, sessions, killsession"

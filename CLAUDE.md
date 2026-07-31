@@ -506,13 +506,11 @@ Or run individual steps:
 | Session | Project | Type |
 |---------|---------|------|
 | `claude` | Z:\Users\Heiner\Documents\PCSetup\cloudflared | Claude Code |
-| `claimangel` | Z:\Github\ClaimAngel\frontend | Claude Code |
 | `snd` | Z:\Users\Heiner\Documents\Luas\SND | Bash only |
 
 Sessions start automatically at Windows login. Accessible via `ssh windows-remote` from Mac, then:
 ```bash
 claude        # attach to claude session
-claimangel    # attach to claimangel session
 snd           # attach to snd session
 sessions      # list all tmux sessions
 ```
@@ -527,7 +525,6 @@ Detach: `Ctrl+B`, then `D`.
 | `ffxivbe-tunnel` | At logon | Web tunnel to www.ffxiv.be |
 | `ssh-tunnel` | At logon | SSH tunnel to pc.ffxiv.be |
 | `claude-session` | At logon | Claude Code tmux (cloudflared project) |
-| `claimangel-session` | At logon | Claude Code tmux (ClaimAngel project) |
 | `snd-session` | At logon | Bash tmux (SND project) |
 
 ### Mac SSH Config
@@ -571,7 +568,7 @@ Already set up, survives PC formats:
 | `cloudflared/uninstall-tunnel.ps1` | Stops task, kills processes, leaves config/DNS intact |
 | `cloudflared/create-shortcuts.ps1` | Creates desktop shortcuts |
 | `cloudflared/start-claude-session.sh` | MSYS2 script to start/attach tmux session |
-| `cloudflared/claude-aliases.sh` | Bash aliases (claude, claimangel, snd, etc.) |
+| `cloudflared/claude-aliases.sh` | Bash aliases (claude, snd, etc.) |
 | `cloudflared/.cloudflared/config.yml` | ffxivbe-tunnel routing config |
 | `cloudflared/transfer-ffxiv-be.ps1` | Transfers `ffxiv.be` to DNSimple and delegates DNS to Cloudflare. Dry-runs by default; needs `-AuthCode <code> -Execute` to actually buy. Requires `DNSIMPLE_API_TOKEN`. See "Domain: ffxiv.be" below. |
 

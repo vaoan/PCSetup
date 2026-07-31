@@ -781,7 +781,7 @@ if (Test-Path $toggleSshPath) {
 # Toggle Claude Sessions
 $toggleClaudePath = Join-Path $scriptDir "toggle-claude-session.bat"
 if (Test-Path $toggleClaudePath) {
-    foreach ($session in @("claude", "claimangel", "snd")) {
+    foreach ($session in @("claude", "snd")) {
         $displayName = $session.Substring(0,1).ToUpper() + $session.Substring(1)
         $shortcut = $ws.CreateShortcut("$desktop\Toggle $displayName.lnk")
         $shortcut.TargetPath = $toggleClaudePath

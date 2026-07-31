@@ -4,7 +4,6 @@
 #
 # Examples:
 #   start-claude-session.sh claude /z/Users/Heiner/Documents/Cloudflare
-#   start-claude-session.sh claimangel /z/Github/ClaimAngel/frontend
 #   start-claude-session.sh snd /z/Users/Heiner/Documents/Luas/SND --no-claude
 
 SESSION_NAME="${1:-claude}"
