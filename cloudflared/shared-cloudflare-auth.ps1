@@ -210,6 +210,14 @@ const { chromium } = require(String.raw`$playwrightModule`);
         }
     }
 
+    # Every probe above is best-effort: curl.exe and the Playwright/node fallback
+    # are allowed to fail as long as one source produced an IP. But a failed
+    # native call leaves $LASTEXITCODE set, and PowerShell keeps that value until
+    # the next native command - so a caller whose final statement is Write-Log
+    # inherits it and appears to fail while reporting success. Clear it here,
+    # where we know the function itself succeeded.
+    $global:LASTEXITCODE = 0
+
     $cidrs = @(
         $ips |
             Where-Object { $_ } |
