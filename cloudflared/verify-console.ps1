@@ -271,6 +271,22 @@ function Test-DeployedCopies {
             $(if ($ok) { '' } else { "re-run setup-console-windows.ps1, or copy $repo -> $deployed" })
     }
 
+    # console-proxy.js serves the PWA assets from its OWN directory, so a stale
+    # copy here silently serves an old icon/manifest even when the repo is right.
+    foreach ($name in 'console-proxy.js', 'console-launcher.js',
+                      'console-pwa-manifest.webmanifest', 'console-pwa-sw.js',
+                      'console-pwa-icon-192.png', 'console-pwa-icon-512.png') {
+        $deployed = Join-Path $launcherDir $name
+        $repo     = Join-Path $repoCf $name
+        if (-not (Test-Path $deployed)) {
+            Add-Check 'Deployed' "launcher:$name" 'matches repo' 'not deployed' $false $deployed
+            continue
+        }
+        $ok = (Get-FileHash $deployed -Algorithm SHA256).Hash -eq (Get-FileHash $repo -Algorithm SHA256).Hash
+        Add-Check 'Deployed' "launcher:$name" 'matches repo' $(if ($ok) { 'in sync' } else { 'DRIFTED' }) $ok `
+            $(if ($ok) { '' } else { 'start-console.ps1 re-copies these on every run' })
+    }
+
     foreach ($name in 'dashboard.js', 'git-proxy.js', 'ttyd-proxy.js') {
         $repoHash = (Get-FileHash (Join-Path $repoCf $name) -Algorithm SHA256).Hash.ToLower()
         $wslHash = (& wsl -d Ubuntu-24.04 --user root -- sha256sum "/usr/local/bin/$name" 2>$null |
