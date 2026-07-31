@@ -89,11 +89,35 @@ function Test-ProcessMatch {
 
 function Test-PortListening {
     param([int]$Port)
+
+    # Get-NetTCPConnection only enumerates Windows-side listeners. Under WSL
+    # MIRRORED networking the WSL services bind inside WSL's own netns and are
+    # invisible here, yet are fully reachable on 127.0.0.1 - so this alone
+    # reports 2222/7683/7686/7687/8080 as dead on every run and the verifier is
+    # permanently red. Fall back to an actual TCP connect, which is the thing
+    # that has to be true anyway.
     $hit = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {
         $_.LocalPort -eq $Port -and $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::')
     } | Select-Object -First 1
-    $actual = if ($hit) { "$($hit.LocalAddress):$Port" } else { 'Not listening' }
-    Add-Check 'Port' "$Port" 'Listening' $actual ([bool]$hit)
+
+    if ($hit) {
+        Add-Check 'Port' "$Port" 'Listening' "$($hit.LocalAddress):$Port" $true
+        return
+    }
+
+    $connected = $false
+    $client = $null
+    try {
+        $client = [System.Net.Sockets.TcpClient]::new()
+        $connected = $client.ConnectAsync('127.0.0.1', $Port).Wait(2000)
+    } catch {
+        $connected = $false
+    } finally {
+        if ($client) { $client.Dispose() }
+    }
+
+    $actual = if ($connected) { "127.0.0.1:$Port (tcp, wsl-mirrored)" } else { 'Not listening' }
+    Add-Check 'Port' "$Port" 'Listening' $actual $connected
 }
 
 function Invoke-HttpProbe {
