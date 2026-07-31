@@ -16,6 +16,9 @@ nul
 .secrets-download/
 .secrets-decrypted.tmp
 
+# Chat transcripts (may contain pasted secrets)
+latest-chat.log
+
 # Node / Wrangler build artifacts
 node_modules/
 .wrangler/

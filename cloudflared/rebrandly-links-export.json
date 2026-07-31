@@ -1,0 +1,466 @@
+[
+  {
+    "id": "dc858613c6f64f288faac6511f2c6d3a",
+    "title": "raw.githubusercontent.com",
+    "slashtag": "s",
+    "destination": "https://raw.githubusercontent.com/vaoan/PCSetup/refs/heads/main/run-all.ps1",
+    "createdAt": "2026-02-26T17:37:56.000Z",
+    "updatedAt": "2026-02-26T17:37:56.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 37,
+    "sessions": 5,
+    "lastClickDate": "2026-03-07T15:21:12Z",
+    "lastClickAt": "2026-03-07T15:21:12Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/s",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "63bc31550ac641d0a40a7f3693c1ed83",
+    "title": "ffxiv_dx11_SGTAjRvWnI.png (1448×805)",
+    "slashtag": "b5126c",
+    "destination": "https://filedn.com/leGgCrrYIXV0YvzNNKbdzBb/ffxiv_dx11_SGTAjRvWnI.png",
+    "createdAt": "2025-12-31T20:27:19.000Z",
+    "updatedAt": "2025-12-31T20:27:19.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 1,
+    "sessions": 1,
+    "lastClickDate": "2025-12-31T20:28:17Z",
+    "lastClickAt": "2025-12-31T20:28:17Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/b5126c",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "b9fc611e7ad74ee8b0853f097988cb3d",
+    "title": "ffxiv_dx11_SGTAjRvWnI.png (1448×805)",
+    "slashtag": "3ec10c",
+    "destination": "https://filedn.com/leGgCrrYIXV0YvzNNKbdzBb/ffxiv_dx11_SGTAjRvWnI.png",
+    "createdAt": "2025-12-31T20:27:13.000Z",
+    "updatedAt": "2025-12-31T20:27:13.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 0,
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/3ec10c",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "2c6d2f81213a4ec3b8ad7caea7339c7f",
+    "title": "Eorzean-Nightlife-V2",
+    "slashtag": "ENL2",
+    "destination": "https://www.mediafire.com/file/zfu8ucaas4l581e/Eorzean-Nightlife-V2.pmp/file",
+    "createdAt": "2024-01-08T08:25:27.000Z",
+    "updatedAt": "2024-01-08T08:25:27.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 4,
+    "sessions": 4,
+    "lastClickDate": "2024-06-24T01:22:10Z",
+    "lastClickAt": "2024-06-24T01:22:10Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/ENL2",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "ccda3aba1d8a471288433615b5a727c7",
+    "title": "Eorzean-Nightlife",
+    "slashtag": "ENL1",
+    "destination": "https://www.mediafire.com/file/k7nla0wvkxyl91t/Eorzean-Nightlife.pmp/file",
+    "createdAt": "2024-01-08T08:24:35.000Z",
+    "updatedAt": "2024-01-08T08:24:35.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 7,
+    "sessions": 7,
+    "lastClickDate": "2024-06-24T04:22:33Z",
+    "lastClickAt": "2024-06-24T04:22:33Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/ENL1",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "0b73ae5d6f884480832771a929195a22",
+    "title": "Yul Sanjaa",
+    "slashtag": "yul",
+    "destination": "https://yul-sanjaa.carrd.co/",
+    "createdAt": "2023-12-21T04:58:29.000Z",
+    "updatedAt": "2023-12-21T04:58:29.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 491,
+    "sessions": 460,
+    "lastClickDate": "2026-06-09T23:36:09Z",
+    "lastClickAt": "2026-06-09T23:36:09Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/yul",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "b0e6f986a2104d17ae9779563dd62599",
+    "title": "Forgiven Truth",
+    "slashtag": "truth",
+    "destination": "https://forgiventruth.carrd.co",
+    "createdAt": "2023-06-18T15:12:58.000Z",
+    "updatedAt": "2023-06-18T15:12:58.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 107,
+    "sessions": 90,
+    "lastClickDate": "2026-06-20T08:50:45Z",
+    "lastClickAt": "2026-06-20T08:50:45Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/truth",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "426b6a7137e44f7fb0945967ec68ea3d",
+    "title": "P12S P1 + P2 - Pastebin.com",
+    "slashtag": "rvv",
+    "destination": "https://pastebin.com/HJxju30x",
+    "createdAt": "2023-06-11T00:48:00.000Z",
+    "updatedAt": "2023-06-11T00:48:00.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 0,
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/rvv",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "75bcece1ec7345449dd34e3f9efd1a7c",
+    "title": "Forgiven Truth",
+    "slashtag": "carrd",
+    "destination": "https://forgiventruth.carrd.co",
+    "createdAt": "2023-06-07T04:52:34.000Z",
+    "updatedAt": "2023-06-07T04:52:34.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 61,
+    "sessions": 50,
+    "lastClickDate": "2024-07-29T01:29:43Z",
+    "lastClickAt": "2024-07-29T01:29:43Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/carrd",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  },
+  {
+    "id": "38d051daff5c444eb768d22f1602121a",
+    "title": "F-list - Warning",
+    "slashtag": "flist",
+    "destination": "https://www.f-list.net/c/forgiven%20truth/",
+    "createdAt": "2023-06-07T04:41:42.000Z",
+    "updatedAt": "2023-06-07T04:41:42.000Z",
+    "expiredAt": null,
+    "ttl": null,
+    "ttlCapped": null,
+    "status": "active",
+    "tags": [],
+    "linkType": "",
+    "clicks": 81,
+    "sessions": 78,
+    "lastClickDate": "2026-06-28T04:14:42Z",
+    "lastClickAt": "2026-06-28T04:14:42Z",
+    "isPublic": false,
+    "shortUrl": "ffxiv.be/flist",
+    "domainId": "53e7126f4fe644b69087076ea5ca03db",
+    "domainName": "ffxiv.be",
+    "domain": {
+      "id": "53e7126f4fe644b69087076ea5ca03db",
+      "ref": "/domains/53e7126f4fe644b69087076ea5ca03db",
+      "fullName": "ffxiv.be",
+      "ownerId": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "sharing": {
+        "protocol": {
+          "allowed": [
+            "http",
+            "https"
+          ],
+          "default": "https"
+        }
+      },
+      "revoked": false,
+      "active": true
+    },
+    "https": true,
+    "favourite": false,
+    "creator": {
+      "id": "0d0ee9e45e58449b967d6d3e0d5475a5",
+      "fullName": "Random FFXIV Player",
+      "avatarUrl": "https://s.gravatar.com/avatar/ccc25a2c7e05ae2555967de1b7880570?size=80&d=retro&rating=g"
+    },
+    "integrated": false
+  }
+]

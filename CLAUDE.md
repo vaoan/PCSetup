@@ -276,7 +276,9 @@ Browser (Cloudflare Access auth)
 
 ### Daily use
 
-Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all WSL portproxies and restart all services. The `CloudflaredDevTunnel`, `UpdateWSLPortProxy`, and `WSLKeepAlive` scheduled tasks also run at logon automatically.
+All console + tunnel services come up automatically at logon/boot — you should **not** need to run anything by hand after a reboot. The `web-console`, `UpdateWSLPortProxy`, and `WSLKeepAlive` scheduled tasks run at logon/startup. `start-console.bat` is only for a manual refresh (e.g. after editing a service).
+
+> **Tunnels survive the reboot network race (important):** cloudflared runs a startup precheck and **exits** (does not retry) if the Cloudflare edge isn't reachable yet — which at boot it often isn't, because ProtonVPN/DNS is still coming up. That's why the tunnels used to be dead after every reboot even though the scheduled tasks reported `0x0`. All three tunnels (`web-console` → dev-console, `ffxivbe-tunnel`, `ssh-tunnel`) now launch cloudflared through `tunnel-supervisor.ps1`, which **waits** for `region*.v2.argotunnel.com:7844` to be reachable before starting cloudflared and **relaunches** it if it ever exits. The two direct-tunnel tasks now run the supervisor as their own long-lived process (State shows `Running`) with `ExecutionTimeLimit 0` — do **not** remove that, or the task's 3-day default would kill the tunnel. Supervisor activity is logged to `~/.cloudflared\<name>-supervisor.log`.
 
 > **`WSLKeepAlive` task (important):** WSL2 shuts the VM down when no session is held open. When that happens, code-server (`code.ffxivbe.org`) and the other WSL-backed services die, and on restart WSL can grab a new IP that the Windows TCP relays no longer point at — so console hostnames start returning 502. The `WSLKeepAlive` scheduled task runs `wsl -d Ubuntu-24.04 --user root -- sleep infinity` at logon/startup to hold the VM open. If `code.ffxivbe.org` is down, first check `Get-ScheduledTask WSLKeepAlive` is `Running` and that `wsl --list --running` shows the distro; if not, run `Start-ScheduledTask WSLKeepAlive` then `cloudflared\start-console.bat`.
 
@@ -291,18 +293,59 @@ Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all 
 > ssh port accordingly. If you ever revert to NAT, the same script restores the
 > relay behaviour automatically. `netsh portproxy` is not used in mirrored mode.
 
+### Zero Trust Access gating
+
+Every console hostname (`console`, `dev`, `code`, `ttyd`, `tools`, `git`) sits behind a
+Cloudflare Zero Trust **Access application**. Without one, the tunnel + DNS alone would
+expose the hostname to the whole internet — so gating is provisioned as part of setup, not
+by hand in the dashboard.
+
+Gating uses **two reusable (account-level) policies**, defined once and attached to all six
+apps by ID (not duplicated inline per app):
+
+| Reusable policy | Decision | Effect |
+|---|---|---|
+| `PCSetup - Owner email allow` | `allow` | Requires Cloudflare Access login as an allowed email (`heinerangarita@gmail.com`, `pagose876@hotmail.com`) — edit the `-Emails` list in `setup-access-apps.ps1` to add/remove |
+| `PCSetup - This-PC IP bypass` | `bypass` | This PC's public IP skips the login prompt entirely |
+
+Each app references `[bypass (precedence 1), allow (precedence 2)]` and gets
+`session_duration = 8760h` (**1 year** — the "maximum but not annoying" login lifetime;
+effective re-auth is `min(app session, org-global session)`, and the org-global is set to
+the same value). So: at home you're never prompted (IP bypass); from a phone/other network
+you log in with your email roughly once a year.
+
+- **Provision / repair:** `cloudflared\setup-access-apps.ps1` — idempotent; (re)creates the
+  reusable policies, ensures all six apps reference them, sets the session duration, and
+  migrates any old per-app inline policies to the reusable model. Run automatically by
+  `setup-console-windows.ps1` (step 3b) right after DNS routes.
+- **IP changed?** `cloudflared\allowlist-current-ip.ps1` rewrites the one bypass policy with
+  this PC's current public IP (all apps update at once). `-IpCidr a,b` to set explicitly,
+  `-DryRun` to preview.
+- **Testing:** `verify-public-routes.ps1` turns gating **off** (points every app at a temp
+  everyone-bypass reusable policy), runs the Playwright route check, then turns it back **on**
+  (re-points apps at the canonical reusable gate and deletes the temp policy). It never deletes
+  the shared reusable policies, and restore is crash-safe (re-points by policy name, so a
+  half-finished prior run self-heals on the next run).
+
 ### Console scripts
 
 | File | Purpose |
 |---|---|
 | `cloudflared/start-console.bat` | One-click launcher (calls `start-console.ps1`) |
-| `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + cloudflared |
+| `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + launches cloudflared via `tunnel-supervisor.ps1` |
+| `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper — waits for the Cloudflare edge to be reachable (`region*.v2.argotunnel.com:7844`) before launching cloudflared, and relaunches it if it exits. Makes tunnels survive the reboot network race (see note below). Used by all 3 tunnels (`web-console`, `ffxivbe-tunnel`, `ssh-tunnel`). |
 | `cloudflared/verify-console.ps1` | Verifies all console services are healthy (ports, HTTP 200, WSL systemd) — run after start-console.bat |
-| `cloudflared/set-access-sessions.ps1` | Sets `session_duration` on every Zero Trust Access app (default `730h` ≈ 1 month). Requires `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets`. |
-| `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, writes configs, creates scheduled tasks |
+| `cloudflared/setup-access-apps.ps1` | Provisions Zero Trust Access gating: reusable email-allow + this-PC IP-bypass policies attached to all 6 console apps, `8760h` (1yr) session. Idempotent; migrates old inline policies. Requires `CLOUDFLARE_ACCOUNT_API_TOKEN`. |
+| `cloudflared/allowlist-current-ip.ps1` | Rewrites the `PCSetup - This-PC IP bypass` reusable policy with this PC's current public IP (so home skips the login prompt). `-IpCidr` / `-DryRun` supported. |
+| `cloudflared/set-access-sessions.ps1` | Sets `session_duration` on every Zero Trust Access app + the org-global timeout (default `8760h` ≈ 1 year). Requires `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets`. |
+| `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, gates hostnames via `setup-access-apps.ps1`, writes configs, creates scheduled tasks |
 | `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
-| `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel |
+| `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel + PWA manifest, and serves the PWA assets |
 | `cloudflared/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
+| `cloudflared/console-pwa-manifest.webmanifest` | PWA manifest ("SSH Console") served at `/console-pwa-manifest.webmanifest` |
+| `cloudflared/console-pwa-sw.js` | Minimal pass-through service worker (satisfies Chrome's installability requirement; no caching) |
+| `cloudflared/console-pwa-icon-192.png` / `console-pwa-icon-512.png` | App icons (dark tile, green `>_` glyph) |
+| `cloudflared/console-pwa-installtest.mjs` | Headless-Chrome installability test (Playwright + CDP); exit 0 = install icon will appear. See PWA gotchas below |
 | `cloudflared/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
 | `cloudflared/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
 | `cloudflared/git-proxy.js` | Node.js repo list landing page + proxy (WSL 7687→7688) for git.ffxivbe.org |
@@ -310,6 +353,44 @@ Run `cloudflared\start-console.bat` after each login (or reboot) to refresh all 
 | `cloudflared/sync-secrets.ps1` | Secrets sync implementation |
 | `cloudflared/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
 | `cloudflared/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
+
+### Installable app (PWA)
+
+`console.ffxivbe.org` is installable as a Chrome/Edge app ("SSH Console"). Open it in
+Chrome → address-bar **Install** icon (or ⋮ → *Cast, save, and share* → *Install page as app*);
+on Android/iOS use *Add to Home screen*. It then launches in its own standalone window.
+
+`console-proxy.js` provides everything for this — no changes to sshwifty:
+- **Serves** `/console-pwa-manifest.webmanifest`, `/console-pwa-sw.js`, and the two icons
+  directly (intercepted before forwarding to sshwifty).
+- **Injects** `<link rel="manifest">` + a service-worker registration into every HTML page,
+  and **strips sshwifty's own** `<link rel="manifest">` (browsers honour the *first* manifest
+  link, so ours must replace it) and renames its `application-name` / `apple-mobile-web-app-title`
+  to "SSH Console".
+
+> **Gotcha 1 — manifest must be in `<head>`:** the `<link rel="manifest">` is injected into
+> `<head>`, **not** before `</body>`. Chrome silently ignores a body-placed manifest link
+> (`getAppManifest` returns nothing → no install icon), regardless of auth. This was the actual
+> blocker. Scripts (SW registration, launcher) can stay in `<body>`.
+>
+> **Gotcha 2 — Cloudflare Access + PWA:** the manifest link **must** also carry
+> `crossorigin="use-credentials"`. Chrome fetches the manifest (and its icons) *without*
+> credentials by default, so Cloudflare Access 302-redirects those requests to its login page,
+> the manifest fails to parse, and **no install icon appears** even though the page itself loads
+> fine. `use-credentials` makes the fetches send the `CF_Authorization` cookie. (The service
+> worker script fetch already defaults to same-origin credentials, so it needs no change.)
+>
+> **Verify with:** `node cloudflared\console-pwa-installtest.mjs` — drives headless Chrome
+> against the local proxy (via a `Host: console.ffxivbe.org` shim, since sshwifty 403s other
+> Hosts) and asserts Chrome's own installability signals. Exit 0 = the install icon will appear.
+> `--headed` to watch it; `<url> --cf-cookie <JWT>` to test the real public hostname through Access.
+
+The service worker (`console-pwa-sw.js`) does **no caching** — it's a transparent pass-through
+whose only purpose is to satisfy Chrome's installability requirement (a registered SW with a
+`fetch` handler). sshwifty is a live SSH session, so nothing is cached offline. HTTPS (the
+install prerequisite) is provided by the Cloudflare tunnel. To edit the app name/colors, change
+`console-pwa-manifest.webmanifest`; to change the icon, regenerate the two PNGs. Deploy by
+re-running `start-console.bat` (restarts the proxy).
 
 ### WSL services
 
@@ -349,6 +430,8 @@ Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forc
 | Candystore Fresh | *(plain bash)* | `/mnt/z/Github/candystore` |
 | Eclipse-con Persistent | `eclipse-con` | `/mnt/z/Github/eclipse-con` |
 | Eclipse-con Fresh | *(plain bash)* | `/mnt/z/Github/eclipse-con` |
+| Puck Persistent | `puck` | `/mnt/z/Github/puck` |
+| Puck Fresh | *(plain bash)* | `/mnt/z/Github/puck` |
 | PCSetup Persistent | `pcsetup` | `/mnt/z/Users/Heiner/Documents/PCSetup` |
 | PCSetup Fresh | *(plain bash)* | `/mnt/z/Users/Heiner/Documents/PCSetup` |
 
@@ -457,8 +540,9 @@ Already set up, survives PC formats:
 | File | Purpose |
 |---|---|
 | `cloudflared/post-format-recovery.ps1` | Master recovery script — does everything |
-| `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone) |
-| `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer |
+| `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone). Registers the `ffxivbe-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals; survives the reboot network race). |
+| `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer. Registers the `ssh-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals). |
+| `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper shared by all 3 tunnels — see the Web Console section. |
 | `cloudflared/install-claude-session.ps1` | Claude Code tmux sessions installer |
 | `cloudflared/install-scheduled-tasks.ps1` | Reinstall scheduled tasks only |
 | `cloudflared/toggle-tunnel.bat` | Start/stop web tunnel |
@@ -470,6 +554,59 @@ Already set up, survives PC formats:
 | `cloudflared/start-claude-session.sh` | MSYS2 script to start/attach tmux session |
 | `cloudflared/claude-aliases.sh` | Bash aliases (claude, claimangel, snd, etc.) |
 | `cloudflared/.cloudflared/config.yml` | ffxivbe-tunnel routing config |
+| `cloudflared/transfer-ffxiv-be.ps1` | Transfers `ffxiv.be` to DNSimple and delegates DNS to Cloudflare. Dry-runs by default; needs `-AuthCode <code> -Execute` to actually buy. Requires `DNSIMPLE_API_TOKEN`. See "Domain: ffxiv.be" below. |
+
+### Domain: ffxiv.be
+
+`ffxiv.be` is the intended primary domain, replacing `ffxivbe.org`. Two constraints shape how
+it is wired, and both were dead ends before landing on the current setup:
+
+- **Cloudflare Registrar does not support `.be`.** Some ccTLDs are supported (`.co`, `.uk`,
+  `.us`, `.ca`, `.nz`, `.mx`) but not Belgium — so the registration must permanently live at a
+  third-party registrar. Only DNS moves to Cloudflare.
+- **Rebrandly-purchased domains cannot have their nameservers changed.** They are hard-wired to
+  link shortening, per Rebrandly's own docs. Transferring out is the only escape, which is why
+  the DNS Belgium transfer code matters rather than being something to invalidate.
+
+Resulting split: **DNSimple holds the registration** (~$14.80/yr, chosen because its Registrar
+API can drive the transfer, delegation, and auto-renew programmatically), **Cloudflare hosts the
+zone** and everything operational — DNS, Workers, tunnels, Access, SSL, WAF.
+
+Cloudflare zone: `94976213dc6ffb09e95facdea6176622` · nameservers `kellen.ns.cloudflare.com`,
+`paislee.ns.cloudflare.com`.
+
+Transfer completed 2026-07-31. `.be` transfers are **instant** once the auth code validates —
+no multi-day wait — and the term resets to one year from completion rather than adding to the
+previous expiry.
+
+> **DNSimple API gotcha:** `.be` requires the auth code **twice** — once as `auth_code` and again
+> as an extended attribute named `auth`. Without the second, the transfer endpoint returns
+> `{"message":"Invalid extended attributes","errors":{"auth":["it's required"]}}`. DNSimple's own
+> `GET /v2/tlds/be/extended_attributes` returns `[]` and their docs don't mention it.
+> `transfer-ffxiv-be.ps1` sends both.
+
+#### Link shortener (replaced Rebrandly)
+
+Rebrandly is retired. Its 10 short links were exported to
+`cloudflared/rebrandly-links-export.{json,csv}` and now run on a Cloudflare Worker.
+
+| File | Purpose |
+|---|---|
+| `cloudflared/ffxiv-be-shortener.js` | The Worker. Slugs live in the `LINKS` map — few enough that KV would be more moving parts than it's worth. |
+| `cloudflared/deploy-shortener.ps1` | Uploads the Worker, then smoke-tests every slug through the workers.dev preview URL. |
+| `cloudflared/rebrandly-links-export.{json,csv}` | The original Rebrandly export, kept as the migration record. |
+
+**To add or change a link:** edit the `LINKS` map in `ffxiv-be-shortener.js`, then run
+`cloudflared\deploy-shortener.ps1`. It verifies all slugs and exits non-zero if any fail.
+
+Redirects are **302**, matching Rebrandly — a 301 gets cached hard by browsers and would make a
+destination change effectively unfixable. Lookups fall back to case-insensitive (`/enl1` finds
+`ENL1`), and query strings pass through to the destination.
+
+> **Deploys take up to ~60s to reach every edge PoP.** A slug 404ing seconds after upload is
+> propagation, not a bad map — `deploy-shortener.ps1` retries rather than reporting a false
+> failure. Verify with `curl.exe`, not `Invoke-WebRequest`: in PS7 `-MaximumRedirection 0` throws
+> on a 3xx instead of returning it, so every working redirect reads as a failure.
 
 ### Troubleshooting
 
