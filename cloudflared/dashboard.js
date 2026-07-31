@@ -203,27 +203,27 @@ const HTML = `<!DOCTYPE html>
 <body>
   <h1>Dev Tools</h1>
   <div class="grid">
-    <a class="card console" href="https://console.ffxivbe.org" target="_blank" rel="noopener">
+    <a class="card console" href="https://console.ffxiv.be" target="_blank" rel="noopener">
       <span class="icon">&gt;_</span>
       <span class="name">Console</span>
       <span class="desc">SSH presets via sshwifty</span>
     </a>
-    <a class="card code" href="https://code.ffxivbe.org" target="_blank" rel="noopener">
+    <a class="card code" href="https://code.ffxiv.be" target="_blank" rel="noopener">
       <span class="icon">&lt;/&gt;</span>
       <span class="name">Code</span>
       <span class="desc">VS Code in browser</span>
     </a>
-    <a class="card terminal" href="https://ttyd.ffxivbe.org" target="_blank" rel="noopener">
+    <a class="card terminal" href="https://ttyd.ffxiv.be" target="_blank" rel="noopener">
       <span class="icon">$_</span>
       <span class="name">Terminal</span>
       <span class="desc">Mobile tmux terminal</span>
     </a>
-    <a class="card ssh" href="https://dev.ffxivbe.org" target="_blank" rel="noopener">
+    <a class="card ssh" href="https://dev.ffxiv.be" target="_blank" rel="noopener">
       <span class="icon">ssh</span>
       <span class="name">SSH</span>
       <span class="desc">Direct SSH to WSL</span>
     </a>
-    <a class="card git" href="https://git.ffxivbe.org/repos" target="_blank" rel="noopener">
+    <a class="card git" href="https://git.ffxiv.be/repos" target="_blank" rel="noopener">
       <span class="icon">⎇</span>
       <span class="name">Git</span>
       <span class="desc">Visual branch browser</span>

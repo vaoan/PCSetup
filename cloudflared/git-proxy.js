@@ -63,7 +63,7 @@ function landingPage() {
   </style>
 </head>
 <body>
-  <a class="back" href="https://tools.ffxivbe.org">← tools</a>
+  <a class="back" href="https://tools.ffxiv.be">← tools</a>
   <h1>Git Repos</h1>
   <div class="grid">${cards}</div>
 </body>

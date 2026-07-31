@@ -57,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-schedu
 - Config: `%USERPROFILE%\.cloudflared\dev-config.yml`
 - Tasks: `web-console`, `UpdateWSLPortProxy`
 - WSL distro: `Ubuntu-24.04`
-- Routes: `console.ffxivbe.org`, `code.ffxivbe.org`, `ttyd.ffxivbe.org`, `tools.ffxivbe.org`, `git.ffxivbe.org`
+- Routes: `console.ffxiv.be`, `code.ffxiv.be`, `ttyd.ffxiv.be`, `tools.ffxiv.be`, `git.ffxiv.be`
 - Local relays:
   - `127.0.0.1:2222` -> WSL SSH
   - `127.0.0.1:8080` -> WSL code-server
@@ -83,7 +83,7 @@ The public route verifier:
 - rejects Cloudflare Access login pages as failures
 - rejects Cloudflare `1103`, `502`, `504`, and other Cloudflare error pages
 - rejects placeholder fallback pages
-- verifies `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
+- verifies `https://code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
 - fails the code folder check if expected folder content is missing or if any subresource returns a 5xx response
 
 ## Clean-Image Validation
@@ -172,7 +172,7 @@ Current Worker deployment caveat:
 - Run `powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-public-routes.ps1`; do not trust browser tests that stop at a Cloudflare Access login page.
 - Tunnel not connected: restart with `powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\start-console.ps1`.
 - Local service not running: start the origin that matches the hostname.
-- For `code.ffxivbe.org` folder changes, verify both `http://127.0.0.1:8080/` and `http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`.
+- For `code.ffxiv.be` folder changes, verify both `http://127.0.0.1:8080/` and `http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`.
 - If local code-server works but public folder switching returns 502, check the `tcp-relay.js` process for port `8080` and rerun `setup-console-windows.ps1` so the relay targets the current WSL IP.
 - Placeholder pages are not valid recovery. The verifier rejects pages that say a route is online while WSL is pending.
 

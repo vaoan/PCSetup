@@ -11,12 +11,12 @@ This repo currently manages three Cloudflare tunnel families:
 - `ffxivbe-tunnel`: public web origins such as `ffxivbe.org` and `chat.ffxivbe.org`
 - `ssh-tunnel`: remote Windows SSH access
 - `dev-console`: the WSL-backed console and developer tools stack exposed on:
-  - `console.ffxivbe.org`
-  - `dev.ffxivbe.org`
-  - `code.ffxivbe.org`
-  - `ttyd.ffxivbe.org`
-  - `tools.ffxivbe.org`
-  - `git.ffxivbe.org`
+  - `console.ffxiv.be`
+  - `dev.ffxiv.be`
+  - `code.ffxiv.be`
+  - `ttyd.ffxiv.be`
+  - `tools.ffxiv.be`
+  - `git.ffxiv.be`
 
 ## Current architecture
 
@@ -73,8 +73,8 @@ Current code-server service:
 
 Current code route behavior:
 
-- `https://code.ffxivbe.org/` may redirect to the last active code-server workspace or folder
-- public verification also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
+- `https://code.ffxiv.be/` may redirect to the last active code-server workspace or folder
+- public verification also opens `https://code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
 - local verification also probes `http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
 
 Current WSL services expected active:
@@ -175,7 +175,7 @@ Problems:
 - It could also accept Cloudflare error pages if only the transport succeeded
 - It could accept placeholder route pages that said WSL was not ready
 - It did not prove code-server could switch to a requested folder after the base route loaded
-- It was browser-testing `dev.ffxivbe.org` even though that route is SSH, not HTTP
+- It was browser-testing `dev.ffxiv.be` even though that route is SSH, not HTTP
 
 Fixes:
 
@@ -183,11 +183,11 @@ Fixes:
   - Cloudflare Access login pages
   - Cloudflare error pages such as `1103`, `502`, or `504`
   - placeholder fallback pages
-- `verify-public-routes.mjs` now checks `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
+- `verify-public-routes.mjs` now checks `code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after the base code route passes
 - the code folder check waits for real folder content and fails if any subresource returns a 5xx response
 - `verify-console.ps1` now includes a local `code-server folder switch PCSetup` probe
 - `verify-public-routes.mjs` supports headed runs and saves screenshots for failures
-- `verify-public-routes.ps1` no longer includes `dev.ffxivbe.org` in browser checks
+- `verify-public-routes.ps1` no longer includes `dev.ffxiv.be` in browser checks
 
 Files:
 
@@ -231,7 +231,7 @@ Files:
 
 Problem:
 
-- `code.ffxivbe.org` ran `code-server@root`
+- `code.ffxiv.be` ran `code-server@root`
 - That exposed the root environment instead of the actual coding user
 - `codex` was available on Windows but not exposed as a normal WSL command in the code environment
 
@@ -408,7 +408,7 @@ Behavior now:
 - fails on Cloudflare 1103/502/504 pages
 - fails on placeholder fallback pages
 - temporarily disables and restores Access policies for protected console routes
-- checks `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after `code.ffxivbe.org` passes
+- checks `code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` after `code.ffxiv.be` passes
 - fails the code folder check on missing workspace text or subresource 5xx
 - can save screenshots for failing pages
 - can run headed for visible debugging
@@ -598,12 +598,12 @@ After a clean install:
   - `ffxivbe.org`
   - `www.ffxivbe.org`
   - `chat.ffxivbe.org`
-  - `console.ffxivbe.org`
-  - `code.ffxivbe.org`
-  - `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
-  - `ttyd.ffxivbe.org`
-  - `tools.ffxivbe.org`
-  - `git.ffxivbe.org`
+  - `console.ffxiv.be`
+  - `code.ffxiv.be`
+  - `code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
+  - `ttyd.ffxiv.be`
+  - `tools.ffxiv.be`
+  - `git.ffxiv.be`
 
 ## Operator commands
 

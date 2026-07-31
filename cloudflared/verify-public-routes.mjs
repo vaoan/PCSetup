@@ -11,17 +11,17 @@ const urls = [
   ['ffxivbe.org', 'https://ffxivbe.org/'],
   ['www.ffxivbe.org', 'https://www.ffxivbe.org/'],
   ['chat.ffxivbe.org', 'https://chat.ffxivbe.org/'],
-  ['console.ffxivbe.org', 'https://console.ffxivbe.org/'],
-  ['code.ffxivbe.org', 'https://code.ffxivbe.org/'],
-  ['ttyd.ffxivbe.org', 'https://ttyd.ffxivbe.org/'],
-  ['tools.ffxivbe.org', 'https://tools.ffxivbe.org/'],
-  ['git.ffxivbe.org', 'https://git.ffxivbe.org/'],
+  ['console.ffxiv.be', 'https://console.ffxiv.be/'],
+  ['code.ffxiv.be', 'https://code.ffxiv.be/'],
+  ['ttyd.ffxiv.be', 'https://ttyd.ffxiv.be/'],
+  ['tools.ffxiv.be', 'https://tools.ffxiv.be/'],
+  ['git.ffxiv.be', 'https://git.ffxiv.be/'],
 ];
 
 const codeFolderChecks = [
   {
-    name: 'code.ffxivbe.org folder switch PCSetup',
-    url: 'https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup',
+    name: 'code.ffxiv.be folder switch PCSetup',
+    url: 'https://code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup',
     expectedText: /PCSetup|PCSETUP/,
     failOnSubresourceErrors: true,
   },
@@ -168,7 +168,7 @@ try {
       const lastResult = await probePage(context, name, url);
       results.push(lastResult);
 
-      if (name === 'code.ffxivbe.org' && lastResult.Passed) {
+      if (name === 'code.ffxiv.be' && lastResult.Passed) {
         for (const folderCheck of codeFolderChecks) {
           results.push(await probePage(context, folderCheck.name, folderCheck.url, {
             expectedText: folderCheck.expectedText,

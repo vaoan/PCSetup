@@ -79,7 +79,7 @@ Write-Log "code-server user: $codeUser"
 
 # Keep the WSL2 VM alive. Without a held-open session WSL shuts the VM down when
 # idle, which kills code-server/dashboard/etc. and (on restart) changes the WSL
-# IP out from under the TCP relays -> console hostnames (code.ffxivbe.org) return
+# IP out from under the TCP relays -> console hostnames (code.ffxiv.be) return
 # 502. The durable holder is the 'WSLKeepAlive' scheduled task (a persistent
 # `sleep infinity` session); prefer it. Fall back to a hidden session if the task
 # isn't registered yet (e.g. start-console run before setup-console-windows.ps1).
@@ -310,7 +310,7 @@ $tunnelOk   = (Test-Path $cfPidFile) -and [bool](Get-Process -Id ([int](Get-Cont
 Write-Host ""
 if ($sshwiftyOk -and $proxyOk -and $tunnelOk) {
     Write-Host "[start-console] Console ready:" -ForegroundColor Green
-    Write-Host "  https://console.ffxivbe.org"
+    Write-Host "  https://console.ffxiv.be"
     Write-Host "  Click the SSHwifty logo top-left to open the quick-connect panel."
 } else {
     if (-not $sshwiftyOk) { Write-Host "[start-console] WARNING: SSHwifty is not running" -ForegroundColor Yellow }

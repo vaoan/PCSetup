@@ -254,7 +254,7 @@ done
 
 # -- 8. Install / upgrade code-server to latest -------------------------------
 # install.sh is idempotent: installs if missing, upgrades in place if already
-# present. Running it unconditionally keeps code.ffxivbe.org on the latest release.
+# present. Running it unconditionally keeps code.ffxiv.be on the latest release.
 echo "[setup-console-wsl] Installing/upgrading code-server to latest..."
 curl -fsSL https://code-server.dev/install.sh | sh
 

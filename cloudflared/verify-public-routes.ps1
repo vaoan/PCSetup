@@ -8,11 +8,11 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $accountId = 'd34896e6a0f8b2fba5e03dec659eac50'
 $policyPrefix = 'Temporary public route verifier bypass'
 $routes = @(
-    'console.ffxivbe.org',
-    'code.ffxivbe.org',
-    'ttyd.ffxivbe.org',
-    'tools.ffxivbe.org',
-    'git.ffxivbe.org'
+    'console.ffxiv.be',
+    'code.ffxiv.be',
+    'ttyd.ffxiv.be',
+    'tools.ffxiv.be',
+    'git.ffxiv.be'
 )
 
 . (Join-Path $PSScriptRoot 'shared-cloudflare-auth.ps1')

@@ -211,43 +211,43 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 
 | Hostname | Purpose |
 |---|---|
-| `tools.ffxivbe.org` | Dashboard — links to all dev tools |
-| `console.ffxivbe.org` | SSH web client (sshwifty) with 8 quick-connect presets |
-| `dev.ffxivbe.org` | Direct SSH to WSL (for native SSH clients) |
-| `code.ffxivbe.org` | VS Code in the browser (code-server) |
-| `ttyd.ffxivbe.org` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
-| `git.ffxivbe.org` | Ungit — visual web Git UI, shows all repos under `/mnt/z/Github` |
+| `tools.ffxiv.be` | Dashboard — links to all dev tools |
+| `console.ffxiv.be` | SSH web client (sshwifty) with 8 quick-connect presets |
+| `dev.ffxiv.be` | Direct SSH to WSL (for native SSH clients) |
+| `code.ffxiv.be` | VS Code in the browser (code-server) |
+| `ttyd.ffxiv.be` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
+| `git.ffxiv.be` | Ungit — visual web Git UI, shows all repos under `/mnt/z/Github` |
 
 ### Architecture
 
 ```
 Browser (Cloudflare Access auth)
   → Cloudflare tunnel
-      tools.ffxivbe.org → Windows:7686
+      tools.ffxiv.be → Windows:7686
         → netsh portproxy (Windows:7686 → WSL IP:7686)
           → WSL dashboard.js (Node.js, static HTML landing page)
 
-      console.ffxivbe.org → Windows:7681
+      console.ffxiv.be → Windows:7681
         → console-proxy.js (injects quick-connect panel)
           → sshwifty_windows_amd64.exe (Windows:7682, SSH client UI)
             → netsh portproxy (Windows:2222 → WSL IP:22)
               → WSL sshd (authorized_keys forced commands → tmux/bash)
 
-      dev.ffxivbe.org → ssh://Windows:22
+      dev.ffxiv.be → ssh://Windows:22
         → netsh portproxy (Windows:22 → WSL IP:22)
           → WSL sshd
 
-      code.ffxivbe.org → Windows:8080
+      code.ffxiv.be → Windows:8080
         → netsh portproxy (Windows:8080 → WSL IP:8080)
           → WSL code-server (systemd: code-server@root)
 
-      ttyd.ffxivbe.org → Windows:7683
+      ttyd.ffxiv.be → Windows:7683
         → netsh portproxy (Windows:7683 → WSL IP:7683)
           → WSL ttyd-proxy.js (Node.js landing page)
               /persistent → WSL ttyd-persistent (7684) → tmux session 'phone'
               /fresh      → WSL ttyd-fresh (7685)      → bash -l
 
-      git.ffxivbe.org → Windows:7687
+      git.ffxiv.be → Windows:7687
         → netsh portproxy (Windows:7687 → WSL IP:7687)
           → WSL git-proxy.js (Node.js repo list landing page, port 7687)
               / → repo list (scans /mnt/z/Github for .git dirs)
@@ -280,7 +280,7 @@ All console + tunnel services come up automatically at logon/boot — you should
 
 > **Tunnels survive the reboot network race (important):** cloudflared runs a startup precheck and **exits** (does not retry) if the Cloudflare edge isn't reachable yet — which at boot it often isn't, because ProtonVPN/DNS is still coming up. That's why the tunnels used to be dead after every reboot even though the scheduled tasks reported `0x0`. All three tunnels (`web-console` → dev-console, `ffxivbe-tunnel`, `ssh-tunnel`) now launch cloudflared through `tunnel-supervisor.ps1`, which **waits** for `region*.v2.argotunnel.com:7844` to be reachable before starting cloudflared and **relaunches** it if it ever exits. The two direct-tunnel tasks now run the supervisor as their own long-lived process (State shows `Running`) with `ExecutionTimeLimit 0` — do **not** remove that, or the task's 3-day default would kill the tunnel. Supervisor activity is logged to `~/.cloudflared\<name>-supervisor.log`.
 
-> **`WSLKeepAlive` task (important):** WSL2 shuts the VM down when no session is held open. When that happens, code-server (`code.ffxivbe.org`) and the other WSL-backed services die, and on restart WSL can grab a new IP that the Windows TCP relays no longer point at — so console hostnames start returning 502. The `WSLKeepAlive` scheduled task runs `wsl -d Ubuntu-24.04 --user root -- sleep infinity` at logon/startup to hold the VM open. If `code.ffxivbe.org` is down, first check `Get-ScheduledTask WSLKeepAlive` is `Running` and that `wsl --list --running` shows the distro; if not, run `Start-ScheduledTask WSLKeepAlive` then `cloudflared\start-console.bat`.
+> **`WSLKeepAlive` task (important):** WSL2 shuts the VM down when no session is held open. When that happens, code-server (`code.ffxiv.be`) and the other WSL-backed services die, and on restart WSL can grab a new IP that the Windows TCP relays no longer point at — so console hostnames start returning 502. The `WSLKeepAlive` scheduled task runs `wsl -d Ubuntu-24.04 --user root -- sleep infinity` at logon/startup to hold the VM open. If `code.ffxiv.be` is down, first check `Get-ScheduledTask WSLKeepAlive` is `Running` and that `wsl --list --running` shows the distro; if not, run `Start-ScheduledTask WSLKeepAlive` then `cloudflared\start-console.bat`.
 
 > **Mirrored networking (WSL2):** this machine runs WSL in **mirrored** mode
 > (`networkingMode=mirrored` + `hostAddressLoopback=true` in `%USERPROFILE%\.wslconfig`,
@@ -346,9 +346,9 @@ you log in with your email roughly once a year.
 | `cloudflared/console-pwa-sw.js` | Minimal pass-through service worker (satisfies Chrome's installability requirement; no caching) |
 | `cloudflared/console-pwa-icon-192.png` / `console-pwa-icon-512.png` | App icons (dark tile, green `>_` glyph) |
 | `cloudflared/console-pwa-installtest.mjs` | Headless-Chrome installability test (Playwright + CDP); exit 0 = install icon will appear. See PWA gotchas below |
-| `cloudflared/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxivbe.org |
-| `cloudflared/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxivbe.org |
-| `cloudflared/git-proxy.js` | Node.js repo list landing page + proxy (WSL 7687→7688) for git.ffxivbe.org |
+| `cloudflared/ttyd-proxy.js` | Node.js landing page + proxy (WSL 7683→7684/7685) for ttyd.ffxiv.be |
+| `cloudflared/dashboard.js` | Node.js static server (WSL 7686) for tools.ffxiv.be |
+| `cloudflared/git-proxy.js` | Node.js repo list landing page + proxy (WSL 7687→7688) for git.ffxiv.be |
 | `cloudflared/sync-secrets.bat` | Syncs secrets from GitHub → local `.secrets` file |
 | `cloudflared/sync-secrets.ps1` | Secrets sync implementation |
 | `cloudflared/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
@@ -356,7 +356,7 @@ you log in with your email roughly once a year.
 
 ### Installable app (PWA)
 
-`console.ffxivbe.org` is installable as a Chrome/Edge app ("SSH Console"). Open it in
+`console.ffxiv.be` is installable as a Chrome/Edge app ("SSH Console"). Open it in
 Chrome → address-bar **Install** icon (or ⋮ → *Cast, save, and share* → *Install page as app*);
 on Android/iOS use *Add to Home screen*. It then launches in its own standalone window.
 
@@ -381,7 +381,7 @@ on Android/iOS use *Add to Home screen*. It then launches in its own standalone 
 > worker script fetch already defaults to same-origin credentials, so it needs no change.)
 >
 > **Verify with:** `node cloudflared\console-pwa-installtest.mjs` — drives headless Chrome
-> against the local proxy (via a `Host: console.ffxivbe.org` shim, since sshwifty 403s other
+> against the local proxy (via a `Host: console.ffxiv.be` shim, since sshwifty 403s other
 > Hosts) and asserts Chrome's own installability signals. Exit 0 = the install icon will appear.
 > `--headed` to watch it; `<url> --cf-cookie <JWT>` to test the real public hostname through Access.
 
@@ -397,18 +397,22 @@ re-running `start-console.bat` (restarts the proxy).
 | Service | Port | Description |
 |---|---|---|
 | `ssh` | 22 | OpenSSH server |
-| `dashboard` | 7686 | Dev Tools dashboard (tools.ffxivbe.org) |
+| `dashboard` | 7686 | Dev Tools dashboard (tools.ffxiv.be) |
 | `code-server@root` | 8080 | VS Code server |
-| `ttyd-proxy` | 7683 | Landing page + router for ttyd.ffxivbe.org |
+| `ttyd-proxy` | 7683 | Landing page + router for ttyd.ffxiv.be |
 | `ttyd-persistent` | 7684 | ttyd → `tmux new-session -A -s phone` |
 | `ttyd-fresh` | 7685 | ttyd → `bash -l` |
-| `git-proxy` | 7687 | Repo list landing page + proxy to ungit (git.ffxivbe.org) |
+| `git-proxy` | 7687 | Repo list landing page + proxy to ungit (git.ffxiv.be) |
 | `ungit` | 7688 | Ungit git graph viewer (internal, behind git-proxy) |
 | `wetty` | 7681 | Fallback web terminal (unused by default) |
 
 ### Cloudflare tunnel
 
-Tunnel name: `dev-console` — ID: `9c355567-7511-43af-bfcd-25e765106b16`
+Tunnel name: `dev-console` — ID: `9aa4a452-a07e-413a-9d1d-0915d170bb7a`
+
+> The ID above was stale for a while (`9c355567-…`) — the tunnel had been recreated without the
+> docs following. Trust `~/.cloudflared\dev-config.yml` and `cloudflared tunnel list` over this
+> line; DNS CNAMEs built against a dead tunnel ID fail in a way that looks like a routing bug.
 
 ### Secrets required
 

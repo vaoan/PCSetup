@@ -120,7 +120,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\verify-public-
 
 The public verifier temporarily disables Cloudflare Access policies for the console hostnames, waits for propagation, runs browser checks, and restores the original policies in `finally`. It must not count Cloudflare Access login pages, Cloudflare 1103/502/504 pages, or placeholder fallback pages as success.
 
-The code-server public check first verifies `https://code.ffxivbe.org/`. If that passes, it also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` and fails on missing folder content or any 5xx subresource response.
+The code-server public check first verifies `https://code.ffxiv.be/`. If that passes, it also opens `https://code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` and fails on missing folder content or any 5xx subresource response.
 
 For the repo test suite, use the pinned Pester entrypoint instead of calling `Invoke-Pester` directly:
 

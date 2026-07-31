@@ -38,9 +38,9 @@ $cfExe            = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 $devConfigPath    = "$cfDir\dev-config.yml"
 $sshwiftyConfPath = "$sshwiftyDir\sshwifty.conf.json"
 $tunnelName       = 'dev-console'
-$zoneName         = 'ffxivbe.org'
+$zoneName         = 'ffxiv.be'
 $distro           = 'Ubuntu-24.04'
-$consoleHostnames = @('console.ffxivbe.org','dev.ffxivbe.org','code.ffxivbe.org','ttyd.ffxivbe.org','tools.ffxivbe.org','git.ffxivbe.org')
+$consoleHostnames = @('console.ffxiv.be','dev.ffxiv.be','code.ffxiv.be','ttyd.ffxiv.be','tools.ffxiv.be','git.ffxiv.be')
 
 function Write-Log { param([string]$msg) Write-Host "[setup-console] $msg" }
 function Fail { param([string]$msg) Write-Host "[setup-console] ERROR: $msg" -ForegroundColor Red; exit 1 }
@@ -304,17 +304,17 @@ credentials-file: $($credPath -replace '\\', '\\')
 protocol: http2
 
 ingress:
-  - hostname: console.ffxivbe.org
+  - hostname: console.ffxiv.be
     service: http://127.0.0.1:7681
-  - hostname: dev.ffxivbe.org
+  - hostname: dev.ffxiv.be
     service: ssh://localhost:22
-  - hostname: tools.ffxivbe.org
+  - hostname: tools.ffxiv.be
     service: http://127.0.0.1:7686
-  - hostname: git.ffxivbe.org
+  - hostname: git.ffxiv.be
     service: http://127.0.0.1:7687
-  - hostname: code.ffxivbe.org
+  - hostname: code.ffxiv.be
     service: http://127.0.0.1:8080
-  - hostname: ttyd.ffxivbe.org
+  - hostname: ttyd.ffxiv.be
     service: http://127.0.0.1:7683
   - service: http_status:404
 "@
@@ -427,7 +427,7 @@ Write-Log "Scheduled task '$proxyTaskName' created (runs at logon + boot/resume,
 
 # -- 9. WSLKeepAlive scheduled task -------------------------------------------
 # Holds the WSL2 VM open. Without it, WSL shuts the VM down when idle -> code-server
-# (code.ffxivbe.org), the dashboard (tools.ffxivbe.org) and the other WSL-backed
+# (code.ffxiv.be), the dashboard (tools.ffxiv.be) and the other WSL-backed
 # services die, and the WSL IP can change out from under the TCP relays -> 502.
 # A single `sleep infinity` session is fragile (it gets terminated and the VM then
 # idles down), so the task runs a self-healing loop: if the held session is ever
@@ -469,7 +469,7 @@ Write-Host "  Cloudflare tunnel: $tunnelName ($tunnelId)"
 Write-Host "  Hostnames: $($consoleHostnames -join ', ')"
 Write-Host ""
 Write-Host "  Next: run start-console.bat to launch the console."
-Write-Host "  Remote: https://console.ffxivbe.org"
+Write-Host "  Remote: https://console.ffxiv.be"
 Write-Host ""
 Write-Host "  Files deployed to:"
 Write-Host "    $sshwiftyDir\"

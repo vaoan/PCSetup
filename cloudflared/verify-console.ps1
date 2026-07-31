@@ -287,7 +287,7 @@ Test-LocalHttp -Name 'ffxivbe origin' -Url 'http://127.0.0.1:9000/'
 Test-LocalHttp -Name 'chat origin' -Url 'http://127.0.0.1:3000/'
 
 # Console / WSL checks
-Test-LocalHttp -Name 'console proxy' -Url 'http://127.0.0.1:7681/' -Headers @{ Host = 'console.ffxivbe.org' }
+Test-LocalHttp -Name 'console proxy' -Url 'http://127.0.0.1:7681/' -Headers @{ Host = 'console.ffxiv.be' }
 Test-LocalHttp -Name 'dashboard' -Url 'http://127.0.0.1:7686/'
 Test-LocalHttp -Name 'git proxy' -Url 'http://127.0.0.1:7687/'
 Test-LocalHttp -Name 'code-server portproxy' -Url 'http://127.0.0.1:8080/'

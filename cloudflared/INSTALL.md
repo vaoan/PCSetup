@@ -148,4 +148,4 @@ This means a fresh machine does not need a prepopulated `cloudflared\node_module
 
 The public verifier temporarily disables Cloudflare Access for the protected console hostnames, waits for policy propagation, runs the browser checks, and restores the original policies even if a check fails. It treats Cloudflare Access login pages, Cloudflare error pages such as `1103`, `502`, or `504`, and placeholder fallback pages as failures.
 
-For code-server, the verifier first checks `https://code.ffxivbe.org/`. If that succeeds, it also opens `https://code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`, waits for the real workspace text, and fails if any subresource returns a 5xx response.
+For code-server, the verifier first checks `https://code.ffxiv.be/`. If that succeeds, it also opens `https://code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`, waits for the real workspace text, and fails if any subresource returns a 5xx response.

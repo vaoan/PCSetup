@@ -5,7 +5,7 @@
 # - Cloudflared (official MSI for Smart App Control)
 # - Web tunnel (ffxivbe.org, chat.ffxivbe.org)
 # - SSH tunnel (pc.ffxivbe.org -> SSH access)
-# - Dev tunnel (dev.ffxivbe.org -> VS Code Remote SSH)
+# - Dev tunnel (dev.ffxiv.be -> VS Code Remote SSH)
 # - OpenSSH Server with key authentication
 # - Scheduled tasks (all run silently)
 # - Desktop shortcuts
@@ -29,7 +29,7 @@ $sshHostname = "pc.ffxivbe.org"
 
 # Dev tunnel ID is dynamic - looked up from Cloudflare during recovery
 $devTunnelName = "dev-tunnel"
-$devHostname = "dev.ffxivbe.org"
+$devHostname = "dev.ffxiv.be"
 
 $macPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local"
 

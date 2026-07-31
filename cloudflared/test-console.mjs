@@ -2,13 +2,13 @@ import { chromium } from 'playwright';
 import http from 'http';
 import net from 'net';
 
-// Tiny relay on port 7690: forwards to console-proxy (7681) with Host: console.ffxivbe.org
+// Tiny relay on port 7690: forwards to console-proxy (7681) with Host: console.ffxiv.be
 // so sshwifty accepts the request without needing CF Access.
 const relay = http.createServer((req, res) => {
   const opts = {
     hostname: '127.0.0.1', port: 7681,
     path: req.url, method: req.method,
-    headers: { ...req.headers, host: 'console.ffxivbe.org' }
+    headers: { ...req.headers, host: 'console.ffxiv.be' }
   };
   const proxy = http.request(opts, pr => { // nosemgrep
     res.writeHead(pr.statusCode, pr.headers);
@@ -19,7 +19,7 @@ const relay = http.createServer((req, res) => {
 });
 relay.on('upgrade', (req, socket, head) => {
   const conn = net.connect(7681, '127.0.0.1', () => {
-    const hdrs = { ...req.headers, host: 'console.ffxivbe.org' };
+    const hdrs = { ...req.headers, host: 'console.ffxiv.be' };
     let hs = `${req.method} ${req.url} HTTP/1.1\r\n`;
     for (const [k, v] of Object.entries(hdrs)) hs += `${k}: ${v}\r\n`;
     hs += '\r\n';
@@ -31,7 +31,7 @@ relay.on('upgrade', (req, socket, head) => {
   socket.on('error', () => conn.destroy());
 });
 await new Promise(r => relay.listen(7690, '127.0.0.1', r));
-console.log('Relay listening on 127.0.0.1:7690 -> 127.0.0.1:7681 (Host: console.ffxivbe.org)');
+console.log('Relay listening on 127.0.0.1:7690 -> 127.0.0.1:7681 (Host: console.ffxiv.be)');
 
 const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({ ignoreHTTPSErrors: true });

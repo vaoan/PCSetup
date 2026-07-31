@@ -53,7 +53,7 @@ Runs the full post-install report:
 - local code-server folder switching
 - public hostname checks
 
-The public hostname leg uses Playwright through `verify-public-routes.ps1`. It temporarily removes/restores Cloudflare Access policies for the protected console routes, rejects Access login pages and Cloudflare error pages, rejects placeholder fallback pages, and checks the real `code.ffxivbe.org/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` workspace after the base code route passes.
+The public hostname leg uses Playwright through `verify-public-routes.ps1`. It temporarily removes/restores Cloudflare Access policies for the protected console routes, rejects Access login pages and Cloudflare error pages, rejects placeholder fallback pages, and checks the real `code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup` workspace after the base code route passes.
 
 Reports are written to:
 - `%USERPROFILE%\.cloudflared\reports\latest.md`
@@ -81,7 +81,7 @@ Reports are written to:
 - **SSH Hostname**: `pc.ffxivbe.org`
 - **Tunnel Configs**: `C:\Users\Heiner\.cloudflared\`
 - **Verification Reports**: `C:\Users\Heiner\.cloudflared\reports\`
-- **Console presets**: `console.ffxivbe.org` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, `Puck`, `AeleOS`, and `PCSetup` in persistent and fresh variants.
+- **Console presets**: `console.ffxiv.be` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, `Puck`, `AeleOS`, and `PCSetup` in persistent and fresh variants.
 
 ## Setup After Format
 
