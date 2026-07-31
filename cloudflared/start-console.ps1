@@ -274,6 +274,26 @@ Start-Process -FilePath $sshwiftyExe `
 Write-Log "SSHwifty: started -> 127.0.0.1:7682"
 
 # -- 5. Restart launcher proxy on port 7681 -----------------------------------
+# Same copy problem as the WSL proxies: console-proxy.js runs from $launcherDir
+# and serves the PWA assets from its OWN directory, so editing them in the repo
+# does nothing until the copies are refreshed. setup-console-windows.ps1 is the
+# only thing that copied them, so an icon change silently reverted the moment
+# this script next restarted the proxy. Re-copy on every run.
+# NOTE: this script itself runs from a COPY at Documents\Cloudflare, so
+# $PSScriptRoot is NOT the repo - the repo path has to be explicit.
+$repoCfDir = 'Z:\Users\Heiner\Documents\PCSetup\cloudflared'
+if (Test-Path $repoCfDir) {
+    foreach ($asset in 'console-proxy.js', 'console-launcher.js',
+                       'console-pwa-manifest.webmanifest', 'console-pwa-sw.js',
+                       'console-pwa-icon-192.png', 'console-pwa-icon-512.png') {
+        $src = Join-Path $repoCfDir $asset
+        if (Test-Path $src) { Copy-Item $src (Join-Path $launcherDir $asset) -Force }
+    }
+    Write-Log "Launcher assets: redeployed from repo"
+} else {
+    Write-Log "Launcher assets: repo not reachable at $repoCfDir - keeping deployed copies"
+}
+
 if (-not (Test-Path $proxyScript)) { Fail "Proxy script not found: $proxyScript`nRun setup-console-windows.ps1 first." }
 
 if (Test-Path $proxyPidFile) {
