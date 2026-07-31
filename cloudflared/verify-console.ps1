@@ -247,6 +247,49 @@ function Test-SshwiftyHostTargets {
     }
 }
 
+function Test-DeployedCopies {
+    # Several things here run from COPIES of repo files, not the repo itself:
+    #   * setup-console-windows.ps1 copies start-console.ps1 / tunnel-supervisor.ps1
+    #     to Documents\Cloudflare, and the web-console logon task runs THAT copy.
+    #   * setup-console-wsl.sh copies the Node proxies to /usr/local/bin.
+    # Editing the repo therefore does nothing until the copy is refreshed, which
+    # is silent and has bitten twice: a three-week-stale start-console.ps1 running
+    # at logon, and the tools dashboard serving dead hostnames for days.
+    $repoCf = $PSScriptRoot
+
+    foreach ($name in 'start-console.ps1', 'tunnel-supervisor.ps1') {
+        $deployed = Join-Path $cloudflareDir $name
+        $repo     = Join-Path $repoCf $name
+        if (-not (Test-Path $deployed)) {
+            Add-Check 'Deployed' $name 'matches repo' 'not deployed' $false $deployed
+            continue
+        }
+        $a = (Get-FileHash $deployed -Algorithm SHA256).Hash
+        $b = (Get-FileHash $repo     -Algorithm SHA256).Hash
+        $ok = $a -eq $b
+        Add-Check 'Deployed' $name 'matches repo' $(if ($ok) { 'in sync' } else { 'DRIFTED' }) $ok `
+            $(if ($ok) { '' } else { "re-run setup-console-windows.ps1, or copy $repo -> $deployed" })
+    }
+
+    foreach ($name in 'dashboard.js', 'git-proxy.js', 'ttyd-proxy.js') {
+        $repoHash = (Get-FileHash (Join-Path $repoCf $name) -Algorithm SHA256).Hash.ToLower()
+        $wslHash = (& wsl -d Ubuntu-24.04 --user root -- sha256sum "/usr/local/bin/$name" 2>$null |
+                    Out-String).Trim().Split(' ')[0]
+        $ok = $wslHash -and ($wslHash -eq $repoHash)
+        Add-Check 'Deployed' "wsl:$name" 'matches repo' $(if ($ok) { 'in sync' } else { 'DRIFTED' }) $ok `
+            $(if ($ok) { '' } else { 'start-console.ps1 re-copies these on every run' })
+    }
+
+    # A code-server upgrade replaces /usr/lib/code-server and reverts the custom
+    # icon. Stock icons contain none of the pink palette.
+    $pink = (& wsl -d Ubuntu-24.04 --user root -- bash -c `
+        "grep -c '9C0054' /usr/lib/code-server/src/browser/media/favicon.svg 2>/dev/null || echo 0" |
+        Out-String).Trim()
+    $ok = $pink -ne '0'
+    Add-Check 'Deployed' 'code-server pink icon' 'present' $(if ($ok) { 'present' } else { 'REVERTED' }) $ok `
+        $(if ($ok) { '' } else { 'run cloudflared/restore-code-server-icons.sh after a code-server upgrade' })
+}
+
 function Invoke-PublicRoutePlaywrightCheck {
     param([string]$ReportDir)
 
@@ -318,6 +361,7 @@ Test-LocalHttp -Name 'code-server portproxy' -Url 'http://127.0.0.1:8080/'
 Test-LocalHttp -Name 'code-server folder switch PCSetup' -Url 'http://127.0.0.1:8080/?folder=/mnt/z/Users/Heiner/Documents/PCSetup'
 Test-LocalHttp -Name 'ttyd proxy' -Url 'http://127.0.0.1:7683/'
 Test-SshwiftyHostTargets
+Test-DeployedCopies
 
 Test-PortListening -Port 2222
 Test-PortListening -Port 7681
