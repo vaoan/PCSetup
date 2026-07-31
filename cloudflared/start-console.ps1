@@ -33,6 +33,9 @@ $tcpRelayScript = "$PSScriptRoot\tcp-relay.js"
 $wslKeepalivePidFile = "$launcherDir\wsl-keepalive.pid"
 $cfLog         = "$cfDir\cloudflared-dev.log"
 $cfPidFile     = "$cfDir\cloudflared-dev.pid"
+$cfSupervisor       = "$PSScriptRoot\tunnel-supervisor.ps1"
+$cfSupervisorPidFile = "$cfDir\cloudflared-dev-supervisor.pid"
+$cfSupervisorLog    = "$cfDir\cloudflared-dev-supervisor.log"
 $nodeCmd       = Get-Command node -ErrorAction SilentlyContinue
 $nodeExe       = if ($nodeCmd) { $nodeCmd.Source } else { $null }
 
@@ -276,10 +279,21 @@ $proxyProc = Start-Process -FilePath $nodeExe `
 $proxyProc.Id | Out-File -FilePath $proxyPidFile -Encoding utf8
 Write-Log "Launcher proxy: started (PID $($proxyProc.Id)) -> 127.0.0.1:7681"
 
-# -- 6. Restart cloudflared (detached, hidden, logs to file) ------------------
-if (-not (Test-Path $cfExe))        { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
+# -- 6. Restart cloudflared via the self-healing supervisor -------------------
+# The supervisor waits for the Cloudflare edge to be reachable before launching
+# cloudflared and relaunches it if it ever exits - this is what makes the console
+# survive a reboot where the network/ProtonVPN isn't ready yet at logon.
+if (-not (Test-Path $cfExe))         { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
 if (-not (Test-Path $devConfigPath)) { Fail "dev-config.yml not found. Run setup-console-windows.ps1 first." }
+if (-not (Test-Path $cfSupervisor))  { Fail "tunnel-supervisor.ps1 not found: $cfSupervisor. Run setup-console-windows.ps1 first." }
 
+# Stop the previous supervisor (if any) so we don't stack duplicates.
+if (Test-Path $cfSupervisorPidFile) {
+    $oldSup = (Get-Content $cfSupervisorPidFile -ErrorAction SilentlyContinue).Trim()
+    if ($oldSup -match '^\d+$') { Stop-Process -Id ([int]$oldSup) -Force -ErrorAction SilentlyContinue }
+    Remove-Item $cfSupervisorPidFile -Force -ErrorAction SilentlyContinue
+}
+# Stop any cloudflared bound to the dev-console config.
 if (Test-Path $cfPidFile) {
     $oldCfPidVal = (Get-Content $cfPidFile -ErrorAction SilentlyContinue).Trim()
     if ($oldCfPidVal -match '^\d+$') { Stop-Process -Id ([int]$oldCfPidVal) -Force -ErrorAction SilentlyContinue }
@@ -291,21 +305,24 @@ Get-Process cloudflared -ErrorAction SilentlyContinue | ForEach-Object {
 }
 Start-Sleep -Milliseconds 500
 
-$cfProc = Start-Process -FilePath $cfExe `
-    -ArgumentList "tunnel", "--config", $devConfigPath, "run" `
+$supProc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $cfSupervisor,
+        '-ConfigPath', $devConfigPath, '-CfLog', $cfLog, '-LogPath', $cfSupervisorLog, '-CfPidFile', $cfPidFile, '-Label', 'dev-console' `
     -WindowStyle Hidden `
-    -RedirectStandardError $cfLog `
     -PassThru
-$cfProc.Id | Out-File -FilePath $cfPidFile -Encoding utf8
-Write-Log "cloudflared: started (PID $($cfProc.Id))"
-Write-Log "  log: $cfLog"
+$supProc.Id | Out-File -FilePath $cfSupervisorPidFile -Encoding utf8
+Write-Log "cloudflared supervisor: started (PID $($supProc.Id)) - waits for edge, self-heals"
+Write-Log "  cloudflared log: $cfLog"
+Write-Log "  supervisor log:  $cfSupervisorLog"
 
 # -- 7. Verify -----------------------------------------------------------------
 Start-Sleep -Seconds 5
 
 $sshwiftyOk = [bool](Get-Process -Name "sshwifty_windows_amd64" -ErrorAction SilentlyContinue)
 $proxyOk    = (Test-Path $proxyPidFile)
-$tunnelOk   = (Test-Path $cfPidFile) -and [bool](Get-Process -Id ([int](Get-Content $cfPidFile -ErrorAction SilentlyContinue).Trim()) -ErrorAction SilentlyContinue)
+# Tunnel is "ok" when the supervisor is alive. If the edge is up (interactive run)
+# cloudflared is already connected; at boot it connects as soon as the net is ready.
+$tunnelOk   = (Test-Path $cfSupervisorPidFile) -and [bool](Get-Process -Id ([int](Get-Content $cfSupervisorPidFile -ErrorAction SilentlyContinue).Trim()) -ErrorAction SilentlyContinue)
 
 Write-Host ""
 if ($sshwiftyOk -and $proxyOk -and $tunnelOk) {
@@ -315,7 +332,7 @@ if ($sshwiftyOk -and $proxyOk -and $tunnelOk) {
 } else {
     if (-not $sshwiftyOk) { Write-Host "[start-console] WARNING: SSHwifty is not running" -ForegroundColor Yellow }
     if (-not $proxyOk)    { Write-Host "[start-console] WARNING: Launcher proxy is not running" -ForegroundColor Yellow }
-    if (-not $tunnelOk)   { Write-Host "[start-console] WARNING: cloudflared is not running" -ForegroundColor Yellow }
+    if (-not $tunnelOk)   { Write-Host "[start-console] WARNING: cloudflared supervisor is not running" -ForegroundColor Yellow }
     Write-Host "  SSHwifty log:   $sshwiftyLog"
     Write-Host "  Proxy log:      $proxyLog"
     Write-Host "  Cloudflare log: $cfLog"

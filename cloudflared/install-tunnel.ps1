@@ -216,28 +216,36 @@ Write-Host ""
 Write-Host "[4/5] Creating scheduled task..." -ForegroundColor Yellow
 
 $taskName = "ffxivbe-tunnel"
-$launcherPath = Join-Path $configDir "ffxivbe-tunnel-launcher.vbs"
 
 # Remove existing task if present
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-# Create a hidden VBS launcher so no console window appears
-$launcherContent = @"
-Set shell = CreateObject("WScript.Shell")
-shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$configPath" & Chr(34) & " run ffxivbe-tunnel", 0, False
-"@
-Set-Content -Path $launcherPath -Value $launcherContent
+# Deploy the self-healing supervisor next to the config. It waits for the
+# Cloudflare edge to be reachable before launching cloudflared and relaunches it
+# if it exits — so the tunnel survives a reboot where the network/ProtonVPN isn't
+# ready yet at logon (cloudflared's own precheck would otherwise hard-fail + exit).
+$supervisorSrc = Join-Path $PSScriptRoot 'tunnel-supervisor.ps1'
+$supervisorDst = Join-Path $configDir 'tunnel-supervisor.ps1'
+Copy-Item $supervisorSrc $supervisorDst -Force
+$cfLogPath  = Join-Path $configDir 'ffxivbe-tunnel.log'
+$supLogPath = Join-Path $configDir 'ffxivbe-tunnel-supervisor.log'
 
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$launcherPath`""
+# Remove the legacy one-shot VBS launcher if it exists (replaced by the supervisor).
+Remove-Item (Join-Path $configDir "ffxivbe-tunnel-launcher.vbs") -Force -ErrorAction SilentlyContinue
+
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$supervisorDst`" -ConfigPath `"$configPath`" -RunTarget ffxivbe-tunnel -CfLog `"$cfLogPath`" -LogPath `"$supLogPath`" -Label ffxivbe-tunnel"
 $triggers = @(
     (New-ScheduledTaskTrigger -AtStartup),
     (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
 )
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+# ExecutionTimeLimit 0 is REQUIRED: the supervisor is the task's own long-lived
+# process, so the default 3-day limit would otherwise kill the tunnel.
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit 0
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for ffxivbe.org (silent, boot-started)" | Out-Null
-Write-Host "  OK Scheduled task installed" -ForegroundColor Green
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for www.ffxiv.be (supervised, boot-started)" | Out-Null
+Write-Host "  OK Scheduled task installed (supervised)" -ForegroundColor Green
 
 # Start task
 Start-ScheduledTask -TaskName $taskName

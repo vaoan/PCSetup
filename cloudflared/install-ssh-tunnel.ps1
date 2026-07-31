@@ -259,28 +259,36 @@ Write-Host ""
 Write-Host "[5/6] Creating scheduled task..." -ForegroundColor Yellow
 
 $taskName = "ssh-tunnel"
-$launcherPath = Join-Path $configDir "ssh-tunnel-launcher.vbs"
 
 # Remove existing task if present
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-# Create a hidden VBS launcher so no console window appears
-$launcherContent = @"
-Set shell = CreateObject("WScript.Shell")
-shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$sshConfigPath" & Chr(34) & " run $sshTunnelName", 0, False
-"@
-Set-Content -Path $launcherPath -Value $launcherContent
+# Deploy the self-healing supervisor next to the config. It waits for the
+# Cloudflare edge to be reachable before launching cloudflared and relaunches it
+# if it exits — so the tunnel survives a reboot where the network/ProtonVPN isn't
+# ready yet at logon (cloudflared's own precheck would otherwise hard-fail + exit).
+$supervisorSrc = Join-Path $PSScriptRoot 'tunnel-supervisor.ps1'
+$supervisorDst = Join-Path $configDir 'tunnel-supervisor.ps1'
+Copy-Item $supervisorSrc $supervisorDst -Force
+$cfLogPath  = Join-Path $configDir 'ssh-tunnel.log'
+$supLogPath = Join-Path $configDir 'ssh-tunnel-supervisor.log'
 
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$launcherPath`""
+# Remove the legacy one-shot VBS launcher if it exists (replaced by the supervisor).
+Remove-Item (Join-Path $configDir "ssh-tunnel-launcher.vbs") -Force -ErrorAction SilentlyContinue
+
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$supervisorDst`" -ConfigPath `"$sshConfigPath`" -RunTarget $sshTunnelName -CfLog `"$cfLogPath`" -LogPath `"$supLogPath`" -Label ssh-tunnel"
 $triggers = @(
     (New-ScheduledTaskTrigger -AtStartup),
     (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
 )
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
+# ExecutionTimeLimit 0 is REQUIRED: the supervisor is the task's own long-lived
+# process, so the default 3-day limit would otherwise kill the tunnel.
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit 0
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description "SSH Tunnel for $sshHostname (boot-started)" | Out-Null
-Write-Host "  OK Scheduled task installed: $taskName" -ForegroundColor Green
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description "SSH Tunnel for $sshHostname (supervised, boot-started)" | Out-Null
+Write-Host "  OK Scheduled task installed: $taskName (supervised)" -ForegroundColor Green
 
 # Start task
 Start-ScheduledTask -TaskName $taskName

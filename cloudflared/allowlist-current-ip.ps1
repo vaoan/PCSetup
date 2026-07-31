@@ -1,20 +1,32 @@
+# Refreshes the "this PC" IP bypass so the current network skips the Zero Trust
+# login prompt on every console hostname.
+#
+# In the reusable-policy model there is ONE account-level bypass policy
+# ("PCSetup - This-PC IP bypass") attached to all console apps, so allowlisting a
+# new IP is a single update instead of one policy per app. This script just
+# rewrites that policy's IP list (detected automatically, or -IpCidr to override).
+#
+# The full gate (apps + email-allow + bypass + session duration) is provisioned
+# by setup-access-apps.ps1; this is the quick "my IP changed" refresh.
+
 param(
     [string]$AccountId = 'd34896e6a0f8b2fba5e03dec659eac50',
     [string[]]$IpCidr,
     [switch]$DryRun
 )
 
+# Auto-elevate to Administrator
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -AccountId `"$AccountId`""
+    if ($IpCidr) { $argList += " -IpCidr $($IpCidr -join ',')" }
+    if ($DryRun) { $argList += ' -DryRun' }
+    Start-Process PowerShell -ArgumentList $argList -Verb RunAs
+    exit
+}
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$policyPrefix = 'Permanent IP allowlist'
-$routes = @(
-    'console.ffxivbe.org',
-    'dev.ffxivbe.org',
-    'code.ffxivbe.org',
-    'ttyd.ffxivbe.org',
-    'tools.ffxivbe.org',
-    'git.ffxivbe.org'
-)
+$bypassPolicyName = 'PCSetup - This-PC IP bypass'
 
 . (Join-Path $PSScriptRoot 'shared-cloudflare-auth.ps1')
 
@@ -23,112 +35,35 @@ function Write-Log {
     Write-Host "[allowlist-current-ip] $Message"
 }
 
-function Find-AccessAppForHostname {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$Apps,
-        [Parameter(Mandatory = $true)]
-        [string]$Hostname
-    )
-
-    $Apps | Where-Object {
-        ($_.domain -eq $Hostname) -or
-        ($_.self_hosted_domains -contains $Hostname)
-    } | Select-Object -First 1
-}
-
-function Get-CurrentPublicIpCidr {
-    param([string[]]$Value)
-
-    if ($Value) {
-        return @($Value | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
-    }
-
-    return @(Get-CloudflareCurrentPublicIpCidrs)
-}
-
-function Get-ExistingMatchingPolicy {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$AppId,
-        [Parameter(Mandatory = $true)]
-        [string]$Hostname
-    )
-
-    $policiesResponse = Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$AccountId/access/apps/$AppId/policies"
-    $policies = @()
-    if ($policiesResponse -is [System.Array]) {
-        $policies = @($policiesResponse)
-    } elseif ($policiesResponse.PSObject.Properties.Name -contains 'result') {
-        $policies = @($policiesResponse.result)
-    } else {
-        $policies = @($policiesResponse)
-    }
-
-    return $policies | Where-Object {
-        [string]$_.name -like "$policyPrefix - $Hostname*"
-    }
-}
-
 New-Item -ItemType Directory -Path (Join-Path $env:USERPROFILE '.cloudflared\reports') -Force | Out-Null
 
-$currentIpCidrs = @(Get-CurrentPublicIpCidr -Value $IpCidr)
+$currentIpCidrs = if ($IpCidr) {
+    @($IpCidr | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+} else {
+    @(Get-CloudflareCurrentPublicIpCidrs)
+}
 Write-Log "Using public IP allowlist CIDRs: $($currentIpCidrs -join ', ')"
 
-$apps = Get-CloudflareAccessApps -RepoRoot $repoRoot -AccountId $AccountId
-$selectedApps = foreach ($route in $routes) {
-    $app = Find-AccessAppForHostname -Apps $apps -Hostname $route
-    if (-not $app) {
-        throw "No Cloudflare Access app found for $route"
-    }
+$include = @($currentIpCidrs | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { @{ ip = @{ ip = $_ } } })
+if (-not $include) { throw "No IP CIDRs resolved." }
 
-    [pscustomobject]@{
-        Hostname = $route
-        AppId    = $app.id
-        AppName  = $app.name
+$reusable = @(Get-CloudflareReusablePolicies -RepoRoot $repoRoot -AccountId $AccountId)
+$bypass = $reusable | Where-Object { $_.name -eq $bypassPolicyName } | Select-Object -First 1
+
+if ($DryRun) {
+    if ($bypass) {
+        Write-Log "Dry run: would set '$bypassPolicyName' -> $($currentIpCidrs -join ', ')"
+    } else {
+        Write-Log "Dry run: '$bypassPolicyName' does not exist yet — run setup-access-apps.ps1 to create it."
     }
+    return
 }
 
-foreach ($item in $selectedApps) {
-    $existingPolicies = @(Get-ExistingMatchingPolicy -AppId $item.AppId -Hostname $item.Hostname)
-    $allPolicies = @(Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$AccountId/access/apps/$($item.AppId)/policies")
-    $emailPolicies = @($allPolicies | Where-Object { $_.name -match '^Allow ' -and $_.decision -eq 'allow' })
-
-    if ($DryRun) {
-        foreach ($existing in $existingPolicies) {
-            Write-Log "Dry run: would remove old allowlist for $($item.Hostname): $($existing.name)"
-        }
-        foreach ($existing in $emailPolicies) {
-            Write-Log "Dry run: would reorder email policy for $($item.Hostname): $($existing.name)"
-        }
-        Write-Log "Dry run: would add this-PC allowlist for $($item.Hostname) via $($item.AppName): $($currentIpCidrs -join ', ')"
-        continue
-    }
-
-    foreach ($existing in $existingPolicies) {
-        Write-Log "Removing old allowlist for $($item.Hostname): $($existing.name)"
-        Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -PolicyId $existing.id
-    }
-    foreach ($existing in $emailPolicies) {
-        Write-Log "Temporarily removing email policy for $($item.Hostname): $($existing.name)"
-        Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -PolicyId $existing.id
-    }
-
-    Write-Log "Adding permanent this-PC allowlist for $($item.Hostname) via $($item.AppName): $($currentIpCidrs -join ', ')"
-    $null = New-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $AccountId -AppId $item.AppId -Name "$policyPrefix - $($item.Hostname) - this PC" -IpCidr $currentIpCidrs -Precedence 1
-
-    foreach ($existing in $emailPolicies) {
-        Write-Log "Recreating email policy for $($item.Hostname): $($existing.name)"
-        $body = @{
-            name       = $existing.name
-            decision   = $existing.decision
-            precedence = 2
-            include    = $existing.include
-            require    = @($existing.require)
-            exclude    = @($existing.exclude)
-        }
-        $null = Invoke-CloudflareApi -RepoRoot $repoRoot -Method POST -Path "/accounts/$AccountId/access/apps/$($item.AppId)/policies" -Body $body
-    }
+if (-not $bypass) {
+    Write-Log "Reusable bypass policy not found; creating '$bypassPolicyName'."
+    $null = New-CloudflareReusablePolicy -RepoRoot $repoRoot -AccountId $AccountId -Name $bypassPolicyName -Decision 'bypass' -Include $include
+    Write-Log "Created '$bypassPolicyName'. Run setup-access-apps.ps1 if apps aren't attached to it yet."
+} else {
+    $null = Set-CloudflareReusablePolicyInclude -RepoRoot $repoRoot -AccountId $AccountId -PolicyId $bypass.id -Name $bypassPolicyName -Decision 'bypass' -Include $include
+    Write-Log "Updated '$bypassPolicyName' — attached apps now bypass login from: $($currentIpCidrs -join ', ')"
 }
-
-Write-Log "Permanent IP allowlist completed for $($selectedApps.Count) route(s)."

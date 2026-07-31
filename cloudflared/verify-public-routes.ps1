@@ -6,7 +6,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $accountId = 'd34896e6a0f8b2fba5e03dec659eac50'
+# Temp reusable "everyone bypass" policy used only during verification.
 $policyPrefix = 'Temporary public route verifier bypass'
+# Canonical reusable gate provisioned by setup-access-apps.ps1 — restored after tests.
+$allowPolicyName  = 'PCSetup - Owner email allow'
+$bypassPolicyName = 'PCSetup - This-PC IP bypass'
 $routes = @(
     'console.ffxiv.be',
     'code.ffxiv.be',
@@ -116,129 +120,60 @@ function Find-AccessAppForHostname {
     return $matches | Select-Object -First 1
 }
 
-function Remove-TemporaryPolicies {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$Apps
-    )
-
-    foreach ($app in $Apps) {
-        $appId = if ($app.PSObject.Properties.Name -contains 'AppId') { $app.AppId } else { $app.id }
-        $appName = if ($app.PSObject.Properties.Name -contains 'AppDomain') { $app.AppDomain } elseif ($app.PSObject.Properties.Name -contains 'Hostname') { $app.Hostname } else { $app.domain }
-
-        $policiesResponse = Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$accountId/access/apps/$appId/policies"
-        $policies = @()
-        if ($policiesResponse -is [System.Array]) {
-            $policies = @($policiesResponse)
-        } elseif ($policiesResponse.PSObject.Properties.Name -contains 'result') {
-            $policies = @($policiesResponse.result)
-        } else {
-            $policies = @($policiesResponse)
-        }
-
-        foreach ($policy in $policies) {
-            $policyName = [string]$policy.name
-            if (-not $policyName.StartsWith($policyPrefix)) {
-                continue
-            }
-
-            Write-Log "Removing stale policy '$policyName' from $appName"
-            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $appId -PolicyId $policy.id
-        }
+# Canonical gate = the two reusable policies provisioned by setup-access-apps.ps1,
+# referenced as [bypass (precedence 1), allow (precedence 2)]. Restoring an app
+# means simply re-pointing it at these by ID — which is crash-safe: even if a
+# previous verifier run died mid-way and left an app on the everyone-bypass,
+# re-pointing to canonical fully re-gates it. We never DELETE these shared
+# policies (that would strip the gate from every app at once).
+function Get-CanonicalPolicyRefs {
+    $reusable = @(Get-CloudflareReusablePolicies -RepoRoot $repoRoot -AccountId $accountId)
+    $allow  = $reusable | Where-Object { $_.name -eq $allowPolicyName }  | Select-Object -First 1
+    $bypass = $reusable | Where-Object { $_.name -eq $bypassPolicyName } | Select-Object -First 1
+    if (-not $allow -or -not $bypass) {
+        Fail "Canonical reusable policies not found ('$allowPolicyName' / '$bypassPolicyName'). Run setup-access-apps.ps1 first."
     }
+    return @(
+        @{ id = $bypass.id; precedence = 1 },
+        @{ id = $allow.id;  precedence = 2 }
+    )
 }
 
-function Convert-AccessPolicyToCreateBody {
+function Set-AppPolicyRefs {
     param(
-        [Parameter(Mandatory = $true)]
-        [object]$Policy
+        [Parameter(Mandatory = $true)][string]$AppId,
+        [Parameter(Mandatory = $true)][object[]]$Refs
     )
 
-    $body = @{
-        name       = $Policy.name
-        decision   = $Policy.decision
-        precedence = $Policy.precedence
-        include    = @($Policy.include)
-    }
-
-    if ($Policy.PSObject.Properties.Name -contains 'require' -and $Policy.require) {
-        $body.require = @($Policy.require)
-    }
-    if ($Policy.PSObject.Properties.Name -contains 'exclude' -and $Policy.exclude) {
-        $body.exclude = @($Policy.exclude)
-    }
-
-    return $body
+    $app = Get-CloudflareAccessApp -RepoRoot $repoRoot -AccountId $accountId -AppId $AppId
+    $null = Update-CloudflareAccessApp -RepoRoot $repoRoot -AccountId $accountId -App $app -Set @{ policies = @($Refs) }
 }
 
-function Get-AccessPolicies {
+function Restore-CanonicalGate {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$AppId
-    )
-
-    $policiesResponse = Invoke-CloudflareApi -RepoRoot $repoRoot -Method GET -Path "/accounts/$accountId/access/apps/$AppId/policies"
-    if ($policiesResponse -is [System.Array]) {
-        return @($policiesResponse)
-    }
-    if ($policiesResponse.PSObject.Properties.Name -contains 'result') {
-        return @($policiesResponse.result)
-    }
-    return @($policiesResponse)
-}
-
-function Disable-AccessForVerification {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$Apps,
-        [Parameter(Mandatory = $true)]
-        [System.Collections.IList]$Snapshots,
-        [Parameter(Mandatory = $true)]
-        [System.Collections.IList]$CreatedPolicies
+        [Parameter(Mandatory = $true)][object[]]$Apps,
+        [Parameter(Mandatory = $true)][object[]]$CanonicalRefs
     )
 
     foreach ($item in $Apps) {
-        $policies = @(Get-AccessPolicies -AppId $item.AppId)
-        $Snapshots.Add([pscustomobject]@{
-            AppId    = $item.AppId
-            Hostname = $item.Hostname
-            Policies = $policies
-        }) | Out-Null
-
-        foreach ($policy in $policies) {
-            Write-Log "Temporarily removing Access policy for $($item.Hostname): $($policy.name)"
-            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $item.AppId -PolicyId $policy.id
-        }
-
-        $policyName = "$policyPrefix - $($item.Hostname)"
-        Write-Log "Temporarily disabling Access for $($item.Hostname) via $($item.AppName)"
-        $policy = New-CloudflareEveryoneBypassPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $item.AppId -Name $policyName -Precedence 1
-        $CreatedPolicies.Add([pscustomobject]@{
-            AppId    = $item.AppId
-            Hostname = $item.Hostname
-            PolicyId = $policy.id
-            Name     = $policy.name
-        }) | Out-Null
+        Write-Log "Restoring canonical Access gate for $($item.Hostname)"
+        Set-AppPolicyRefs -AppId $item.AppId -Refs $CanonicalRefs
     }
 }
 
-function Restore-AccessPolicies {
-    param(
-        [Parameter(Mandatory = $true)]
-        [System.Collections.IList]$Snapshots
-    )
-
-    foreach ($snapshot in $Snapshots) {
-        $currentPolicies = @(Get-AccessPolicies -AppId $snapshot.AppId)
-        foreach ($policy in $currentPolicies) {
-            Write-Log "Clearing verification policy for $($snapshot.Hostname): $($policy.name)"
-            Remove-CloudflareAccessPolicy -RepoRoot $repoRoot -AccountId $accountId -AppId $snapshot.AppId -PolicyId $policy.id
-        }
-
-        foreach ($policy in @($snapshot.Policies | Sort-Object precedence)) {
-            Write-Log "Restoring Access policy for $($snapshot.Hostname): $($policy.name)"
-            $body = Convert-AccessPolicyToCreateBody -Policy $policy
-            $null = Invoke-CloudflareApi -RepoRoot $repoRoot -Method POST -Path "/accounts/$accountId/access/apps/$($snapshot.AppId)/policies" -Body $body
+# Delete any leftover reusable everyone-bypass policies from a crashed prior run.
+# Call this only AFTER apps have been re-pointed at the canonical gate, so no app
+# still references the temp policy when it is deleted.
+function Remove-StaleVerifierPolicies {
+    $reusable = @(Get-CloudflareReusablePolicies -RepoRoot $repoRoot -AccountId $accountId)
+    foreach ($policy in $reusable) {
+        if ([string]$policy.name -like "$policyPrefix*") {
+            Write-Log "Removing stale verifier policy: $($policy.name)"
+            try {
+                Remove-CloudflareReusablePolicy -RepoRoot $repoRoot -AccountId $accountId -PolicyId $policy.id
+            } catch {
+                Write-Log "WARNING: could not delete stale verifier policy '$($policy.name)': $_"
+            }
         }
     }
 }
@@ -282,12 +217,26 @@ $selectedApps = foreach ($route in $routes) {
     }
 }
 
-$createdPolicies = New-Object System.Collections.Generic.List[object]
-$policySnapshots = New-Object System.Collections.Generic.List[object]
+# Canonical gate to restore to (fails fast if setup-access-apps.ps1 never ran).
+$canonicalRefs = Get-CanonicalPolicyRefs
+
+# Heal any half-open state left by a crashed prior run, then clear stale temp policies.
+Restore-CanonicalGate -Apps $selectedApps -CanonicalRefs $canonicalRefs
+Remove-StaleVerifierPolicies
+
+$tempPolicy = $null
 
 try {
-    Remove-TemporaryPolicies -Apps $selectedApps
-    Disable-AccessForVerification -Apps $selectedApps -Snapshots $policySnapshots -CreatedPolicies $createdPolicies
+    # Turn gating OFF: one temp reusable everyone-bypass, attached to each app.
+    $tempName = "$policyPrefix - $([Guid]::NewGuid().ToString('N').Substring(0,8))"
+    Write-Log "Creating temporary everyone-bypass policy '$tempName'"
+    $tempPolicy = New-CloudflareReusablePolicy -RepoRoot $repoRoot -AccountId $accountId -Name $tempName -Decision 'bypass' -Include @(@{ everyone = @{} })
+    $tempRefs = @(@{ id = $tempPolicy.id; precedence = 1 })
+
+    foreach ($item in $selectedApps) {
+        Write-Log "Temporarily opening $($item.Hostname) (everyone-bypass) for verification"
+        Set-AppPolicyRefs -AppId $item.AppId -Refs $tempRefs
+    }
 
     Write-Log "Waiting 60 seconds for Access policy propagation..."
     Start-Sleep -Seconds 60
@@ -309,10 +258,20 @@ try {
         Write-Log "Report written to $latestMd"
     }
 } finally {
+    # Turn gating back ON: re-point every app at the canonical reusable gate,
+    # THEN delete the temp policy (order matters — nothing references it now).
     try {
-        Restore-AccessPolicies -Snapshots $policySnapshots
+        Restore-CanonicalGate -Apps $selectedApps -CanonicalRefs $canonicalRefs
     } catch {
-        Write-Log "WARNING: failed to restore Access policies: $_"
+        Write-Log "WARNING: failed to restore Access gate: $_"
         throw
+    } finally {
+        if ($tempPolicy) {
+            try {
+                Remove-CloudflareReusablePolicy -RepoRoot $repoRoot -AccountId $accountId -PolicyId $tempPolicy.id
+            } catch {
+                Write-Log "WARNING: failed to delete temp verifier policy '$($tempPolicy.name)': $_"
+            }
+        }
     }
 }

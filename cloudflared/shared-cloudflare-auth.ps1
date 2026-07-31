@@ -323,3 +323,130 @@ function New-CloudflareEveryoneBypassPolicy {
 
     return Invoke-CloudflareApi -RepoRoot $RepoRoot -Method POST -Path "/accounts/$AccountId/access/apps/$AppId/policies" -Body $body
 }
+
+# ---------------------------------------------------------------------------
+# Reusable (account-level) Access policies. A reusable policy is defined once
+# and attached to many apps by ID, instead of duplicating an inline policy on
+# every app. Apps reference them via their `policies` array as { id, precedence }.
+# ---------------------------------------------------------------------------
+
+function Get-CloudflareReusablePolicies {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId
+    )
+
+    $response = Invoke-CloudflareApi -RepoRoot $RepoRoot -Method GET -Path "/accounts/$AccountId/access/policies?per_page=100"
+    if ($response -is [System.Array]) { return @($response) }
+    if ($response.PSObject.Properties.Name -contains 'result') { return @($response.result) }
+    return @($response)
+}
+
+function New-CloudflareReusablePolicy {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('allow', 'bypass', 'deny', 'non_identity')]
+        [string]$Decision,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Include
+    )
+
+    $body = @{
+        name     = $Name
+        decision = $Decision
+        include  = @($Include)
+    }
+
+    return Invoke-CloudflareApi -RepoRoot $RepoRoot -Method POST -Path "/accounts/$AccountId/access/policies" -Body $body
+}
+
+function Set-CloudflareReusablePolicyInclude {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [Parameter(Mandatory = $true)]
+        [string]$PolicyId,
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('allow', 'bypass', 'deny', 'non_identity')]
+        [string]$Decision,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Include
+    )
+
+    $body = @{
+        name     = $Name
+        decision = $Decision
+        include  = @($Include)
+    }
+
+    return Invoke-CloudflareApi -RepoRoot $RepoRoot -Method PUT -Path "/accounts/$AccountId/access/policies/$PolicyId" -Body $body
+}
+
+function Remove-CloudflareReusablePolicy {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [Parameter(Mandatory = $true)]
+        [string]$PolicyId
+    )
+
+    $null = Invoke-CloudflareApi -RepoRoot $RepoRoot -Method DELETE -Path "/accounts/$AccountId/access/policies/$PolicyId"
+}
+
+function Get-CloudflareAccessApp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [Parameter(Mandatory = $true)]
+        [string]$AppId
+    )
+
+    return Invoke-CloudflareApi -RepoRoot $RepoRoot -Method GET -Path "/accounts/$AccountId/access/apps/$AppId"
+}
+
+# Replaces an app's config with a careful PUT that preserves every existing
+# field (app_launcher_visible, allowed_idps, destinations, cookie flags, ...)
+# and only overrides the keys passed in -Set. Read-only and association fields
+# are stripped so Cloudflare accepts the payload. `policies` is only sent when
+# explicitly provided in -Set (as an array of { id, precedence } refs), so a
+# session-only update never disturbs an app's policy attachments.
+function Update-CloudflareAccessApp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [Parameter(Mandatory = $true)]
+        [object]$App,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Set
+    )
+
+    $exclude = @('id', 'uid', 'aud', 'created_at', 'updated_at', 'tags', 'scim_config', 'reusable', 'policies')
+    $payload = [ordered]@{}
+    foreach ($prop in $App.PSObject.Properties) {
+        if ($exclude -contains $prop.Name) { continue }
+        $payload[$prop.Name] = $prop.Value
+    }
+    foreach ($key in $Set.Keys) {
+        $payload[$key] = $Set[$key]
+    }
+
+    return Invoke-CloudflareApi -RepoRoot $RepoRoot -Method PUT -Path "/accounts/$AccountId/access/apps/$($App.id)" -Body $payload
+}

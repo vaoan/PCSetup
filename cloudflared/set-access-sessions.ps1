@@ -1,13 +1,13 @@
 # Sets Cloudflare Zero Trust Access app session_duration for every app on the account,
 # and sets the global (org-level) session timeout to the same value.
-# Defaults to 730h (~1 month). Run after a fresh install to keep logins long-lived.
+# Defaults to 8760h (~1 year). Run after a fresh install to keep logins long-lived.
 #
 # Requires CLOUDFLARE_ACCOUNT_API_TOKEN in .secrets (token needs Access: Apps and Policies → Edit).
 # Run cloudflared\sync-secrets.bat first if the token isn't synced.
 
 [CmdletBinding()]
 param(
-    [string]$Duration  = '730h',
+    [string]$Duration  = '8760h',
     [string]$AccountId = 'd34896e6a0f8b2fba5e03dec659eac50'
 )
 
