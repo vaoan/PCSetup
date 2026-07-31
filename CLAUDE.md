@@ -100,6 +100,37 @@ cloudflared\verify-console.ps1
 
 Checks port connectivity, HTTP 200 responses, and WSL systemd service status. Exits 0 if all pass, 1 if any fail.
 
+### Flow 3 — Recovery contract tests
+
+```powershell
+tests\run-tests.ps1 -Path tests\recovery.tests.ps1
+```
+
+The post-format recovery scripts **cannot be executed in a test** — they create Cloudflare
+tunnels and DNS records, register scheduled tasks and install MSIs. So this suite asserts the
+invariants instead. Every check corresponds to a defect that actually shipped:
+
+| Check | Bug it would have caught |
+|---|---|
+| Tunnel names exist in the account | recovery hunted for `dev-tunnel`; the tunnel is `dev-console`, so provisioning silently skipped |
+| Web origin port agrees everywhere | `7542` in two files, `9000` in two others |
+| Hostname vars are zone roots | `$webHostname = "www.ffxiv.be"` composed into `www.www.ffxiv.be` |
+| No retired domain in executable lines | `Dockerfile.test` still fetched `i.ffxivbe.org` — missed by an extension-filtered sweep, so this check reads extensionless files too |
+| Deployed copies are drift-checked | launcher PWA assets were deployed but unverified, serving a stale icon |
+| Referenced scripts exist | deleting a script left callers pointing at nothing |
+| Every tunnelled hostname is Access-gated | a hostname with DNS + ingress but no Access app is public |
+
+Needs `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets` for the two live-contract checks; they skip
+without it. All other checks are offline.
+
+> **Gotcha:** the `-Skip:` condition is evaluated at Pester **discovery** time, before `BeforeAll`
+> runs. A flag set inside `BeforeAll` is still `$null` then, so the gated tests skip silently and
+> the run still looks green. The token probe therefore sits at script scope, not in `BeforeAll`.
+
+> **Verify the tests, not just the code.** These were validated by reintroducing each of the five
+> real bugs one at a time and confirming the matching test failed, then reverting. A suite that
+> has only ever been green is not evidence of anything.
+
 ## Setup Scripts (Run in Order)
 
 ### 1-delete-node-modules.bat
