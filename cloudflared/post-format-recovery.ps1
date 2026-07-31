@@ -30,9 +30,6 @@ $sshTunnelId = "8dffdb51-77cc-43ca-8dc8-8a0c720607a5"
 $sshTunnelName = "ssh-tunnel"
 $sshHostname = "pc.ffxiv.be"
 
-# Dev tunnel ID is dynamic - looked up from Cloudflare during recovery
-$devTunnelName = "dev-tunnel"
-$devHostname = "dev.ffxiv.be"
 
 $macPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local"
 
@@ -376,7 +373,7 @@ Write-Host "This will install and configure:" -ForegroundColor White
 Write-Host "  - Cloudflared (official MSI)" -ForegroundColor Gray
 Write-Host "  - Web tunnel: www.$webHostname + chat" -ForegroundColor Gray
 Write-Host "  - SSH tunnel: $sshHostname" -ForegroundColor Gray
-Write-Host "  - Dev tunnel: $devHostname (VS Code Remote SSH)" -ForegroundColor Gray
+Write-Host "  - Console tunnel: console/dev/code/ttyd/tools/git (via setup-console-windows.ps1)" -ForegroundColor Gray
 Write-Host "  - OpenSSH Server + key auth" -ForegroundColor Gray
 Write-Host "  - Silent scheduled tasks" -ForegroundColor Gray
 Write-Host "  - Desktop shortcuts" -ForegroundColor Gray
@@ -555,69 +552,20 @@ try {
     exit 1
 }
 
-# ============================================================================ 
-# STEP 5: Setup Dev Tunnel Config (VS Code Remote SSH)
 # ============================================================================
-Write-Host ""
-Write-Host "[5/9] Setting up Dev Tunnel ($devHostname)..." -ForegroundColor Yellow
-
-$devConfigPath = Join-Path $configDir "dev-config.yml"
-$devIdStorePath = Join-Path $configDir "dev-tunnel-id.txt"
-$devTunnelId = $null
-$devTunnelReady = $false
-
-# Look up dev-tunnel ID dynamically (it's not hardcoded since it may be recreated)
-$devTunnel = @(Invoke-CloudflareApi -Method GET -Path "/accounts/$accountId/cfd_tunnel" | Where-Object { $_.name -eq $devTunnelName -and -not $_.deleted_at } | Select-Object -First 1)
-
-if ($devTunnel) {
-    $devTunnelId = $devTunnel.id
-    Set-Content -Path $devIdStorePath -Value $devTunnelId
-    Write-Host "  OK Tunnel found: $devTunnelId" -ForegroundColor Green
-
-    $devCredentialsPath = Join-Path $configDir "$devTunnelId.json"
-
-    # Create config file
-    $devConfigContent = @"
-tunnel: $devTunnelId
-credentials-file: $devCredentialsPath
-protocol: http2
-
-ingress:
-  - hostname: $devHostname
-    service: ssh://localhost:22
-  - service: http_status:404
-"@
-    Set-Content -Path $devConfigPath -Value $devConfigContent
-    Write-Host "  OK Config: $devConfigPath" -ForegroundColor Green
-
-    # Create credentials if needed
-    if (-not (Test-Path $devCredentialsPath)) {
-        Write-Host "  Generating credentials from tunnel token..." -ForegroundColor Gray
-        $devToken = Get-CloudflaredTunnelToken -TunnelName $devTunnelName -OutputPrefix "cloudflared-dev-token"
-        if ($devToken) {
-            try {
-                $tokenJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($devToken.Trim()))
-                $tokenData = $tokenJson | ConvertFrom-Json
-                $credentials = @{
-                    AccountTag = $tokenData.a
-                    TunnelSecret = $tokenData.s
-                    TunnelID = $tokenData.t
-                } | ConvertTo-Json
-                Set-Content -Path $devCredentialsPath -Value $credentials
-                Write-Host "  OK Credentials created" -ForegroundColor Green
-            } catch {
-                Write-Host "  X Failed to decode token: $_" -ForegroundColor Red
-            }
-        }
-    } else {
-        Write-Host "  OK Credentials exist" -ForegroundColor Green
-    }
-
-    $devTunnelReady = $true
-} else {
-    Write-Host "  WARNING dev-tunnel not found in Cloudflare account." -ForegroundColor Yellow
-    Write-Host "  Run the dev tunnel installer from its own project if you need that service." -ForegroundColor Gray
-}
+# STEP 5: (removed) Dev/console tunnel
+# ============================================================================
+# The console tunnel is owned by setup-console-windows.ps1, which is invoked
+# later in this script. It provisions the dev-console tunnel with all SIX
+# hostnames (console/dev/tools/git/code/ttyd), their DNS routes, Zero Trust
+# Access apps, and the web-console scheduled task.
+#
+# A partial duplicate used to live here: it looked for a tunnel named
+# "dev-tunnel" (which does not exist - the tunnel is "dev-console") and would
+# have written a dev-config.yml containing only dev.<domain> -> ssh. It never
+# fired, so it was dead code; "fixing" the name would have been worse than
+# leaving it, because it would have clobbered the real 6-hostname config and
+# registered a task duplicating web-console.
 
 # ============================================================================
 # STEP 6: Install OpenSSH Server
@@ -714,28 +662,6 @@ Register-ScheduledTask -TaskName $sshTunnelName -Action $action -Trigger $trigge
 Start-ScheduledTask -TaskName $sshTunnelName
 Write-Host "  OK $sshTunnelName" -ForegroundColor Green
 
-# Dev Tunnel Task (only if tunnel was found)
-if ($devTunnelReady) {
-    Unregister-ScheduledTask -TaskName $devTunnelName -Confirm:$false -ErrorAction SilentlyContinue
-    $devLauncherPath = Join-Path $cfDir "dev-tunnel-launcher.vbs"
-    $devLauncherContent = @"
-Set shell = CreateObject("WScript.Shell")
-shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34) & "$devConfigPath" & Chr(34) & " run $devTunnelName", 0, False
-"@
-    Set-Content -Path $devLauncherPath -Value $devLauncherContent
-    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$devLauncherPath`""
-    $trigger = @(
-        (New-ScheduledTaskTrigger -AtStartup),
-        (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
-    )
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -Hidden -MultipleInstances IgnoreNew
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-    Register-ScheduledTask -TaskName $devTunnelName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Dev SSH tunnel for $devHostname (VS Code Remote, boot-started)" | Out-Null
-    Start-ScheduledTask -TaskName $devTunnelName
-    Write-Host "  OK $devTunnelName" -ForegroundColor Green
-} else {
-    Write-Host "  SKIP $devTunnelName (tunnel not found - run install-dev-tunnel.ps1 after)" -ForegroundColor Yellow
-}
 
 # ============================================================================
 # STEP 9: Create Desktop Shortcuts
@@ -807,14 +733,8 @@ Write-Host "  Cloudflared processes: $($procs.Count)" -ForegroundColor White
 
 $webTaskState = (Get-ScheduledTask -TaskName $webTunnelName -ErrorAction SilentlyContinue).State
 $sshTaskState = (Get-ScheduledTask -TaskName $sshTunnelName -ErrorAction SilentlyContinue).State
-$devTaskState = (Get-ScheduledTask -TaskName $devTunnelName -ErrorAction SilentlyContinue).State
 Write-Host "  Web tunnel task  : $webTaskState" -ForegroundColor White
 Write-Host "  SSH tunnel task  : $sshTaskState" -ForegroundColor White
-if ($devTunnelReady) {
-    Write-Host "  Dev tunnel task  : $devTaskState" -ForegroundColor White
-} else {
-    Write-Host "  Dev tunnel task  : SKIPPED - install it from the dev tunnel project if needed" -ForegroundColor Yellow
-}
 
 Write-Host ""
 Write-Host "Test URLs:" -ForegroundColor Cyan
