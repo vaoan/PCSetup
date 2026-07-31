@@ -406,6 +406,21 @@ re-running `start-console.bat` (restarts the proxy).
 | `ungit` | 7688 | Ungit git graph viewer (internal, behind git-proxy) |
 | `wetty` | 7681 | Fallback web terminal (unused by default) |
 
+> **The Node proxies run from copies, not from this repo.** `setup-console-wsl.sh` copies
+> `dashboard.js`, `git-proxy.js`, and `ttyd-proxy.js` to `/usr/local/bin/`, and systemd runs them
+> from there. Editing them here and restarting the service does **nothing** — that is how the
+> tools dashboard kept serving dead `*.ffxivbe.org` links for days after the hostname migration.
+> `start-console.ps1` now re-copies all three on every run, so the repo is the source of truth;
+> to check by hand, compare `wsl -d Ubuntu-24.04 --user root -- stat -c %y /usr/local/bin/dashboard.js`
+> against the repo file's timestamp.
+>
+> When scripting that copy, loop in PowerShell and call `wsl -- cp` directly. Wrapping it as
+> ``bash -c "for f in ...; do cp ... `$f ...; done"`` looks correct but the loop variable does not
+> survive `wsl.exe` argument passing — the copy silently no-ops and the stale file keeps serving.
+> Equally, from Git Bash a bare `/usr/local/bin/...` path gets rewritten to
+> `C:/Program Files/Git/usr/local/...`; set `MSYS_NO_PATHCONV=1` or the check reads a nonexistent
+> file and reports a falsely clean result.
+
 ### Cloudflare tunnel
 
 Tunnel name: `dev-console` — ID: `9aa4a452-a07e-413a-9d1d-0915d170bb7a`

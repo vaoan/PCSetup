@@ -199,7 +199,24 @@ if ($mirrored) {
     Write-Log "WSL SSH: started"
 }
 
+# The Node proxies run from COPIES at /usr/local/bin, made once by
+# setup-console-wsl.sh. Restarting the services does not refresh them, so an
+# edit to dashboard.js/git-proxy.js/ttyd-proxy.js in this repo silently has no
+# effect until the copy is replaced. Re-deploy them on every start so the repo
+# is the source of truth. (This is how the tools dashboard kept serving dead
+# *.ffxivbe.org links for days after the hostname migration.)
+# NOTE: loop in PowerShell and call `wsl -- cp` directly. Wrapping this in
+# `bash -c "for f in ...; do cp ... `$f ...; done"` looks right but the loop
+# variable does not survive wsl.exe argument passing, so the copy silently
+# no-ops and the stale file keeps serving.
+$repoWslPath = '/mnt/z/Users/Heiner/Documents/PCSetup/cloudflared'
+foreach ($proxy in 'dashboard.js', 'git-proxy.js', 'ttyd-proxy.js') {
+    wsl -d $distro --user root -- cp -f "$repoWslPath/$proxy" "/usr/local/bin/$proxy" 2>$null
+}
+Write-Log "WSL proxies: redeployed from repo"
+
 wsl -d $distro --user root -- bash -c "systemctl start code-server@$codeUser ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true" | Out-Null
+wsl -d $distro --user root -- bash -c "systemctl restart ttyd-proxy dashboard git-proxy 2>/dev/null || true" | Out-Null
 Write-Log "WSL services: started"
 
 if ($mirrored) {
