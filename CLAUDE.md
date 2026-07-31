@@ -340,6 +340,7 @@ you log in with your email roughly once a year.
 | `cloudflared/set-access-sessions.ps1` | Sets `session_duration` on every Zero Trust Access app + the org-global timeout (default `8760h` ≈ 1 year). Requires `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets`. |
 | `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, gates hostnames via `setup-access-apps.ps1`, writes configs, creates scheduled tasks |
 | `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
+| `cloudflared/restore-code-server-icons.sh` | Repaints code-server's icons with the classic pink VS Code logo. **Re-run after every code-server upgrade** — see below. |
 | `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel + PWA manifest, and serves the PWA assets |
 | `cloudflared/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
 | `cloudflared/console-pwa-manifest.webmanifest` | PWA manifest ("SSH Console") served at `/console-pwa-manifest.webmanifest` |
@@ -405,6 +406,21 @@ re-running `start-console.bat` (restarts the proxy).
 | `git-proxy` | 7687 | Repo list landing page + proxy to ungit (git.ffxiv.be) |
 | `ungit` | 7688 | Ungit git graph viewer (internal, behind git-proxy) |
 | `wetty` | 7681 | Fallback web terminal (unused by default) |
+
+> **Upgrading code-server silently reverts its custom icon.** The official
+> `code-server.dev/install.sh` replaces all of `/usr/lib/code-server`, including
+> `src/browser/media`, so the pink VS Code logo goes back to stock every time. After any
+> upgrade:
+>
+> ```powershell
+> wsl -d Ubuntu-24.04 --user root -- bash /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/restore-code-server-icons.sh
+> wsl -d Ubuntu-24.04 --user root -- systemctl restart code-server@root
+> ```
+>
+> Verify with `grep 9C0054 /usr/lib/code-server/src/browser/media/favicon.svg` — stock icons
+> contain none of `#9C0054` / `#CC007A` / `#FF1493`. Note dpkg preserves upstream mtimes, so a
+> recent-looking timestamp on those files means *the package built then*, not that your
+> customization survived.
 
 > **The Node proxies run from copies, not from this repo.** `setup-console-wsl.sh` copies
 > `dashboard.js`, `git-proxy.js`, and `ttyd-proxy.js` to `/usr/local/bin/`, and systemd runs them
