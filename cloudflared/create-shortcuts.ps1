@@ -34,32 +34,11 @@ if (Test-Path $sshTogglePath) {
     Write-Host "  Created: Toggle SSH Tunnel.lnk" -ForegroundColor Green
 }
 
-# Toggle Claude Sessions (claude, snd)
-$claudeTogglePath = Join-Path $scriptPath "toggle-claude-session.bat"
-if (Test-Path $claudeTogglePath) {
-    # Claude session
-    $shortcut = $ws.CreateShortcut("$desktop\Toggle Claude.lnk")
-    $shortcut.TargetPath = $claudeTogglePath
-    $shortcut.Arguments = "claude"
-    $shortcut.WorkingDirectory = $scriptPath
-    $shortcut.IconLocation = "shell32.dll,24"
-    $shortcut.Description = "Toggle Claude Code tmux session (Start/Stop)"
-    $shortcut.Save()
-    Write-Host "  Created: Toggle Claude.lnk" -ForegroundColor Green
-
-    # SND session
-    $shortcut = $ws.CreateShortcut("$desktop\Toggle SND.lnk")
-    $shortcut.TargetPath = $claudeTogglePath
-    $shortcut.Arguments = "snd"
-    $shortcut.WorkingDirectory = $scriptPath
-    $shortcut.IconLocation = "shell32.dll,24"
-    $shortcut.Description = "Toggle SND bash tmux session (Start/Stop)"
-    $shortcut.Save()
-    Write-Host "  Created: Toggle SND.lnk" -ForegroundColor Green
-}
-
-# Remove old shortcuts if they exist
-$oldShortcuts = @("Start Tunnel.lnk", "Stop Tunnel.lnk", "Restart Tunnel.lnk", "Toggle Claude Session.lnk")
+# Remove old shortcuts if they exist. The Toggle Claude/SND/ClaimAngel entries
+# are listed here because the MSYS2 tmux session feature was removed - this
+# cleans them off the desktop of any machine that still has them.
+$oldShortcuts = @("Start Tunnel.lnk", "Stop Tunnel.lnk", "Restart Tunnel.lnk", "Toggle Claude Session.lnk",
+                  "Toggle Claude.lnk", "Toggle SND.lnk", "Toggle ClaimAngel.lnk")
 foreach ($old in $oldShortcuts) {
     $oldPath = Join-Path $desktop $old
     if (Test-Path $oldPath) {

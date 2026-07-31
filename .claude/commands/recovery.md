@@ -14,7 +14,6 @@ Guide the user through restoring their Windows PC configuration after a format.
 
 Ask the user to confirm they have installed:
 - [ ] **cloudflared** - https://github.com/cloudflare/cloudflared/releases (Windows amd64 .msi)
-- [ ] **MSYS2** - https://www.msys2.org/ (then run: `pacman -Syu && pacman -S tmux`)
 - [ ] **Node.js** - via nvm4w or direct install
 - [ ] **Claude Code** - `npm install -g @anthropic-ai/claude-code`
 
@@ -49,7 +48,6 @@ This will:
 
 ```powershell
 cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
-.\install-claude-session.ps1
 ```
 
 ## Verification
@@ -60,7 +58,6 @@ After setup, verify everything works:
 # Check scheduled tasks
 Get-ScheduledTask -TaskName "ssh-tunnel" | Select TaskName, State
 Get-ScheduledTask -TaskName "ffxivbe-tunnel" | Select TaskName, State
-Get-ScheduledTask -TaskName "claude-session" | Select TaskName, State
 
 # Test SSH from Mac
 ssh windows-remote

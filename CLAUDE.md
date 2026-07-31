@@ -496,27 +496,17 @@ Or run individual steps:
 ```powershell
 .\install-ssh-tunnel.ps1    # SSH tunnel + OpenSSH
 .\install-tunnel.ps1        # Web tunnel
-.\install-claude-session.ps1  # Claude Code tmux sessions
 ```
 
 > **Note on cloudflared installation:** Scripts auto-install the official signed MSI. Do NOT install via Chocolatey — Smart App Control blocks unsigned executables.
 
-### Claude Code Persistent Sessions (MSYS2/tmux)
-
-| Session | Project | Type |
-|---------|---------|------|
-| `claude` | Z:\Users\Heiner\Documents\PCSetup\cloudflared | Claude Code |
-| `snd` | Z:\Users\Heiner\Documents\Luas\SND | Bash only |
-
-Sessions start automatically at Windows login. Accessible via `ssh windows-remote` from Mac, then:
-```bash
-claude        # attach to claude session
-snd           # attach to snd session
-sessions      # list all tmux sessions
-```
-Detach: `Ctrl+B`, then `D`.
-
 > **Browser-based MCPs don't work in remote sessions** (Playwright, Chrome DevTools require a local display). All other Claude Code functionality works fine.
+
+> **Removed:** the MSYS2/tmux persistent Claude session feature (`claude-session` / `snd-session`
+> scheduled tasks, `install-claude-session.ps1`, `claude-aliases.sh`, `start-claude-session.sh`,
+> `toggle-claude-session.bat`). MSYS2 is not used on this machine. Persistent terminals now come
+> from the web console instead — `ttyd.ffxiv.be` (tmux session `phone`) and the `console.ffxiv.be`
+> quick-connect presets, both of which run tmux **inside WSL**, not MSYS2.
 
 ### Windows Scheduled Tasks
 
@@ -524,8 +514,6 @@ Detach: `Ctrl+B`, then `D`.
 |-----------|---------|---------|
 | `ffxivbe-tunnel` | At logon | Web tunnel to www.ffxiv.be |
 | `ssh-tunnel` | At logon | SSH tunnel to pc.ffxiv.be |
-| `claude-session` | At logon | Claude Code tmux (cloudflared project) |
-| `snd-session` | At logon | Bash tmux (SND project) |
 
 ### Mac SSH Config
 
@@ -559,16 +547,12 @@ Already set up, survives PC formats:
 | `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone). Registers the `ffxivbe-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals; survives the reboot network race). |
 | `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer. Registers the `ssh-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals). |
 | `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper shared by all 3 tunnels — see the Web Console section. |
-| `cloudflared/install-claude-session.ps1` | Claude Code tmux sessions installer |
 | `cloudflared/install-scheduled-tasks.ps1` | Reinstall scheduled tasks only |
 | `cloudflared/toggle-tunnel.bat` | Start/stop web tunnel |
 | `cloudflared/toggle-ssh-tunnel.bat` | Start/stop SSH tunnel |
-| `cloudflared/toggle-claude-session.bat` | Start/stop any Claude/tmux session |
 | `cloudflared/manage-tunnel.ps1` | Status checker for web tunnel |
 | `cloudflared/uninstall-tunnel.ps1` | Stops task, kills processes, leaves config/DNS intact |
 | `cloudflared/create-shortcuts.ps1` | Creates desktop shortcuts |
-| `cloudflared/start-claude-session.sh` | MSYS2 script to start/attach tmux session |
-| `cloudflared/claude-aliases.sh` | Bash aliases (claude, snd, etc.) |
 | `cloudflared/.cloudflared/config.yml` | ffxivbe-tunnel routing config |
 | `cloudflared/transfer-ffxiv-be.ps1` | Transfers `ffxiv.be` to DNSimple and delegates DNS to Cloudflare. Dry-runs by default; needs `-AuthCode <code> -Execute` to actually buy. Requires `DNSIMPLE_API_TOKEN`. See "Domain: ffxiv.be" below. |
 
@@ -642,9 +626,6 @@ Set-Content -Path "C:\ProgramData\ssh\administrators_authorized_keys" -Value $ke
 icacls "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F'
 Restart-Service sshd
 
-# Claude session not starting
-Get-ScheduledTask -TaskName "claude-session" | Select State
-Start-ScheduledTask -TaskName "claude-session"
 
 # Cloudflared blocked by Smart App Control
 # → Uninstall Chocolatey version, install from official MSI:

@@ -778,19 +778,12 @@ if (Test-Path $toggleSshPath) {
     Write-Host "  OK Toggle SSH Tunnel" -ForegroundColor Green
 }
 
-# Toggle Claude Sessions
-$toggleClaudePath = Join-Path $scriptDir "toggle-claude-session.bat"
-if (Test-Path $toggleClaudePath) {
-    foreach ($session in @("claude", "snd")) {
-        $displayName = $session.Substring(0,1).ToUpper() + $session.Substring(1)
-        $shortcut = $ws.CreateShortcut("$desktop\Toggle $displayName.lnk")
-        $shortcut.TargetPath = $toggleClaudePath
-        $shortcut.Arguments = $session
-        $shortcut.WorkingDirectory = $scriptDir
-        $shortcut.IconLocation = "shell32.dll,24"
-        $shortcut.Description = "Toggle $displayName tmux session (Start/Stop)"
-        $shortcut.Save()
-        Write-Host "  OK Toggle $displayName" -ForegroundColor Green
+# Clean up desktop shortcuts left by the removed MSYS2 tmux session feature.
+foreach ($stale in @("Toggle Claude.lnk", "Toggle SND.lnk", "Toggle ClaimAngel.lnk")) {
+    $stalePath = Join-Path $desktop $stale
+    if (Test-Path $stalePath) {
+        Remove-Item $stalePath -Force -ErrorAction SilentlyContinue
+        Write-Host "  OK Removed stale shortcut: $stale" -ForegroundColor Gray
     }
 }
 

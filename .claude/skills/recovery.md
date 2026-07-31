@@ -16,13 +16,11 @@ Use when user says things like:
 |-----------|--------|----------|
 | SSH Tunnel | `cloudflared\install-ssh-tunnel.ps1` | High (enables remote access) |
 | Web Tunnel | `cloudflared\install-tunnel.ps1` | Medium |
-| Claude Sessions | `cloudflared\install-claude-session.ps1` | Optional |
 
 ## Prerequisites Checklist
 
 Before running recovery, ensure installed:
 1. **cloudflared** - https://github.com/cloudflare/cloudflared/releases
-2. **MSYS2** - https://www.msys2.org/ + `pacman -S tmux`
 3. **Node.js** - via nvm4w
 4. **Claude Code** - `npm install -g @anthropic-ai/claude-code`
 
@@ -41,7 +39,6 @@ cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
 
 ### Claude Code Sessions
 ```powershell
-.\install-claude-session.ps1
 ```
 
 ## Critical IDs (hardcoded in scripts)

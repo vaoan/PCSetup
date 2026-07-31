@@ -51,38 +51,16 @@ ssh windows-remote
 
 ---
 
-## Attaching to Claude Session (via VS Code Remote)
+## Persistent terminals
 
-VS Code Remote terminals don't support tmux natively. Use this workaround:
+The MSYS2/tmux session feature was removed — MSYS2 is not installed on this machine.
+Use the web console instead, which runs tmux **inside WSL**:
 
-### 1. Add MSYS2 Bash profile to VS Code
+- **https://ttyd.ffxiv.be** → *Persistent* — phone-friendly terminal, tmux session `phone`
+- **https://console.ffxiv.be** → quick-connect presets, each attaching to its own tmux session
+- **https://code.ffxiv.be** — VS Code in the browser, no local client needed
 
-In VS Code (while connected to Windows):
-- `Cmd+Shift+P` → "Preferences: Open Remote Settings (JSON)"
-- Add:
-```json
-{
-    "terminal.integrated.profiles.windows": {
-        "MSYS2 Bash": {
-            "path": "C:\\msys64\\usr\\bin\\bash.exe",
-            "args": ["-l"]
-        }
-    }
-}
-```
-
-### 2. Attach to Claude
-
-1. Open terminal in VS Code (`Ctrl+~`)
-2. Click dropdown next to `+` → Select **"MSYS2 Bash"**
-3. Run:
-```bash
-script -c "tmux attach -t snd" /dev/null
-```
-
-### 3. Detach from Claude
-
-Press `Ctrl+B`, then `D`
+Detach from tmux with `Ctrl+B`, then `D`.
 
 ---
 
@@ -97,9 +75,9 @@ brew install cloudflared
 ```
 
 ### "open terminal failed: not a terminal"
-Use the `script` wrapper:
+Wrap the tmux attach in `script` so it gets a PTY:
 ```bash
-script -c "tmux attach -t snd" /dev/null
+script -c "tmux attach -t <session>" /dev/null
 ```
 
 ### Connection refused / timeout
@@ -117,5 +95,6 @@ Check that the SSH tunnel is running on Windows:
 | SSH config | `~/.ssh/config` |
 | Connect SSH | `ssh windows-remote` |
 | VS Code connect | Remote-SSH → `windows-remote` |
-| Attach Claude | `script -c "tmux attach -t snd" /dev/null` |
-| Detach Claude | `Ctrl+B`, then `D` |
+| Persistent terminal | https://ttyd.ffxiv.be → *Persistent* |
+| Browser VS Code | https://code.ffxiv.be |
+| Detach tmux | `Ctrl+B`, then `D` |
