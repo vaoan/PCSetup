@@ -1,6 +1,6 @@
 {
   "packageManager": "pnpm@10.22.0",
   "dependencies": {
-    "playwright": "^1.60.0"
+    "playwright": "^1.62.1"
   }
 }
