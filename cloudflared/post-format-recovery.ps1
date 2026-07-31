@@ -3,8 +3,8 @@
 # ============================================================================
 # Run this script after formatting your PC to restore everything:
 # - Cloudflared (official MSI for Smart App Control)
-# - Web tunnel (ffxivbe.org, chat.ffxivbe.org)
-# - SSH tunnel (pc.ffxivbe.org -> SSH access)
+# - Web tunnel (www.ffxiv.be, chat.ffxiv.be)
+# - SSH tunnel (pc.ffxiv.be -> SSH access)
 # - Dev tunnel (dev.ffxiv.be -> VS Code Remote SSH)
 # - OpenSSH Server with key authentication
 # - Scheduled tasks (all run silently)
@@ -21,11 +21,11 @@ $PSNativeCommandUseErrorActionPreference = $false
 # ============================================================================
 $webTunnelId = "c552cb9c-62bd-4c8b-9ec6-16627b1b8af3"
 $webTunnelName = "ffxivbe-tunnel"
-$webHostname = "ffxivbe.org"
+$webHostname = "www.ffxiv.be"
 
 $sshTunnelId = "8dffdb51-77cc-43ca-8dc8-8a0c720607a5"
 $sshTunnelName = "ssh-tunnel"
-$sshHostname = "pc.ffxivbe.org"
+$sshHostname = "pc.ffxiv.be"
 
 # Dev tunnel ID is dynamic - looked up from Cloudflare during recovery
 $devTunnelName = "dev-tunnel"

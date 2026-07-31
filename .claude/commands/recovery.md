@@ -4,8 +4,8 @@ Guide the user through restoring their Windows PC configuration after a format.
 
 ## What to Restore
 
-1. **SSH Tunnel** (pc.ffxivbe.org) - Remote SSH access via Cloudflare
-2. **Web Tunnel** (ffxivbe.org) - Web proxy to localhost:9000
+1. **SSH Tunnel** (pc.ffxiv.be) - Remote SSH access via Cloudflare
+2. **Web Tunnel** (www.ffxiv.be) - Web proxy to localhost:9000
 3. **Claude Code Session** - Persistent tmux session with auto-start
 
 ## Recovery Steps
@@ -76,7 +76,7 @@ ssh windows-remote
 
 ```
 Host windows-remote
-    HostName pc.ffxivbe.org
+    HostName pc.ffxiv.be
     User Heiner
     ProxyCommand cloudflared access tcp --hostname %h --listener -
 ```

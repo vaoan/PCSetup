@@ -8,9 +8,8 @@ const reportDir = args[0] && !args[0].startsWith('--') ? args[0] : defaultReport
 const headed = args.includes('--headed');
 
 const urls = [
-  ['ffxivbe.org', 'https://ffxivbe.org/'],
-  ['www.ffxivbe.org', 'https://www.ffxivbe.org/'],
-  ['chat.ffxivbe.org', 'https://chat.ffxivbe.org/'],
+  ['www.ffxiv.be', 'https://www.ffxiv.be/'],
+  ['chat.ffxiv.be', 'https://chat.ffxiv.be/'],
   ['console.ffxiv.be', 'https://console.ffxiv.be/'],
   ['code.ffxiv.be', 'https://code.ffxiv.be/'],
   ['ttyd.ffxiv.be', 'https://ttyd.ffxiv.be/'],

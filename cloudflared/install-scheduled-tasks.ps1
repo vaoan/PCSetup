@@ -67,7 +67,7 @@ shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34)
     $settings = New-CloudflaredTaskSettings
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
-    Register-ScheduledTask -TaskName $webTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for ffxivbe.org (boot-started)" | Out-Null
+    Register-ScheduledTask -TaskName $webTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Cloudflare Tunnel for www.ffxiv.be (boot-started)" | Out-Null
     Write-Host "  OK Task installed: $webTaskName" -ForegroundColor Green
 
     Start-ScheduledTask -TaskName $webTaskName
@@ -103,7 +103,7 @@ shell.Run Chr(34) & "$cloudflaredPath" & Chr(34) & " tunnel --config " & Chr(34)
     $settings = New-CloudflaredTaskSettings
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 
-    Register-ScheduledTask -TaskName $sshTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH Tunnel for pc.ffxivbe.org (boot-started)" | Out-Null
+    Register-ScheduledTask -TaskName $sshTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "SSH Tunnel for pc.ffxiv.be (boot-started)" | Out-Null
     Write-Host "  OK Task installed: $sshTaskName" -ForegroundColor Green
 
     Start-ScheduledTask -TaskName $sshTaskName

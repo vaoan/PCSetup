@@ -2,11 +2,11 @@ tunnel: c552cb9c-62bd-4c8b-9ec6-16627b1b8af3
 credentials-file: C:\Users\Heiner\.cloudflared\c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.json
 protocol: http2
 
+# NOTE: the ffxiv.be apex is NOT routed here — it belongs to the
+# ffxiv-be-shortener Worker. The web stack lives on www.ffxiv.be.
 ingress:
-  - hostname: ffxivbe.org
+  - hostname: www.ffxiv.be
     service: http://127.0.0.1:7542
-  - hostname: www.ffxivbe.org
-    service: http://127.0.0.1:7542
-  - hostname: chat.ffxivbe.org
+  - hostname: chat.ffxiv.be
     service: http://127.0.0.1:3000
   - service: http_status:404

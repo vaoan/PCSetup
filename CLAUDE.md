@@ -42,7 +42,7 @@ All scripts use **kebab-case** naming: `[N-]action-target.ext`
 One-liner that works on a fresh Windows machine before any setup is run:
 
 ```powershell
-irm i.ffxivbe.org | iex
+irm i.ffxiv.be | iex
 ```
 
 `irm` (Invoke-RestMethod) returns the script as a plain string, which `iex` executes directly. Do NOT use `iwr` (Invoke-WebRequest) — it returns a WebResponseObject that breaks `iex` in PS5.1.
@@ -449,8 +449,8 @@ Two tunnels that run as Windows scheduled tasks, separate from the web console.
 
 | Tunnel | Hostname | Purpose |
 |--------|----------|---------|
-| `ffxivbe-tunnel` | ffxivbe.org and subdomains | Web services proxy (reverse proxy on :7542) |
-| `ssh-tunnel` | pc.ffxivbe.org | SSH remote access from Mac |
+| `ffxivbe-tunnel` | www.ffxiv.be, chat.ffxiv.be | Web services proxy (reverse proxy on :7542) |
+| `ssh-tunnel` | pc.ffxiv.be | SSH remote access from Mac |
 
 Tunnel IDs (persist in Cloudflare, survive PC formats):
 - `ffxivbe-tunnel`: `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3`
@@ -462,8 +462,8 @@ All main app routes go through a local reverse proxy on port 7542. The PC setup 
 
 | Hostname | Backend |
 |---|---|
-| `ffxivbe.org` / `www.ffxivbe.org` | `localhost:7542` |
-| `chat.ffxivbe.org` | `localhost:3000` |
+| `www.ffxiv.be` | `localhost:7542` |
+| `chat.ffxiv.be` | `localhost:3000` |
 
 Config lives at `cloudflared/.cloudflared/config.yml` in this repo and is deployed to `C:\Users\Heiner\.cloudflared\config.yml` by `install-tunnel.ps1`.
 
@@ -509,8 +509,8 @@ Detach: `Ctrl+B`, then `D`.
 
 | Task Name | Trigger | Purpose |
 |-----------|---------|---------|
-| `ffxivbe-tunnel` | At logon | Web tunnel to ffxivbe.org |
-| `ssh-tunnel` | At logon | SSH tunnel to pc.ffxivbe.org |
+| `ffxivbe-tunnel` | At logon | Web tunnel to www.ffxiv.be |
+| `ssh-tunnel` | At logon | SSH tunnel to pc.ffxiv.be |
 | `claude-session` | At logon | Claude Code tmux (cloudflared project) |
 | `claimangel-session` | At logon | Claude Code tmux (ClaimAngel project) |
 | `snd-session` | At logon | Bash tmux (SND project) |
@@ -522,7 +522,7 @@ brew install cloudflared
 
 # Add to ~/.ssh/config
 Host windows-remote
-    HostName pc.ffxivbe.org
+    HostName pc.ffxiv.be
     User Heiner
     ProxyCommand cloudflared access tcp --hostname %h --listener -
 ```
@@ -536,8 +536,8 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho
 
 Already set up, survives PC formats:
 1. DNS CNAMEs pointing to tunnel IDs
-2. Zero Trust route for SSH tunnel (`pc.ffxivbe.org` → ssh://localhost:22)
-3. WAF bypass rule for `pc.ffxivbe.org`
+2. Zero Trust route for SSH tunnel (`pc.ffxiv.be` → ssh://localhost:22)
+3. WAF bypass rule for `pc.ffxiv.be`
 
 ### cloudflared/ Scripts
 

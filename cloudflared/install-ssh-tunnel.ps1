@@ -79,7 +79,7 @@ Write-Host ""
 # Configuration
 $sshTunnelId = "8dffdb51-77cc-43ca-8dc8-8a0c720607a5"
 $sshTunnelName = "ssh-tunnel"
-$sshHostname = "pc.ffxivbe.org"
+$sshHostname = "pc.ffxiv.be"
 
 # Step 1: Check/Install cloudflared
 Write-Host "[1/6] Checking cloudflared..." -ForegroundColor Yellow

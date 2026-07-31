@@ -5,8 +5,8 @@
 | Script | Purpose | Sets up |
 |--------|---------|---------|
 | `install-all.bat` / `install-all.ps1` | Full post-format install | Syncs secrets if needed, installs cloudflared, configures tunnels, starts them, installs scheduled tasks, runs verification |
-| `install-tunnel.ps1` | Web tunnel | ffxivbe.org + chat/map hostnames, hidden boot/logon task |
-| `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxivbe.org for remote SSH, hidden boot/logon task |
+| `install-tunnel.ps1` | Web tunnel | www.ffxiv.be + chat hostname, hidden boot/logon task |
+| `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxiv.be for remote SSH, hidden boot/logon task |
 | `install-scheduled-tasks.ps1` | Auto-start only | Reinstall hidden boot/logon tasks for both tunnels |
 
 Use `install-all.bat` after a format. The lower-level installers are for targeted repairs.

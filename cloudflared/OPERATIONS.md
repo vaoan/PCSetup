@@ -8,7 +8,7 @@ It is written as an operator document, not a design note. Secret names are liste
 
 This repo currently manages three Cloudflare tunnel families:
 
-- `ffxivbe-tunnel`: public web origins such as `ffxivbe.org` and `chat.ffxivbe.org`
+- `ffxivbe-tunnel`: public web origins such as `www.ffxiv.be` and `chat.ffxiv.be`
 - `ssh-tunnel`: remote Windows SSH access
 - `dev-console`: the WSL-backed console and developer tools stack exposed on:
   - `console.ffxiv.be`
@@ -437,7 +437,7 @@ Repeated during debugging:
 The public bootstrap URL is now fronted by a Cloudflare Worker:
 
 - Worker name: `pcsetup-install`
-- Public installer URL: `https://i.ffxivbe.org/`
+- Public installer URL: `https://i.ffxiv.be/`
 - Fallback workers.dev URL: `https://pcsetup-install.vaoan-pcsetup-20260528.workers.dev`
 - Worker source: `cloudflared/install-worker/index.js`
 - Wrangler config: `cloudflared/install-worker/wrangler.toml`
@@ -455,12 +455,12 @@ Behavior:
 Release model:
 
 - `workers_dev = true`
-- `i.ffxivbe.org` is attached as a Worker custom domain, not a legacy route
+- `i.ffxiv.be` is attached as a Worker custom domain, not a legacy route
 - the current live Worker model does not require repo-local hosting; consumers hit Cloudflare only
 
 Validation used:
 
-- direct fetch of `https://i.ffxivbe.org/?branch=main` returning the bootstrap script
+- direct fetch of `https://i.ffxiv.be/?branch=main` returning the bootstrap script
 - direct fetch of the raw GitHub `remote-call.ps1` confirming the live bootstrap target
 - successful clean-image Windows container build using the public URL
 
@@ -595,9 +595,9 @@ After a clean install:
   - `codex`
   - `claude`
 - public routes:
-  - `ffxivbe.org`
-  - `www.ffxivbe.org`
-  - `chat.ffxivbe.org`
+  - `www.ffxiv.be`
+  - `www.ffxiv.be`
+  - `chat.ffxiv.be`
   - `console.ffxiv.be`
   - `code.ffxiv.be`
   - `code.ffxiv.be/?folder=/mnt/z/Users/Heiner/Documents/PCSetup`
@@ -655,12 +655,12 @@ docker build -f .\Dockerfile.test .
 
 This path now pulls the remote bootstrap from:
 
-- `https://i.ffxivbe.org/`
+- `https://i.ffxiv.be/`
 
 Current validated result from this chat:
 
 - `docker build --no-cache -f .\Dockerfile.test .`
-- install bootstrap succeeded from `https://i.ffxivbe.org/?branch=main`
+- install bootstrap succeeded from `https://i.ffxiv.be/?branch=main`
 - the container-safe suite passed with:
   - `Tests Passed: 15`
   - `Failed: 0`
@@ -679,7 +679,7 @@ Container fixes required to reach green:
 
 Critical operator rule for this path:
 
-- the Windows container install test consumes `https://i.ffxivbe.org/`
+- the Windows container install test consumes `https://i.ffxiv.be/`
 - that Worker bootstrap then consumes GitHub `main`
 - if `remote-call.ps1`, `Dockerfile.test`, or the container test harness changes, those changes must be committed and pushed before rerunning the install test
 - otherwise the retest will keep executing stale online installer code

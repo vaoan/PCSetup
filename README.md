@@ -60,7 +60,7 @@ For containerized validation of the non-Cloudflare setup path, use the Windows t
 docker build -f .\Dockerfile.test .
 ```
 
-That container path uses `https://i.ffxivbe.org/` as the public installer entrypoint, so the clean image exercises the real remote bootstrap URL instead of a raw GitHub URL.
+That container path uses `https://i.ffxiv.be/` as the public installer entrypoint, so the clean image exercises the real remote bootstrap URL instead of a raw GitHub URL.
 
 Windows container prerequisites on the host:
 - Docker Desktop must be switched to Windows containers
@@ -72,11 +72,11 @@ That container path is intentionally limited to non-Cloudflare, container-safe s
 
 Latest verified result from this chat:
 - `docker build --no-cache -f .\Dockerfile.test .` completed successfully
-- the container installed from `https://i.ffxivbe.org/?branch=main`
+- the container installed from `https://i.ffxiv.be/?branch=main`
 - the container suite passed with `15` tests passed and `0` failed
 
 Important operational note:
-- `i.ffxivbe.org` is the public entrypoint, but the script it serves is sourced from `origin/main`
+- `i.ffxiv.be` is the public entrypoint, but the script it serves is sourced from `origin/main`
 - if the remote install behavior changes, the fix must be committed and pushed to GitHub before re-testing the clean-image path
 - local-only fixes do not affect the installer; the container always consumes what is online on GitHub `main`
 
@@ -85,7 +85,7 @@ Important operational note:
 ### `ffxivbe-tunnel`
 
 Requires these local origins to exist:
-- `chat.ffxivbe.org` -> `http://127.0.0.1:3000`
+- `chat.ffxiv.be` -> `http://127.0.0.1:3000`
 
 The tunnel installer and recovery script only manage the `ffxivbe-tunnel` task and its config. They do not stop or rewrite other Cloudflare tunnels.
 
@@ -93,7 +93,7 @@ The tunnel installer and recovery script only manage the `ffxivbe-tunnel` task a
 
 Requires:
 - OpenSSH Server on Windows
-- `pc.ffxivbe.org` routed to `ssh://localhost:22`
+- `pc.ffxiv.be` routed to `ssh://localhost:22`
 
 ### `dev-tunnel`
 

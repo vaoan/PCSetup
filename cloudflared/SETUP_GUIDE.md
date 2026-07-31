@@ -16,7 +16,7 @@ Complete guide to set up the Cloudflare Tunnel after formatting your computer or
    - Verify: `cloudflared --version`
 
 3. **Cloudflare Account**
-   - Domain: `ffxivbe.org` (or your domain)
+   - Domain: `ffxiv.be` (or your domain)
 
 ## Recommended Full Install
 
@@ -43,13 +43,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\cloudflared\install-schedu
 
 - Config: `%USERPROFILE%\.cloudflared\config.yml`
 - Task: `ffxivbe-tunnel`
-- Routes: `ffxivbe.org`, `www.ffxivbe.org`, `chat.ffxivbe.org`
+- Routes: `www.ffxiv.be`, `chat.ffxiv.be`
 
 ### SSH tunnel
 
 - Config: `%USERPROFILE%\.cloudflared\ssh-config.yml`
 - Task: `ssh-tunnel`
-- Route: `pc.ffxivbe.org`
+- Route: `pc.ffxiv.be`
 - Origin: Windows OpenSSH on `localhost:22`
 
 ### Console tunnel
@@ -112,7 +112,7 @@ docker build -f .\Dockerfile.test .
 
 That image pulls the installer from:
 
-- `https://i.ffxivbe.org/`
+- `https://i.ffxiv.be/`
 
 What that means operationally:
 
@@ -125,7 +125,7 @@ What that means operationally:
 Latest verified result from this chat:
 
 - `docker build --no-cache -f .\Dockerfile.test .` completed successfully
-- the install phase succeeded from `https://i.ffxivbe.org/?branch=main`
+- the install phase succeeded from `https://i.ffxiv.be/?branch=main`
 - the container test suite passed with `15` tests passed and `0` failed
 - the final CI bootstrap uses a direct Node version-directory fallback when `nvm use` is unreliable under Windows Server Core
 
@@ -269,7 +269,7 @@ The SSH tunnel must be **dashboard-managed** (not locally-managed like ffxivbe-t
    credentials-file: C:\Users\Heiner\.cloudflared\YOUR_SSH_TUNNEL_ID.json
 
    ingress:
-     - hostname: pc.ffxivbe.org
+     - hostname: pc.ffxiv.be
        service: ssh://localhost:22
      - service: http_status:404
    ```
@@ -278,11 +278,11 @@ The SSH tunnel must be **dashboard-managed** (not locally-managed like ffxivbe-t
    - Navigate to **Networks** → **Tunnels** (under Connectors)
    - Click on **ssh-tunnel**
    - Go to **Published application routes** tab
-   - Add: `pc.ffxivbe.org` → `ssh://localhost:22`
+   - Add: `pc.ffxiv.be` → `ssh://localhost:22`
 
 ### Step 3: Configure DNS
 
-Add a CNAME record for `pc.ffxivbe.org`:
+Add a CNAME record for `pc.ffxiv.be`:
 
 1. Go to **Cloudflare Dashboard** (https://dash.cloudflare.com/) → **DNS** → **Records**
 2. Add CNAME:
@@ -300,7 +300,7 @@ Add a CNAME record for `pc.ffxivbe.org`:
    - Rule name: `Allow SSH tunnel`
    - Field: `Hostname`
    - Operator: `equals`
-   - Value: `pc.ffxivbe.org`
+   - Value: `pc.ffxiv.be`
    - Action: **Skip** → check all boxes
 4. Deploy
 
@@ -356,7 +356,7 @@ On your Mac:
 2. Add SSH config (`~/.ssh/config`):
    ```
    Host windows-remote
-       HostName pc.ffxivbe.org
+       HostName pc.ffxiv.be
        User Heiner
        ProxyCommand cloudflared access tcp --hostname %h --listener -
    ```
@@ -368,7 +368,7 @@ On your Mac:
 
    Or manually:
    ```bash
-   cloudflared access tcp --hostname pc.ffxivbe.org --listener localhost:2222 &
+   cloudflared access tcp --hostname pc.ffxiv.be --listener localhost:2222 &
    sleep 3
    ssh -p 2222 Heiner@127.0.0.1
    ```
@@ -388,9 +388,9 @@ On your Mac:
 - SSH tunnel: `C:\Users\Heiner\.cloudflared\ssh-config.yml`
 
 **DNS Records:**
-- `ffxivbe.org` → `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.cfargotunnel.com`
-- `www.ffxivbe.org` → `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.cfargotunnel.com`
-- `pc.ffxivbe.org` → `8dffdb51-77cc-43ca-8dc8-8a0c720607a5.cfargotunnel.com`
+- `www.ffxiv.be` → `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.cfargotunnel.com`
+- `www.ffxiv.be` → `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3.cfargotunnel.com`
+- `pc.ffxiv.be` → `8dffdb51-77cc-43ca-8dc8-8a0c720607a5.cfargotunnel.com`
 
 **Scheduled Tasks:**
 - `ffxivbe-tunnel` - Web tunnel (auto-starts at login)

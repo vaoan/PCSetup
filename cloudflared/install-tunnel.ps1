@@ -155,12 +155,12 @@ tunnel: $tunnelId
 credentials-file: $credentialsPath
 protocol: http2
 
+# The ffxiv.be apex is NOT routed here - it belongs to the ffxiv-be-shortener
+# Worker. The web stack lives on www.ffxiv.be.
 ingress:
-  - hostname: ffxivbe.org
+  - hostname: www.ffxiv.be
     service: http://127.0.0.1:9000
-  - hostname: www.ffxivbe.org
-    service: http://127.0.0.1:9000
-  - hostname: chat.ffxivbe.org
+  - hostname: chat.ffxiv.be
     service: http://127.0.0.1:3000
   - service: http_status:404
 "@
@@ -202,9 +202,8 @@ try {
 
     Write-Host "  Provisioning DNS routes..." -ForegroundColor Gray
     Invoke-CloudflaredDnsRoute -CloudflaredPath $cloudflaredPath -TunnelName $tunnelId -Hostnames @(
-        'ffxivbe.org',
-        'www.ffxivbe.org',
-        'chat.ffxivbe.org'
+        'www.ffxiv.be',
+        'chat.ffxiv.be'
     )
     Write-Host "  OK DNS routes provisioned" -ForegroundColor Green
 } catch {
@@ -271,7 +270,7 @@ Write-Host "Tunnel Status: $taskStatus" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  - Make sure the local web stack is running on 9000 and 3000 as needed" -ForegroundColor Gray
-Write-Host "  - Test: https://ffxivbe.org, https://chat.ffxivbe.org" -ForegroundColor Gray
+Write-Host "  - Test: https://www.ffxiv.be, https://chat.ffxiv.be" -ForegroundColor Gray
 Write-Host "  - Toggle tunnel: Double-click 'Toggle Tunnel' on desktop" -ForegroundColor Gray
 Write-Host "  - Or run: toggle-tunnel.bat" -ForegroundColor Gray
 Write-Host ""

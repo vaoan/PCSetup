@@ -228,7 +228,7 @@ const HTML = `<!DOCTYPE html>
       <span class="name">Git</span>
       <span class="desc">Visual branch browser</span>
     </a>
-    <a class="card chat" href="https://chat.ffxivbe.org" target="_blank" rel="noopener">
+    <a class="card chat" href="https://chat.ffxiv.be" target="_blank" rel="noopener">
       <span class="icon">:)</span>
       <span class="name">Chat</span>
       <span class="desc">Chat service</span>

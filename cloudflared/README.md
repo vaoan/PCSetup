@@ -22,13 +22,13 @@ That script keeps Chocolatey available for compatibility, but the current setup 
 
 ## Maintenance Installers
 
-### Web Tunnel (ffxivbe.org)
+### Web Tunnel (www.ffxiv.be)
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-tunnel.ps1
 ```
-Exposes the local `ffxivbe` web stack via `ffxivbe.org`, including `chat.ffxivbe.org`.
+Exposes the local `ffxivbe` web stack via `www.ffxiv.be`, including `chat.ffxiv.be`.
 
-### SSH Tunnel (pc.ffxivbe.org)
+### SSH Tunnel (pc.ffxiv.be)
 ```powershell
 powershell -ExecutionPolicy Bypass -File install-ssh-tunnel.ps1
 ```
@@ -77,8 +77,8 @@ Reports are written to:
 
 ## Configuration
 
-- **Domain**: `ffxivbe.org`
-- **SSH Hostname**: `pc.ffxivbe.org`
+- **Domain**: `ffxiv.be`
+- **SSH Hostname**: `pc.ffxiv.be`
 - **Tunnel Configs**: `C:\Users\Heiner\.cloudflared\`
 - **Verification Reports**: `C:\Users\Heiner\.cloudflared\reports\`
 - **Console presets**: `console.ffxiv.be` exposes WSL plus the repo quick-connect presets for `Candystore`, `Eclipse-con`, `Puck`, `AeleOS`, and `PCSetup` in persistent and fresh variants.

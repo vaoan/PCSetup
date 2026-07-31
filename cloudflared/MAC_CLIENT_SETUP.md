@@ -19,7 +19,7 @@ Add to `~/.ssh/config`:
 
 ```
 Host windows-remote
-    HostName pc.ffxivbe.org
+    HostName pc.ffxiv.be
     User Heiner
     ProxyCommand cloudflared access tcp --hostname %h --listener -
 ```
@@ -29,7 +29,7 @@ Host windows-remote
 cat >> ~/.ssh/config << 'EOF'
 
 Host windows-remote
-    HostName pc.ffxivbe.org
+    HostName pc.ffxiv.be
     User Heiner
     ProxyCommand cloudflared access tcp --hostname %h --listener -
 EOF

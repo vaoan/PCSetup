@@ -20,7 +20,7 @@ if ($tunnel) {
     Write-Host "Tunnel: NO CONNECTIONS" -ForegroundColor Red
 }
 
-$url = Invoke-WebRequest -Uri "https://ffxivbe.org" -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
+$url = Invoke-WebRequest -Uri "https://www.ffxiv.be" -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
 if ($url) {
     Write-Host "Remote URL: Status $($url.StatusCode) - WORKING" -ForegroundColor Green
 } else {
