@@ -6,20 +6,26 @@
     The ffxiv.be link shortener replaced Rebrandly. Slugs live directly in
     ffxiv-be-shortener.js — edit the LINKS map, then run this to publish.
 
-    Uploads the module worker, then smoke-tests each slug through the
-    workers.dev preview URL. Deploys take up to ~60s to reach every edge PoP,
-    so the verifier retries rather than reporting a false failure.
+    Uploads the module worker, then smoke-tests each slug against the live
+    hostname. Deploys take up to ~60s to reach every edge PoP, so the verifier
+    retries rather than reporting a false failure.
+
+    Verification hits https://ffxiv.be, not a workers.dev preview URL — that
+    subdomain is deliberately disabled so the domain is the only public entry
+    point, and testing the real path exercises DNS and the route too.
 
     Requires CLOUDFLARE_ACCOUNT_API_TOKEN in .secrets (Workers Scripts: Edit).
 
 .EXAMPLE
     .\deploy-shortener.ps1
     .\deploy-shortener.ps1 -SkipVerify
+    .\deploy-shortener.ps1 -BaseUrl https://ffxiv.be
 #>
 
 [CmdletBinding()]
 param(
     [string] $ScriptName = 'ffxiv-be-shortener',
+    [string] $BaseUrl    = 'https://ffxiv.be',
     [switch] $SkipVerify,
     [int]    $VerifyRetries = 6
 )
@@ -80,9 +86,7 @@ $slugs = Select-String -Path $workerPath -Pattern "^\s+'?([A-Za-z0-9_-]+)'?:\s+'
          ForEach-Object { $_.Matches[0].Groups[1].Value }
 if (-not $slugs) { Fail 'Could not parse any slugs out of the LINKS map.' }
 
-$subdomain = (& $curl -s -H "Authorization: Bearer $token" `
-    "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/subdomain" | ConvertFrom-Json).result.subdomain
-$base = "https://$ScriptName.$subdomain.workers.dev"
+$base = $BaseUrl.TrimEnd('/')
 
 Write-Step "Verifying $($slugs.Count) slugs via $base"
 # NOTE: use curl.exe, not Invoke-WebRequest. In PS7 `-MaximumRedirection 0`

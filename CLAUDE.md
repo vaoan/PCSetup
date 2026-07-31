@@ -593,7 +593,7 @@ Rebrandly is retired. Its 10 short links were exported to
 | File | Purpose |
 |---|---|
 | `cloudflared/ffxiv-be-shortener.js` | The Worker. Slugs live in the `LINKS` map — few enough that KV would be more moving parts than it's worth. |
-| `cloudflared/deploy-shortener.ps1` | Uploads the Worker, then smoke-tests every slug through the workers.dev preview URL. |
+| `cloudflared/deploy-shortener.ps1` | Uploads the Worker, then smoke-tests every slug against live `https://ffxiv.be` (`-BaseUrl` to override, `-SkipVerify` to skip). |
 | `cloudflared/rebrandly-links-export.{json,csv}` | The original Rebrandly export, kept as the migration record. |
 
 **To add or change a link:** edit the `LINKS` map in `ffxiv-be-shortener.js`, then run
@@ -607,6 +607,11 @@ destination change effectively unfixable. Lookups fall back to case-insensitive 
 > propagation, not a bad map — `deploy-shortener.ps1` retries rather than reporting a false
 > failure. Verify with `curl.exe`, not `Invoke-WebRequest`: in PS7 `-MaximumRedirection 0` throws
 > on a 3xx instead of returning it, so every working redirect reads as a failure.
+
+> **The `workers.dev` preview URL is deliberately disabled** so `ffxiv.be` is the only public
+> entry point. Re-enabling it would give the shortener a second address serving the same
+> redirects. This is also why verification targets the live hostname — it exercises DNS and the
+> Worker route as well as the script.
 
 ### Troubleshooting
 
