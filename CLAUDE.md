@@ -264,6 +264,12 @@ anyone noticing.
 > container needs a host kernel of the same build — on `windows-2025` it will not start unless the
 > image is retagged to match.
 
+> **No `--progress=plain` in the workflow, unlike `test-local.bat`.** That is a BuildKit flag, and
+> **BuildKit does not support Windows containers** — the runner's classic builder rejects it with
+> `unknown flag: --progress` before pulling anything, which is exactly how the very first CI run
+> failed. Docker Desktop accepts it locally only because its CLI routes `docker build` through
+> buildx. The classic builder streams full step output anyway.
+
 > **The container installs from GitHub, not from the checkout.** `Dockerfile.test` fetches
 > `https://i.ffxiv.be/?branch=<branch>`, so it tests the branch **as pushed**; `actions/checkout`
 > only supplies the build context and the `tests/` copy. A pull request from a fork would 404
@@ -384,7 +390,19 @@ optional `Source` for msstore-only packages). Every entry is verified after inst
 that failed is listed at the end, with the script exiting non-zero.
 
 **Scoop:** Chrome, Discord, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
-**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, NVIDIA App (msstore)
+**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, NVIDIA App (msstore)
+
+> **Docker Desktop is here so `test-local.bat` can actually be run.** Without it the container
+> test only ever runs in GitHub Actions, which is how the fresh-install path went unexercised long
+> enough for `remote-call.ps1` to skip every setup script unnoticed. It installs like any other
+> row in `$wingetApps` — `Install-WingetApp` skips it if `Test-WingetApp` already finds it, and
+> verifies with `winget list` afterwards rather than trusting winget's exit code.
+>
+> Two manual steps remain after install, neither scriptable from here: Docker needs a reboot (it
+> enables the Containers and Hyper-V features), and it starts in **Linux** container mode. The
+> Windows Server Core image needs Windows containers —
+> `& "$env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchDaemon` with Docker running, or
+> right-click the tray icon → *Switch to Windows containers*.
 **Direct download:** Discord Canary, Chrome Remote Desktop, Mudfish, IceDrive (+ Dokan)
 **Other:** Claude Code (Windows and inside WSL), WSL itself
 

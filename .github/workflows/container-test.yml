@@ -67,9 +67,14 @@ jobs:
 
       - name: Build the test image
         # The build IS the test: the RUN layers execute run-all.bat and then Pester, so a
-        # non-zero exit from either fails the build. --progress=plain keeps the per-script
-        # output from run-all.bat readable in the log, which is where a failure gets diagnosed.
-        run: docker build --build-arg BRANCH=$env:BRANCH -f Dockerfile.test . --progress=plain
+        # non-zero exit from either fails the build.
+        #
+        # No --progress=plain here, unlike test-local.bat. That is a BuildKit flag, and BuildKit
+        # does not support Windows containers - the runner's classic builder rejects it outright
+        # with "unknown flag: --progress" before it pulls anything. Docker Desktop accepts it
+        # locally only because its CLI routes docker build through buildx. The classic builder
+        # streams full step output anyway, so nothing is lost in the log.
+        run: docker build --build-arg BRANCH=$env:BRANCH -f Dockerfile.test .
 
       - name: Report container disk usage
         if: always()

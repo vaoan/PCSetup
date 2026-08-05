@@ -157,6 +157,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'Rufus.Rufus';                     Name = 'Rufus' },
 >>"%SCRIPT%" echo     @{ Id = 'Microsoft.PowerShell';            Name = 'PowerShell 7' },
 >>"%SCRIPT%" echo     @{ Id = 'wez.wezterm';                     Name = 'WezTerm' },
+>>"%SCRIPT%" echo     @{ Id = 'Docker.DockerDesktop';            Name = 'Docker Desktop' },
 >>"%SCRIPT%" echo     @{ Id = 'XP8CLZL93F5Z4P';                  Name = 'NVIDIA App'; Source = 'msstore' }
 >>"%SCRIPT%" echo )
 >>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source }
