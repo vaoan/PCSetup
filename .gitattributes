@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts MUST stay LF. core.autocrlf=true would otherwise hand a fresh
+# Windows clone CRLF .sh files, and bash inside WSL fails on the carriage return
+# with "$'\r': command not found" — setup-console-wsl.sh dies on line 1. The
+# repo happened to hold LF working copies, so this never surfaced locally.
+*.sh text eol=lf

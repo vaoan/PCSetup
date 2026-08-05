@@ -216,20 +216,47 @@ exec tmux new-session -A -s main -c /mnt/z/Github/candystore
 WETTYSHELL
 chmod +x /usr/local/bin/wetty-start-shell.sh
 
+# Where `npm install -g` actually puts binaries. On this machine Node comes from
+# the NodeSource package, whose npm prefix is /usr — so global bins land in
+# /usr/bin, NOT /usr/local/bin. Hardcoding /usr/local/bin made validate_ungit
+# check a path that can never exist: ungit installed fine to /usr/bin/ungit,
+# the check failed anyway, and the script exited 1 every run. Resolve it.
+# (Our OWN scripts genuinely do live in /usr/local/bin — only npm-installed
+# binaries need this.)
+NPM_BIN="$(/usr/bin/npm prefix -g 2>/dev/null)/bin"
+[ -d "$NPM_BIN" ] || NPM_BIN=/usr/local/bin
+echo "[setup-console-wsl] npm global bin resolved to $NPM_BIN"
+
 # -- 6. Install wetty (fallback web terminal, runs on port 7681) --------------
-if [ ! -x /usr/local/bin/wetty ]; then
-    echo "[setup-console-wsl] Installing wetty..."
-    /usr/bin/npm install -g wetty@2.7.0
+# wetty is an unused FALLBACK — the `systemctl start` line below deliberately
+# omits it. Its gc-stats dependency compiles a native module and needs `make`
+# (build-essential), which a fresh Ubuntu does not have. Combined with `set -e`
+# at the top of this script, that failure used to abort the ENTIRE setup: on a
+# fresh machine code-server, ttyd, ungit, dashboard and git-proxy were never
+# configured because an optional terminal nobody uses failed to build.
+# Never let one optional item stop the rest.
+WETTY_OK=0
+if [ -x "$NPM_BIN/wetty" ]; then
+    WETTY_OK=1
+else
+    echo "[setup-console-wsl] Installing wetty (optional fallback)..."
+    if /usr/bin/npm install -g wetty@2.7.0 >/tmp/wetty-install.log 2>&1 && [ -x "$NPM_BIN/wetty" ]; then
+        WETTY_OK=1
+    else
+        echo "[setup-console-wsl] WARNING: wetty install failed - skipping it (log: /tmp/wetty-install.log)."
+        echo "[setup-console-wsl]          wetty is the unused fallback terminal; ttyd.ffxiv.be is unaffected."
+    fi
 fi
 
-cat > /etc/systemd/system/wetty.service << 'WETTYSERVICE'
+if [ "$WETTY_OK" = "1" ]; then
+cat > /etc/systemd/system/wetty.service << WETTYSERVICE
 [Unit]
 Description=WeTTY Web Terminal
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/node /usr/local/bin/wetty --port 7681 --base / --command /usr/local/bin/wetty-start-shell.sh
+ExecStart=/usr/bin/node $NPM_BIN/wetty --port 7681 --base / --command /usr/local/bin/wetty-start-shell.sh
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
@@ -238,6 +265,7 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 WETTYSERVICE
+fi
 
 # -- 7. Symlink shared Windows configs ----------------------------------------
 # These let WSL inherit configs already set up in Windows
@@ -430,11 +458,11 @@ echo "[setup-console-wsl] dashboard service configured (port 7686)"
 validate_ungit() {
     local log=/tmp/pcsetup-ungit-validate.log
     rm -f "$log"
-    if [ ! -x /usr/local/bin/ungit ]; then
+    if [ ! -x "$NPM_BIN/ungit" ]; then
         return 1
     fi
 
-    timeout 8 /usr/local/bin/ungit --port 17688 --no-launchBrowser --ungitBindIp 127.0.0.1 >"$log" 2>&1 || true
+    timeout 8 "$NPM_BIN/ungit" --port 17688 --no-launchBrowser --ungitBindIp 127.0.0.1 >"$log" 2>&1 || true
     grep -q 'Ungit started' "$log"
 }
 
@@ -444,20 +472,25 @@ if ! validate_ungit; then
     /usr/bin/npm install -g ungit@1.5.30
 fi
 
+# ungit backs git.ffxiv.be only. A hard `exit 1` here used to abandon the rest of
+# the setup — git-proxy was never configured and NOTHING was enabled or started,
+# so a single broken optional service took down the whole console. Degrade to a
+# warning: the other five hostnames do not depend on ungit.
+UNGIT_OK=1
 if ! validate_ungit; then
-    echo "[setup-console-wsl] ungit validation failed"
+    UNGIT_OK=0
+    echo "[setup-console-wsl] WARNING: ungit validation failed - git.ffxiv.be will not serve repo views."
     cat /tmp/pcsetup-ungit-validate.log 2>/dev/null || true
-    exit 1
 fi
 
-cat > /etc/systemd/system/ungit.service << 'UNGITSERVICE'
+cat > /etc/systemd/system/ungit.service << UNGITSERVICE
 [Unit]
 Description=Ungit web Git UI
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ungit --port 7688 --no-launchBrowser --ungitBindIp 0.0.0.0
+ExecStart=$NPM_BIN/ungit --port 7688 --no-launchBrowser --ungitBindIp 0.0.0.0
 Restart=on-failure
 RestartSec=3
 
@@ -485,10 +518,17 @@ systemctl daemon-reload
 echo "[setup-console-wsl] ungit service configured (port 7688, internal)"
 echo "[setup-console-wsl] git-proxy service configured (port 7687, public)"
 
-systemctl enable ssh wetty "code-server@${CODE_USER}" ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true
+# Only enable units whose binary actually exists — enabling one whose binary is
+# missing just guarantees a service that fails at every boot.
+ENABLE_UNITS="ssh code-server@${CODE_USER} ttyd-persistent ttyd-fresh ttyd-proxy dashboard git-proxy"
+if [ "$WETTY_OK" = "1" ]; then ENABLE_UNITS="$ENABLE_UNITS wetty"; fi
+if [ "$UNGIT_OK" = "1" ]; then ENABLE_UNITS="$ENABLE_UNITS ungit"; fi
+systemctl enable $ENABLE_UNITS 2>/dev/null || true
 service ssh start
 echo "[setup-console-wsl] SSH service started"
-systemctl start "code-server@${CODE_USER}" ttyd-persistent ttyd-fresh ttyd-proxy dashboard ungit git-proxy 2>/dev/null || true
+START_UNITS="code-server@${CODE_USER} ttyd-persistent ttyd-fresh ttyd-proxy dashboard git-proxy"
+if [ "$UNGIT_OK" = "1" ]; then START_UNITS="$START_UNITS ungit"; fi
+systemctl start $START_UNITS 2>/dev/null || true
 echo "[setup-console-wsl] code-server started for $CODE_USER (port 8080)"
 echo "[setup-console-wsl] ttyd started (proxy:7683, persistent:7684, fresh:7685)"
 
@@ -497,7 +537,11 @@ echo "[setup-console-wsl] WSL setup complete."
 echo "  SSH listening on port 22 (exposed to Windows as localhost:2222 via portproxy)"
 echo "  code-server: port 8080 (exposed to Windows as localhost:8080 via portproxy)"
 echo "  ttyd (tmux): port 7683 (exposed to Windows as localhost:7683 via portproxy)"
-echo "  Wetty fallback: port 7681 (systemd service)"
+if [ "$WETTY_OK" = "1" ]; then
+    echo "  Wetty fallback: port 7681 (systemd service)"
+else
+    echo "  Wetty fallback: SKIPPED (install failed; unused by default)"
+fi
 echo "  $(grep -c '^command=' /root/.ssh/authorized_keys) console presets configured in authorized_keys"
 echo ""
 echo "  Next: run setup-console-windows.ps1 on the Windows side."
