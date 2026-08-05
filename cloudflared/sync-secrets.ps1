@@ -50,12 +50,35 @@ function Get-RepoSlug {
     return "$out".Trim()
 }
 
-function Start-SyncWorkflow {
-    Write-Log "Triggering sync-secrets workflow..."
+function Resolve-WorkflowRef {
     $branch = (& git branch --show-current 2>&1).Trim()
     if (-not $branch) { $branch = 'main' }
-    Write-Log "Using branch: $branch"
-    & gh workflow run $WORKFLOW_FILE --ref $branch
+
+    # workflow_dispatch reads the workflow file from the *remote* ref, so a branch
+    # that only exists locally fails with "Workflow does not exist". Note
+    # `git ls-remote --heads` exits 0 with no output when the branch is absent, so
+    # test the output rather than $LASTEXITCODE.
+    $onRemote = (& git ls-remote --heads origin $branch 2>$null | Out-String).Trim()
+    if ($onRemote) { return $branch }
+
+    $default = "$(& gh repo view --json defaultBranchRef -q '.defaultBranchRef.name' 2>$null)".Trim()
+    if (-not $default) { $default = 'main' }
+    Write-Log "Branch '$branch' is not on origin - dispatching against '$default' instead."
+
+    # The dispatched run uses that ref's copy of the workflow, so an unpushed edit
+    # to the secret list would silently not take effect.
+    & git fetch origin $default --quiet 2>$null
+    $drift = (& git diff "origin/$default" --name-only -- ".github/workflows/$WORKFLOW_FILE" 2>$null | Out-String).Trim()
+    if ($drift) {
+        Write-Log "WARNING: local $WORKFLOW_FILE differs from origin/$default - push it or the run will use the old secret list."
+    }
+    return $default
+}
+
+function Start-SyncWorkflow { param([string]$ref)
+    Write-Log "Triggering sync-secrets workflow..."
+    Write-Log "Using ref: $ref"
+    & gh workflow run $WORKFLOW_FILE --ref $ref
     if ($LASTEXITCODE -ne 0) { Fail "Failed to trigger workflow." }
 }
 
@@ -143,7 +166,7 @@ Write-Log "Repository: $repo"
 Write-Log "openssl: $openssl"
 
 $prevRunId = (& gh run list --workflow $WORKFLOW_FILE --limit 1 --json databaseId -q '.[0].databaseId' 2>$null).Trim()
-Start-SyncWorkflow
+Start-SyncWorkflow (Resolve-WorkflowRef)
 $runId      = Wait-ForRun $prevRunId
 Write-Host ""
 $encPath    = Get-EncryptedArtifact $runId

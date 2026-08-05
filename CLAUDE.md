@@ -186,6 +186,21 @@ Pulls secrets from GitHub repository secrets to a local `.secrets` file (gitigno
 
 **Prerequisites:** `gh auth login` must have been run. Git for Windows must be installed. `%USERPROFILE%\.pcsetup-sync-passphrase` must exist (see `.secrets.example` first-time setup instructions).
 
+> **The dispatch ref must exist on origin.** `workflow_dispatch` reads the workflow file from the
+> *remote* ref, so `--ref <current branch>` fails with "Workflow does not exist" on any branch that
+> has not been pushed — which is every branch on a freshly formatted machine. The script now falls
+> back to the repo default branch and warns if the local `sync-secrets.yml` differs from it (an
+> unpushed edit to the secret list would otherwise silently not take effect). `git ls-remote --heads`
+> exits **0 with no output** when the branch is absent, so the check tests the output, not
+> `$LASTEXITCODE`.
+
+> **Lost the passphrase? Rotate it, don't hunt for it.** `SYNC_PASSPHRASE` only encrypts the
+> artifact in flight — nothing at rest is encrypted with it. Generate a new one into
+> `%USERPROFILE%\.pcsetup-sync-passphrase` and `gh secret set SYNC_PASSPHRASE`; the next sync just
+> works. Syncing is also non-destructive by construction: every key the workflow emits comes from
+> GitHub, so a stale local `.secrets` gains keys and loses none — verify by diffing key names and
+> value lengths against a backup rather than by eyeballing the file.
+
 To add a new secret:
 1. Add it in GitHub → Settings → Secrets and variables → Actions
 2. Add it to the `env:` block and `run:` output section in `.github/workflows/sync-secrets.yml`

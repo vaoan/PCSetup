@@ -15,6 +15,9 @@ nul
 .secrets
 .secrets-download/
 .secrets-decrypted.tmp
+# Backups taken before a sync. Deliberately not `.secrets*` — that would also
+# match the committed .secrets.example.
+.secrets.bak*
 
 # Chat transcripts (may contain pasted secrets)
 latest-chat.log
