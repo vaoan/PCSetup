@@ -29,7 +29,14 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     Write-Host "Setting CurrentUser execution policy to $target (was $current)..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     try { Set-ExecutionPolicy -ExecutionPolicy $target -Scope CurrentUser -Force -ErrorAction Stop }
->>"%SCRIPT%" echo     catch { Write-Host "Failed to set execution policy: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }
+>>"%SCRIPT%" echo     catch {
+>>"%SCRIPT%" echo         # Do NOT exit here. Set-ExecutionPolicy throws 'Security error' while still
+>>"%SCRIPT%" echo         # having written the value - observed on this machine, where CurrentUser was
+>>"%SCRIPT%" echo         # RemoteSigned afterwards yet the run was reported as a failure. Check the
+>>"%SCRIPT%" echo         # state below rather than trusting the exception.
+>>"%SCRIPT%" echo         Write-Host "Set-ExecutionPolicy reported: $($_.Exception.Message)" -ForegroundColor Yellow
+>>"%SCRIPT%" echo         Write-Host "Verifying the value directly instead of trusting that error..." -ForegroundColor Yellow
+>>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Verify the value actually stuck.

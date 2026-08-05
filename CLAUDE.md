@@ -95,6 +95,18 @@ special character ever reaches CMD's parser.
 
 ### Per-script notes from the audit
 
+- **`4-fix-execution-policy.bat`** — **`Set-ExecutionPolicy` throws `Security error.` while still
+  writing the value.** Observed on this machine during a full `run-all.bat` run: the script caught
+  the exception, `exit 1`, and was reported as a failure — yet `HKCU\...\PowerShell\1\ShellIds`
+  held `RemoteSigned` immediately afterwards. The `catch` now logs and **falls through to the
+  verification** instead of trusting the exception, which is the same check-act-*verify* rule the
+  rest of the repo follows. Reproduce by setting the 5.1 CurrentUser scope to `Bypass` and running
+  the script; it throws every time and still exits 0 now.
+  Also note **Windows PowerShell and PowerShell 7 keep separate CurrentUser policies** — 5.1 uses
+  `HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell`, PS7 does not (that key is
+  absent for it) and reports its own value. Setting the policy from a pwsh prompt changes a scope
+  this script never reads, so "verifying" that way proves nothing. Use
+  `powershell -NoProfile -Command "Get-ExecutionPolicy -Scope CurrentUser"`.
 - **`4-fix-execution-policy.bat`** — verifies the value stuck *and* reports the **effective** policy,
   since a Group Policy scope outranks CurrentUser and the write can succeed while the effective
   policy stays Restricted. Note `2-setup-windows.bat` sets CurrentUser/LocalMachine to `Bypass` and
