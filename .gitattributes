@@ -6,3 +6,10 @@
 # with "$'\r': command not found" — setup-console-wsl.sh dies on line 1. The
 # repo happened to hold LF working copies, so this never surfaced locally.
 *.sh text eol=lf
+
+# Batch files MUST stay CRLF, for the same reason in reverse. CMD parses labels by
+# line, and an LF-only .bat fails with "The system cannot find the batch label
+# specified" - `goto :summary` in run-all.bat dies and every `call` misfires. A clone
+# with core.autocrlf=false (or any editor writing LF) would produce exactly that.
+*.bat text eol=crlf
+*.cmd text eol=crlf

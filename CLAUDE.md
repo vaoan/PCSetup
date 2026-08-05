@@ -51,6 +51,13 @@ adding one, keep all five:
 4. **Never `throw` past a single item.** One failed download must not abort the rest of the script.
 5. **Resolve paths, don't hardcode them.** Scoop moved Git, Steam and friends out of
    `C:\Program Files\...`.
+6. **`.bat`/`.cmd` files must be CRLF; `.sh` must be LF.** Both directions are pinned in
+   `.gitattributes`, because `* text=auto` alone leaves it to whatever `core.autocrlf` a fresh
+   clone happens to have. An LF `.bat` fails with `The system cannot find the batch label
+   specified` — `goto` stops working while ordinary lines still run, so it looks like a logic bug
+   rather than an encoding one. Eleven tracked `.bat` files were LF before this was pinned. Editors
+   and tools that write LF (including agents) reintroduce it silently: check with
+   `git ls-files '*.bat' | ...` or just look for lone `\n`.
 
 ### CMD escaping inside generated lines — the rules that actually apply
 
@@ -152,34 +159,52 @@ Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`
 > still rejected).
 
 ### run-all.bat
-Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
+Runs every numbered setup script (`0-*` through `99-*`) from its own folder, in numeric order.
+It elevates, enumerates, runs each script, records failures, prints a summary, and exits non-zero
+if anything failed. **That is all it does.**
 
-**Staging:** before running anything it robocopies the top-level `*.bat`, `*.config`, `.v` **and the
-whole `sources\` folder** into a fresh `%TEMP%\PCSetup-run-<guid>` and executes from there.
+**It does not download, update or stage anything.** Bootstrapping a fresh machine is
+`remote-call.ps1`'s job (`irm i.ffxiv.be | iex`), which materializes the repo into a temp workspace
+and then calls this file. Run with no numbered scripts present and it prints that one-liner and
+exits 1 rather than fetching a ZIP over the top of the folder it is sitting in.
 
-> **`sources\` must be staged.** `0-init-prereqs.bat` runs `%~dp0sources\init-prereqs.ps1`, so a
-> top-level-only staging copy made script 0 abort with `ERROR: Missing prerequisite script` — and
-> that is the script that installs Scoop and Java, so every later script failed too. If you add a
-> script that reads a repo file, stage that file as well.
+> **Why the self-update and staging were removed.** Two jobs in one file meant two ways to fail:
+> the version check used `-ne`, not the documented `-gt`, so running it from the repo with a local
+> `.v` *newer* than GitHub's re-downloaded `main` **over your working copy**; and staging to
+> `%TEMP%\PCSetup-run-<guid>` copied an allowlist of files, so anything a script read at runtime
+> had to be added to that list or the script failed as if the download were broken (`sources\`
+> already cost one round of this). `remote-call.ps1` still has an allowlist, but it only has to be
+> right in one place now.
 
 > **The enumeration filters on a leading digit, and that filter is load-bearing.** `*-*.bat` on its
-> own also matches the staged `run-all.bat` (which then calls *itself*, recursively) and
-> `test-local.bat` (which launches the Docker suite in the middle of a setup run). Worse, both
-> sorted to the **front**: `[int]'run'` throws inside the `Sort-Object` scriptblock, and
-> `Sort-Object` emits the item anyway rather than dropping it, so the error is only a red herring
-> in the log. The guard is `Where-Object { [char]::IsDigit($_.BaseName[0]) }` — deliberately not a
-> `'^\d+-'` regex, because a caret inside a `for /f` backtick block is eaten by CMD as an escape
-> character before PowerShell ever sees it.
+> own also matches `run-all.bat` (which then calls *itself*, recursively) and `test-local.bat`
+> (which launches the Docker suite in the middle of a setup run). Worse, both sorted to the
+> **front**: `[int]'run'` throws inside the `Sort-Object` scriptblock, and `Sort-Object` emits the
+> item anyway rather than dropping it, so the error is only a red herring in the log. The guard is
+> `Where-Object { [char]::IsDigit($_.BaseName[0]) }` — deliberately not a `'^\d+-'` regex, because
+> a caret inside a `for /f` backtick block is eaten by CMD as an escape character before PowerShell
+> ever sees it.
 
-**Auto-download & version check:** On each run, `run-all.bat` does the following (no Git required — uses PowerShell's `Invoke-WebRequest` only):
-- If no numbered scripts are found → downloads the full repo ZIP from GitHub, extracts it, copies all files into the **same folder as `run-all.bat`**, then runs.
-- If scripts exist → fetches `.v` from GitHub raw and compares to local `.v`. If remote version is higher, re-downloads and updates all scripts. If offline or same version, runs as-is.
+> **It must clear `PSModulePath`, like every other `.bat` here.** The enumeration itself uses
+> `Where-Object` and `Sort-Object` from the Core-only-shadowed `Microsoft.PowerShell.Utility`. With
+> a PS7 `PSModulePath` inherited from WezTerm, the enumeration returns nothing and **not one script
+> runs** — with no error, just a clean-looking summary of zero scripts.
 
-**To release an update:** update `.v` with the current UTC ISO 8601 timestamp and push. Users will auto-update next time they run `run-all.bat`. Comparison uses PowerShell's `-gt` string operator (not CMD's `GTR`) — ISO 8601 strings are lexicographically sortable so this works correctly.
+> **Never `setlocal enabledelayedexpansion` here.** `call` hands that state to the numbered
+> scripts, and `5-move-profile-folders.bat` alone contains 13 literal `!` characters that delayed
+> expansion would silently eat. Exit codes are captured in the `:run_one` subroutine instead —
+> `set "RC=%errorlevel%"` on its own line, because `%errorlevel%` *inside* the following `if` block
+> expands when the block is parsed and reports a stale code. That was a live bug: every failure
+> printed the same wrong number.
 
-> **Important for editing:** When writing the download logic, use a single inline PowerShell `-Command` string — do NOT use grouped `echo` blocks or `^` line continuations to build a temp `.ps1` file. Parentheses in echoed PS code (`if (...)`, `try {`) break CMD's block parser. The inline approach avoids all quoting issues and has no moving parts.
->
-> The `Copy-Item` call uses `-Exclude 'run-all.bat'` to skip overwriting the currently running script. Without this, CMD's internal file position pointer gets corrupted when the file is replaced mid-execution, causing execution to silently stop. By excluding it, the script falls through naturally to `:run_scripts` after the download. Do NOT use `start "" cmd /c` to relaunch — `start` from an elevated process does not inherit elevation (uses ShellExecute, not CreateProcess), which triggers UAC again and causes the window to flash and close.
+> **Scripts are called by absolute path (`call "%ROOT%%SCRIPT%"`), with the cwd restored first.**
+> A bare `call %SCRIPT%` needs CMD to search the current directory, which it refuses to do when
+> `NoDefaultCurrentDirectoryInExePath=1` — every script then fails with `is not recognized` and the
+> run accomplishes nothing while looking busy. Restoring the cwd also covers a script that `cd`s
+> away without a `setlocal` to unwind it.
+
+**Releasing an update:** update `.v` (the pre-commit hook does this) and push. `remote-call.ps1`
+always fetches the current `main`, so there is no version negotiation left to get wrong.
 
 ### cloudflared/sync-secrets.bat
 Pulls secrets from GitHub repository secrets to a local `.secrets` file (gitignored). Reads a decryption passphrase from `%USERPROFILE%\.pcsetup-sync-passphrase`, triggers `.github/workflows/sync-secrets.yml` via `gh workflow run`, waits for the workflow to complete, downloads the AES-256-CBC encrypted artifact, decrypts it with `openssl.exe` (bundled with Git for Windows), and writes `.secrets`.
