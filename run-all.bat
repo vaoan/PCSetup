@@ -110,8 +110,27 @@ if %errorlevel% GEQ 8 (
     exit /b 1
 )
 
+:: sources\ has to come along: 0-init-prereqs.bat runs sources\init-prereqs.ps1, so staging
+:: only the top-level files made script 0 abort with "Missing prerequisite script" — which is
+:: the step that installs Scoop and Java, so every later script failed too.
+:: Uses "if errorlevel 8" rather than "%errorlevel% GEQ 8" because this sits inside a
+:: parenthesized block, where %errorlevel% would expand before robocopy ever ran.
+if exist "%~dp0sources" (
+    robocopy "%~dp0sources" "%STAGE_DIR%\sources" /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NC /NS >nul
+    if errorlevel 8 (
+        echo ERROR: Failed to stage sources folder to temp.
+        rd /s /q "%STAGE_DIR%" >nul 2>&1
+        exit /b 1
+    )
+)
+
+:: The digit filter is load-bearing: '*-*.bat' alone also matches run-all.bat (recursing into
+:: itself) and test-local.bat (launching the Docker suite mid-setup). Both sorted to the FRONT,
+:: because [int]'run' throws and Sort-Object emits the item anyway instead of dropping it.
+:: [char]::IsDigit rather than a '^\d+-' regex — a caret inside a for /f backtick block is
+:: eaten by CMD as an escape character before PowerShell ever sees it.
 pushd "%STAGE_DIR%"
-for /f "usebackq delims=" %%f in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Filter '*-*.bat' | Sort-Object { [int]($_.BaseName -split '-')[0] } | ForEach-Object { $_.Name }"`) do (
+for /f "usebackq delims=" %%f in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Filter '*-*.bat' | Where-Object { [char]::IsDigit($_.BaseName[0]) } | Sort-Object { [int]($_.BaseName -split '-')[0] } | ForEach-Object { $_.Name }"`) do (
     echo ========================================
     echo Running: %%f
     echo ========================================

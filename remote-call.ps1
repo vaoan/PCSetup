@@ -17,6 +17,9 @@ $repoZipUrl = "https://github.com/vaoan/PCSetup/archive/refs/heads/$Branch.zip"
 $workDir = Join-Path $env:TEMP ("PCSetup-remote-{0}-{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), (Get-Random))
 $repoRootName = "PCSetup-$Branch"
 $allowedExtensions = @(".bat", ".config", ".v")
+# One level of subfolder is materialized too: 0-init-prereqs.bat runs sources\init-prereqs.ps1,
+# and a top-level-only workspace made script 0 abort with "Missing prerequisite script".
+$allowedSubdirectories = @{ "sources" = @(".ps1", ".reg") }
 
 try {
     New-Item -ItemType Directory -Path $workDir -Force | Out-Null
@@ -36,10 +39,18 @@ try {
                 if ($entry.FullName -notlike "$repoRootName/*") { continue }
                 if ($entry.FullName.EndsWith("/")) { continue }
 
-                $relativePath = $entry.FullName.Substring($repoRootName.Length + 1)
+                $relativePath = ($entry.FullName.Substring($repoRootName.Length + 1)) -replace "/", "\"
+                if ($relativePath -like "*..*") { continue }
+
+                $segments = $relativePath.Split("\")
                 $extension = [System.IO.Path]::GetExtension($relativePath)
-                if ($allowedExtensions -notcontains $extension) { continue }
-                if ($relativePath -like "*\*" -or $relativePath -like "*/*" -or $relativePath -like "*..*") { continue }
+                if ($segments.Count -eq 1) {
+                    if ($allowedExtensions -notcontains $extension) { continue }
+                }
+                elseif ($segments.Count -eq 2 -and $allowedSubdirectories.ContainsKey($segments[0])) {
+                    if ($allowedSubdirectories[$segments[0]] -notcontains $extension) { continue }
+                }
+                else { continue }
 
                 $destinationPath = Join-Path $workDir $relativePath
                 $destinationDir = Split-Path $destinationPath -Parent
@@ -76,7 +87,7 @@ try {
         downloaded_at_utc = (Get-Date).ToUniversalTime().ToString("o")
         workspace = $workDir
         execution_mode = "temp-materialized-from-memory"
-        files = @(Get-ChildItem -Path $workDir -File | Sort-Object Name | ForEach-Object { $_.Name })
+        files = @(Get-ChildItem -Path $workDir -File -Recurse | ForEach-Object { $_.FullName.Substring($workDir.Length + 1) } | Sort-Object)
     } | ConvertTo-Json -Depth 4
     Set-Content -Path $manifestPath -Value $manifest -Encoding UTF8
 
