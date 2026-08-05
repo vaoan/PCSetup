@@ -14,6 +14,20 @@ BeforeAll {
         return ($LASTEXITCODE -eq 0 -and $output -match [regex]::Escape($Id))
     }
 
+    function Test-ScoopPackageInstalled {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Package
+        )
+
+        if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { return $false }
+        # Deliberately not "scoop list": a failed install stays listed forever with an empty
+        # Version and Info='Install failed', so matching that text reports a broken app as
+        # present. "scoop prefix" resolves the 'current' junction, which a failed install lacks.
+        $prefix = & scoop prefix $Package 2>$null 6>$null
+        return ($LASTEXITCODE -eq 0 -and $prefix -and (Test-Path $prefix))
+    }
+
     function Get-CloudflaredPublicRoutes {
         $script = Get-Content (Join-Path $PSScriptRoot '..\cloudflared\verify-public-routes.mjs') -Raw
         $matches = [regex]::Matches($script, "\['([^']+)',\s*'([^']+)'\]")
@@ -121,11 +135,18 @@ Describe "2-setup-windows" {
         (cloudflared --version 2>&1) | Should -Match 'cloudflared version'
     }
     # GUI/winget-only — skip in CI containers
+    # These are Scoop apps now. The old assertions hardcoded the Chocolatey-era
+    # 'C:\Program Files\...' paths, so they stayed red no matter what the setup script did -
+    # which is why VLC being genuinely uninstalled went unnoticed.
     It "WinRAR installed" -Skip:($IsCI) {
-        Test-Path 'C:\Program Files\WinRAR\WinRAR.exe' | Should -BeTrue
+        $installed = (Test-ScoopPackageInstalled -Package 'winrar') -or
+            (Test-Path 'C:\Program Files\WinRAR\WinRAR.exe')
+        [bool]$installed | Should -BeTrue
     }
     It "VLC installed" -Skip:($IsCI) {
-        Test-Path 'C:\Program Files\VideoLAN\VLC\vlc.exe' | Should -BeTrue
+        $installed = (Test-ScoopPackageInstalled -Package 'vlc') -or
+            (Test-Path 'C:\Program Files\VideoLAN\VLC\vlc.exe')
+        [bool]$installed | Should -BeTrue
     }
     It "Firefox installed" -Skip:($IsCI) {
         $installed = (Get-Command firefox -ErrorAction SilentlyContinue) -or
@@ -167,7 +188,8 @@ Describe "2-setup-windows" {
         [bool]$installed | Should -BeTrue
     }
     It "Streamlabs OBS installed" -Skip:($IsCI) {
-        $installed = (Get-Command streamlabs-obs -ErrorAction SilentlyContinue) -or
+        $installed = (Test-ScoopPackageInstalled -Package 'streamlabs-obs') -or
+            (Get-Command streamlabs-obs -ErrorAction SilentlyContinue) -or
             (Test-Path "$env:ProgramFiles\Streamlabs OBS\Streamlabs OBS.exe") -or
             (Test-Path "$env:ProgramFiles\Streamlabs\Streamlabs Desktop\Streamlabs Desktop.exe") -or
             (Test-WingetPackageInstalled -Id 'Streamlabs.Streamlabs')

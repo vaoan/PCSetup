@@ -2,6 +2,14 @@ $ErrorActionPreference = 'Stop'
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
+# Server Core and freshly-imaged machines do not always preload the compression assemblies.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+# Portable git/gh live here. Nothing else on the machine is assumed to exist yet.
+$script:BootstrapRoot = Join-Path $env:ProgramData 'PCSetup\bootstrap'
+$script:BootstrapPaths = New-Object System.Collections.Generic.List[string]
+
 function Ensure-GetFileHashCommand {
     function global:Get-FileHash {
         [CmdletBinding(DefaultParameterSetName = 'Path')]
@@ -69,7 +77,10 @@ function Refresh-SetupEnvironment {
         "$env:ProgramFiles\nodejs"
     )
 
-    $env:Path = ($extra + @($machinePath, $userPath) |
+    # Bootstrap paths go LAST on purpose: once Scoop installs the managed git/gh, its shims must
+    # win over the portable copies. This function rebuilds $env:Path from scratch, so the
+    # bootstrap entries have to be re-appended here or they vanish on the next refresh.
+    $env:Path = ($extra + @($machinePath, $userPath) + @($script:BootstrapPaths) |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
         Select-Object -Unique) -join ';'
 
@@ -99,6 +110,84 @@ function Set-PathEntryFirst {
     $normalizedEntry = $Entry.TrimEnd('\')
     $parts = @($parts | Where-Object { $_.TrimEnd('\') -ine $normalizedEntry })
     [Environment]::SetEnvironmentVariable('Path', ((@($Entry) + $parts) -join ';'), $Scope)
+}
+
+function Get-BootstrapArchitecture {
+    switch ($env:PROCESSOR_ARCHITECTURE) {
+        'ARM64' { return [pscustomobject]@{ MinGit = 'arm64';  Gh = 'arm64' } }
+        'x86'   { return [pscustomobject]@{ MinGit = '32-bit'; Gh = '386' } }
+        default { return [pscustomobject]@{ MinGit = '64-bit'; Gh = 'amd64' } }
+    }
+}
+
+function Add-BootstrapPath {
+    param([string]$Directory)
+
+    if ([string]::IsNullOrWhiteSpace($Directory)) { return }
+    if (-not ($script:BootstrapPaths -contains $Directory)) {
+        $script:BootstrapPaths.Add($Directory)
+    }
+    Refresh-SetupEnvironment
+}
+
+function Install-BootstrapTool {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$AssetPattern,
+        [string]$ExcludePattern,
+        [Parameter(Mandatory = $true)][string]$BinSubPath
+    )
+
+    $target = Join-Path $script:BootstrapRoot $Name
+    $exe = Join-Path (Join-Path $target $BinSubPath) "$Command.exe"
+
+    if (Test-Path $exe) {
+        Write-Host "$Name bootstrap already present, reusing..." -ForegroundColor Yellow
+        Add-BootstrapPath (Split-Path $exe -Parent)
+        return
+    }
+
+    if (Get-Command $Command -ErrorAction SilentlyContinue) {
+        Write-Host "$Name already on PATH, no bootstrap needed..." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Bootstrapping portable $Name from $Repo..." -ForegroundColor Cyan
+    $release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'PCSetup' }
+    $asset = $release.assets |
+        Where-Object { $_.name -like $AssetPattern } |
+        Where-Object { -not $ExcludePattern -or $_.name -notlike $ExcludePattern } |
+        Select-Object -First 1
+    if (-not $asset) {
+        throw "No asset matching '$AssetPattern' in the latest $Repo release; cannot bootstrap $Name."
+    }
+
+    $zipPath = Join-Path $env:TEMP ("pcsetup-bootstrap-{0}.zip" -f $Name)
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+
+    # WebClient + ZipFile rather than Invoke-WebRequest + Expand-Archive: this runs before
+    # anything is installed, and both of those cmdlets live in Microsoft.PowerShell.Utility /
+    # .Archive, which a PS7-poisoned PSModulePath can make unloadable (the same failure this
+    # script already works around with Ensure-GetFileHashCommand).
+    [System.Net.WebClient]::new().DownloadFile($asset.browser_download_url, $zipPath)
+
+    if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $target)
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+
+    if (-not (Test-Path $exe)) {
+        $found = Get-ChildItem $target -Filter "$Command.exe" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) {
+            throw "$Name bootstrap archive ($($asset.name)) did not contain $Command.exe."
+        }
+        $exe = $found.FullName
+    }
+
+    Add-BootstrapPath (Split-Path $exe -Parent)
+    Write-Host "$Name bootstrapped to $exe" -ForegroundColor Green
 }
 
 function Invoke-Logged {
@@ -363,6 +452,30 @@ Ensure-GetFileHashCommand
 Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
 Refresh-SetupEnvironment
+
+# ─────────────────────────────────────────────
+# Git and GitHub CLI first, from portable zips, before any package manager exists.
+#
+# Scoop cannot function without git: "scoop update" and every "scoop bucket add" are git
+# operations. The previous order ran "scoop update" and only then installed git *through Scoop*,
+# so on a machine without git the run died at "Scoop update failed" before ever reaching the line
+# that would have fixed it. Bootstrapping from the official release zips needs nothing but a
+# network connection - no Chocolatey, no Scoop, no MSI, no admin-only installer.
+#
+# Scoop still installs its own managed git/gh further down; those shims take precedence because
+# bootstrap paths are appended last in Refresh-SetupEnvironment.
+# ─────────────────────────────────────────────
+$bootstrapArch = Get-BootstrapArchitecture
+Install-BootstrapTool -Name 'git' -Command 'git' -Repo 'git-for-windows/git' `
+    -AssetPattern "MinGit-*-$($bootstrapArch.MinGit).zip" -ExcludePattern '*busybox*' -BinSubPath 'cmd'
+Install-BootstrapTool -Name 'gh' -Command 'gh' -Repo 'cli/cli' `
+    -AssetPattern "gh_*_windows_$($bootstrapArch.Gh).zip" -BinSubPath 'bin'
+
+foreach ($required in 'git', 'gh') {
+    if (-not (Get-Command $required -ErrorAction SilentlyContinue)) {
+        throw "$required is not available after bootstrap; Scoop bucket operations would fail."
+    }
+}
 
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
     Write-Host "Installing Chocolatey bootstrap..." -ForegroundColor Cyan

@@ -30,6 +30,97 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 - [x] Use Chocolatey, winget, and npm for package installations
 - [x] **`.v` is auto-updated** by the pre-commit git hook — no manual action needed
 
+## Script Conventions (all `.bat` setup scripts)
+
+Every numbered script (plus `optional/setup-work.bat`) follows the same shape. When editing or
+adding one, keep all five:
+
+1. **`set "PSModulePath="` inside `setlocal`, before invoking `powershell`.** The `.bat` files spawn
+   `powershell.exe`, which inherits the caller's environment — and WezTerm's default shell is PS7.
+   Windows PowerShell then finds the Core-only `Microsoft.PowerShell.Utility`/`.Security`/`.Archive`
+   under the PS7 module dirs *first* and refuses to load them, so `Get-FileHash`,
+   `Set-ExecutionPolicy`, `Invoke-WebRequest`, `Expand-Archive`, `Add-MpPreference` and
+   `Get-AppxPackage` all vanish. Symptom: the script only fails when launched from a pwsh terminal.
+2. **Redirection first on every generated line: `>>"%SCRIPT%" echo ...`.** Written the other way
+   round, a line ending in a *standalone* digit is parsed as a file-handle redirect — that silently
+   ate `$maxAttempts = 3` in `3-setup-node.bat`. Only a standalone digit triggers it (`-bor 3072>>`
+   is fine because `2` follows `7`, not a space).
+3. **Check → act → verify → record.** Ask the package manager whether the thing is installed, act
+   only if not, then *re-check* rather than trusting an exit code. Failures go into a `$failures`
+   list and the script exits non-zero listing them.
+4. **Never `throw` past a single item.** One failed download must not abort the rest of the script.
+5. **Resolve paths, don't hardcode them.** Scoop moved Git, Steam and friends out of
+   `C:\Program Files\...`.
+
+### CMD escaping inside generated lines — the rules that actually apply
+
+These bit repeatedly and are not intuitive:
+
+| Situation | Behaviour |
+|---|---|
+| `^` before `&` `|` `<` `>` **outside** double quotes | escape is consumed → literal character. Correct. |
+| `^` **inside** double quotes | *not* consumed — `"Settings ^> Apps"` prints a literal caret, and `"... ^&^& ..."` stores literal carets |
+| `>` `&` inside double quotes | already literal; no escape needed |
+| `%` | always needs `%%` (`%%V` to emit `%V`) |
+| standalone digit before `>`/`>>` | parsed as a file handle |
+
+Quote **parity** decides which case applies, and it differs line by line — the same `^&^&` came
+through intact in one command string and as literal carets in the next. When a value must contain
+`&` or `"`, build it in PowerShell (`([char]38).ToString() * 2`, `([char]34).ToString()`) so no
+special character ever reaches CMD's parser.
+
+> **Registry values must not be written from the batch layer.** In `9-context-menu-take-ownership.bat`
+> the `&&` in the Take Ownership command fell outside the quotes at CMD level, so the line was split
+> and `reg.exe` stored a **truncated** command — Take Ownership ran `takeown` and never `icacls`,
+> leaving permissions half-applied. Verified against the live registry: the installed values
+> contained no `icacls` at all. `reg.exe` called from PowerShell is no better (it drops empty-string
+> args, so `/d ""` for `HasLUAShield` fails with "Invalid syntax", and it mangles embedded quotes),
+> and the PowerShell registry provider treats the file-class key named `*` as a wildcard and hangs
+> enumerating HKCR. Use the .NET API — `[Microsoft.Win32.Registry]::ClassesRoot.CreateSubKey(...)`
+> and `.SetValue(...)` take the string verbatim with no parser in between.
+
+> **The generated script runs under Windows PowerShell 5.1, so test it there — not in pwsh.**
+> `Group-Object -Property Name` over an array of **hashtables** returns one group per distinct name
+> in PowerShell 7, but a **single** group in 5.1 (it does not resolve hashtable keys as properties).
+> In `5-move-profile-folders.bat` that meant the move loop processed only Desktop while the registry
+> below repointed all 11 folders — files left behind on the old drive with nothing pointing at them.
+> It looks correct when checked by hand in pwsh. Dedupe with an explicit `$seen = @{}` set instead.
+
+### Per-script notes from the audit
+
+- **`4-fix-execution-policy.bat`** — verifies the value stuck *and* reports the **effective** policy,
+  since a Group Policy scope outranks CurrentUser and the write can succeed while the effective
+  policy stays Restricted. Note `2-setup-windows.bat` sets CurrentUser/LocalMachine to `Bypass` and
+  this script then sets CurrentUser to `RemoteSigned` — they intentionally disagree, and script 4
+  runs later so `RemoteSigned` wins for CurrentUser.
+- **`7-context-menu-terminal-install.bat`** — Git Bash and WezTerm paths are resolved at runtime
+  (`scoop prefix`, then Program Files). The old hardcoded `C:\Program Files\Git\git-bash.exe` is
+  dead on any machine where Scoop is the only Git. Entries are read back after writing.
+- **`8-fix-steam-icons.bat`** — was a single opaque `-EncodedCommand` base64 blob; now generated as
+  readable PowerShell. Steam is resolved via `scoop prefix` / Program Files / `HKCU\Software\Valve\Steam`,
+  and Explorer is only restarted if an icon actually changed.
+- **`10-setup-exclusions.bat`** — `Install-Module PS-SFTA` **never worked**: PS-SFTA is a GitHub repo
+  containing `SFTA.ps1`, not a Gallery module, so it always failed with "No match was found". It now
+  downloads the real script. Separately, Windows 11 hash-protects the `UserChoice` keys and blocks
+  the default-browser change both elevated and de-elevated (`Write Reg Protocol UserChoice FAILED`),
+  so that step is a **warning, not a failure** — no script can set it; use Settings.
+- **`11-setup-win11debloat.bat`** / **`99-remove-windows-ai.bat`** — the remote script is downloaded
+  to a file and size-checked before running, instead of piping `irm` straight into a scriptblock
+  (which would execute a captive-portal page or a 404 body). Both count the target packages before
+  and after and report what survived.
+- **`1-delete-node-modules.bat`** — reports found/deleted/failed and GB reclaimed, and verifies each
+  folder is actually gone; `-ErrorAction SilentlyContinue` used to hide locked folders entirely.
+  Also prunes the **pnpm store** and clears the **pnpm metadata cache** afterwards, both counted
+  into the reclaimed total. This matters: pnpm keeps packages in a content-addressable store
+  *outside* `node_modules` (the `node_modules/.pnpm` folders are only hardlinks into it), so
+  deleting `node_modules` alone reclaims almost nothing on a pnpm machine. The store path comes from
+  `pnpm store path` rather than being assumed — on this machine it is `Z:\.pnpm-store\v11`, not
+  under `%LOCALAPPDATA%`. `pnpm store prune` is used rather than deleting the store directory: it
+  only drops packages no longer referenced by any project. Note prune also reports "Removed all
+  cached metadata files", so the metadata-cache step is usually a no-op backstop for older pnpm.
+  `pnpm config get cacheDir` prints the literal string `undefined` when unset, which is treated as
+  unset rather than as a relative path.
+
 ## Naming Convention
 
 All scripts use **kebab-case** naming: `[N-]action-target.ext`
@@ -52,10 +143,33 @@ The URL is served by a Cloudflare Worker (`cloudflared/install-worker/`) that pr
 ## Run All Scripts
 
 ### remote-call.ps1
-Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`, and `.v` files into a temporary folder under `%TEMP%`, writes a source manifest there, executes `run-all.bat` from that isolated temp workspace, and cleans up afterward. Use this when you want the latest remote setup flow without depending on the current local repo folder.
+Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`, and `.v` files **plus `sources\*.ps1` / `sources\*.reg`** into a temporary folder under `%TEMP%`, writes a source manifest there, executes `run-all.bat` from that isolated temp workspace, and cleans up afterward. Use this when you want the latest remote setup flow without depending on the current local repo folder.
+
+> **Anything a numbered script reads at runtime must be on the allowlist**, or the temp workspace
+> is missing it and the script fails in a way that looks like a broken download. `sources\` is
+> there because `0-init-prereqs.bat` runs `sources\init-prereqs.ps1`. Add a new folder by adding it
+> to `$allowedSubdirectories` (one level deep only — deeper paths and anything containing `..` are
+> still rejected).
 
 ### run-all.bat
 Master script that executes all numbered setup scripts in sequential order. Automatically finds and runs any script matching `[N]-*.bat` pattern, sorted by number.
+
+**Staging:** before running anything it robocopies the top-level `*.bat`, `*.config`, `.v` **and the
+whole `sources\` folder** into a fresh `%TEMP%\PCSetup-run-<guid>` and executes from there.
+
+> **`sources\` must be staged.** `0-init-prereqs.bat` runs `%~dp0sources\init-prereqs.ps1`, so a
+> top-level-only staging copy made script 0 abort with `ERROR: Missing prerequisite script` — and
+> that is the script that installs Scoop and Java, so every later script failed too. If you add a
+> script that reads a repo file, stage that file as well.
+
+> **The enumeration filters on a leading digit, and that filter is load-bearing.** `*-*.bat` on its
+> own also matches the staged `run-all.bat` (which then calls *itself*, recursively) and
+> `test-local.bat` (which launches the Docker suite in the middle of a setup run). Worse, both
+> sorted to the **front**: `[int]'run'` throws inside the `Sort-Object` scriptblock, and
+> `Sort-Object` emits the item anyway rather than dropping it, so the error is only a red herring
+> in the log. The guard is `Where-Object { [char]::IsDigit($_.BaseName[0]) }` — deliberately not a
+> `'^\d+-'` regex, because a caret inside a `for /f` backtick block is eaten by CMD as an escape
+> character before PowerShell ever sees it.
 
 **Auto-download & version check:** On each run, `run-all.bat` does the following (no Git required — uses PowerShell's `Invoke-WebRequest` only):
 - If no numbered scripts are found → downloads the full repo ZIP from GitHub, extracts it, copies all files into the **same folder as `run-all.bat`**, then runs.
@@ -89,6 +203,12 @@ test-local.bat my-branch  # test against a specific branch
 ```
 
 The `PCSETUP_CI=1` env var is set inside the container. Scripts 5 and 6 detect it and skip their body (profile folder relocation and game launchers don't work in containers).
+
+> **Assert against the package manager that actually installs the app.** The WinRAR/VLC/Streamlabs
+> checks hardcoded Chocolatey-era `C:\Program Files\...` paths and were never updated when the repo
+> moved to Scoop, so they were permanently red — which is exactly why VLC being genuinely
+> uninstalled went unnoticed. They now use `Test-ScoopPackageInstalled`, which is `scoop prefix`
+> based for the same reason the setup scripts are: `scoop list` still lists a failed install.
 
 ### Flow 2 — Console service verifier
 
@@ -133,20 +253,104 @@ without it. All other checks are offline.
 
 ## Setup Scripts (Run in Order)
 
+### 0-init-prereqs.bat
+Runs `sources\init-prereqs.ps1`. Lays down the toolchain every later script assumes: **portable git
+and gh first**, then Chocolatey, Scoop + buckets, 7-Zip, Python, VC++ redistributables, .NET
+runtimes, Temurin JDK 17/8, nvm + Node LTS, and the WSL2 prerequisites.
+
+> **git is bootstrapped from a zip before any package manager exists, and the order is the whole
+> point.** Scoop cannot function without git — `scoop update` and every `scoop bucket add` are git
+> operations. The original order ran `scoop update` and only *then* installed git *through Scoop*,
+> so on a genuinely fresh machine the run died at `Scoop update failed` before ever reaching the
+> line that would have fixed it. Now MinGit (`git-for-windows/git`) and gh (`cli/cli`) are
+> extracted from their official release zips into `%ProgramData%\PCSetup\bootstrap` — no
+> Chocolatey, no Scoop, no MSI, no installer. Only git is strictly required by Scoop; gh rides
+> along because `sync-secrets` and script 3 need it and it is the same two lines.
+
+> **Bootstrap PATH entries are appended last, never prepended.** Scoop installs its own managed
+> `git`/`gh` later, and those shims have to win over the portable copies. `Refresh-SetupEnvironment`
+> rebuilds `$env:Path` from scratch on every call, so it re-appends `$script:BootstrapPaths` at the
+> end — drop that and the bootstrap disappears from PATH mid-run, taking `scoop bucket add` with it.
+
+> The bootstrap deliberately uses `[Net.WebClient]` + `[IO.Compression.ZipFile]` instead of
+> `Invoke-WebRequest` + `Expand-Archive`. Those cmdlets live in `Microsoft.PowerShell.Utility` /
+> `.Archive`, which an inherited PS7 `PSModulePath` can make unloadable — the same failure this
+> script already works around with `Ensure-GetFileHashCommand`, and which `0-init-prereqs.bat` now
+> prevents outright with `set "PSModulePath="`.
+
 ### 1-delete-node-modules.bat
 Recursively finds and deletes all `node_modules` folders on all fixed hard drives. Useful for reclaiming disk space.
 
 ### 2-setup-windows.bat
-Main Windows setup script. Installs Chocolatey and a comprehensive set of applications including browsers, development tools, media players, and utilities. Also installs Discord Canary, Chrome Remote Desktop, WSL, Claude Code, and the main Windows runtimes.
+Main Windows application setup. **Chocolatey, Scoop, 7-Zip, Python, Git, gh, VC++ redistributables
+and the .NET runtimes come from `0-init-prereqs.bat`**, not from here. This script installs the
+applications, deploys the WezTerm config + PowerShell profile block, and sets up WSL + Claude Code.
 
-**Installed packages:** Chrome, Discord, DirectX, 7zip, WinRAR, VLC, K-Lite Codec Pack, Spotify, HandBrake, ShareX, Python, Notepad++, Telegram, pCloud, RDM, qBittorrent, Cloudflared, Warp, Winamp, Firefox, PuTTY, WinSCP, BleachBit, Bulk Crap Uninstaller, WizTree, EarTrumpet, Git, Sourcetree, VS Code, GitHub Desktop, GitHub CLI, OnTopReplica, OnlyOffice, NVIDIA App, VC++ Redistributables, .NET runtimes, Streamlabs OBS, ProtonVPN, 2FAGuard, Claude Desktop, Kiro, Claude Code, WezTerm, Clink (autorun-enabled for cmd.exe), PowerShell 7, JetBrainsMono Nerd Font
+Apps are declared in two tables — `$scoopApps` and `$wingetApps` (a row is `Id`, `Name`, and
+optional `Source` for msstore-only packages). Every entry is verified after install and anything
+that failed is listed at the end, with the script exiting non-zero.
+
+**Scoop:** Chrome, Discord, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
+**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, NVIDIA App (msstore)
+**Direct download:** Discord Canary, Chrome Remote Desktop, Mudfish, IceDrive (+ Dokan)
+**Other:** Claude Code (Windows and inside WSL), WSL itself
+
+> **A failed Scoop install is sticky, and detection must not use `scoop list`.** Scoop keeps a
+> failed app in `scoop list` forever with an empty `Version` and `Info='Install failed'`, so the old
+> `$installed -match "(?m)^\s*$package\s+"` check matched it and printed *"already installed,
+> skipping"* on every subsequent run. **VLC sat uninstalled for weeks because of this** — the one
+> app that had failed was the one app the script would never retry. Detection is now
+> `scoop prefix <app>`, which resolves the `current` junction that a failed install does not have;
+> `scoop install` then purges the broken copy and retries on its own.
+
+> **A direct-installer failure must not `throw`.** `Install-DirectExe`/`Install-DirectMsi` and the
+> Mudfish/IceDrive blocks used to throw on failure, which aborted the entire script — one bad
+> download meant *everything after it* (2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7,
+> WezTerm, the config deployment, Claude Code and the whole WSL section) silently never ran. They
+> now record the failure and continue.
+
+> **Never trust winget's exit code.** It returns nonzero for benign states such as "no applicable
+> upgrade found", so `return ($LASTEXITCODE -eq 0)` reported false failures. Installs are confirmed
+> with `winget list --id <id> -e` instead.
+
+> **Two entries were dead and failing silently:** `winamp` was removed from every Scoop bucket
+> upstream (now installed as `Winamp.Winamp` via winget), and `Nvidia.NVIDIAApp` has never been a
+> valid winget ID — the NVIDIA App is msstore-only, so it uses `XP8CLZL93F5Z4P` with
+> `--source msstore`.
 
 Also deploys `%USERPROFILE%\.wezterm.lua` (GPU-accelerated config with Catppuccin Mocha theme, multi-shell profiles, Ctrl+Shift keybindings for tabs/panes) and appends a WezTerm bell-notification block to `$PROFILE` (fires a Windows toast + tab flash when a command takes ≥ 10 seconds).
 
 ### 3-setup-node.bat
-Dedicated Node.js setup step. Refreshes environment variables before and after installing `nvm`, installs Node.js LTS with `nvm`, refreshes the environment again after `nvm use lts`, then installs npm-based CLI tools.
+Installs the npm-based CLI tools. **nvm and Node LTS are installed by `0-init-prereqs.bat`**, not
+here — this script requires them and exits 1 with a pointer to script 0 if they are missing. Each
+package is retried up to 3 times and verified by resolving its shim afterwards; the script exits
+non-zero listing anything that failed.
 
-**Installed packages:** nvm, Node.js LTS, OpenAI Codex CLI, GitHub Copilot CLI, gh-copilot extension (when GitHub CLI is authenticated)
+**Installed packages:** OpenAI Codex CLI (`@openai/codex`), GitHub Copilot CLI (`@github/copilot`)
+
+Packages are declared in one `$npmPackages` table — add a CLI by adding a row (`Package`, `Name`,
+`Command`). The installed-check lives *inside* `Install-NpmGlobalPackage`, mirroring
+`Install-ScoopPackage` in `sources\init-prereqs.ps1`, so every row is guaranteed to end up
+installed or reported as a failure; no call site can quietly opt a package out.
+
+> **There is deliberately no gh-copilot extension step, and it cannot be added back.** The
+> `github/gh-copilot` repo was archived in October 2025, and modern `gh` ships a built-in
+> `gh copilot` command — so `gh extension install github/gh-copilot` now aborts with
+> `"copilot" matches the name of a built-in command or alias` (exit 1) no matter how the machine is
+> authenticated. `gh copilot` shells out to the standalone Copilot CLI that this script installs,
+> so the capability is fully covered. The old branch could only ever fail or be skipped.
+
+> **Redirection goes first on every generated line: `>>"%SCRIPT%" echo ...`.** Written the other
+> way round, a line ending in a **standalone digit** is read by CMD as a file-handle redirect.
+> `echo     $maxAttempts = 3>>"%SCRIPT%"` meant "append handle 3 to the file" — the `3` was eaten
+> and `$maxAttempts = ` went to the console instead of the script. `$maxAttempts` was then `$null`,
+> `1 -le $null` is false, so the retry loop **never ran a single attempt**: neither CLI was ever
+> installed, every run printed `installation failed after  attempts` (note the missing number), and
+> the script still exited 0. Only a *standalone* digit triggers this — the neighbouring
+> `-bor 3072>>"%SCRIPT%"` is fine because `2` is preceded by `7`, not a space.
+
+> **Script 3 no longer needs `gh` at all**, now that the extension step is gone — it only reports
+> that `gh copilot` is built in. Nothing here depends on `gh auth login` having been run.
 
 ### 4-fix-execution-policy.bat
 Sets PowerShell execution policy to `RemoteSigned` for the current user, allowing scripts like Claude Code to run in PowerShell.
@@ -155,9 +359,35 @@ Sets PowerShell execution policy to `RemoteSigned` for the current user, allowin
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
 ### 6-setup-games.bat
-Game-related applications setup. Installs gaming platforms, launchers, and tools. Checks if XIVLauncher and FFLogs are already installed before downloading.
+Game-related applications setup. Installs gaming platforms, launchers, and tools. Every item is
+verified after install (`scoop prefix`, `winget list`, or a known install path) rather than trusted
+to have worked, and the script exits non-zero listing whatever failed.
 
 **Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge (via winget), Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
+
+> **The `games` Scoop bucket is added here, not by `0-init-prereqs.bat`.** `steam`,
+> `epic-games-launcher`, and `prismlauncher` live only in `games`; without it Scoop cannot resolve
+> them and the installs silently no-op. `steam` also exists in `versions`, so all three are
+> installed bucket-qualified (`games/steam`) — an unqualified ambiguous name lets Scoop pick a
+> bucket for you.
+
+> **Never let Windows PowerShell inherit PowerShell 7's `PSModulePath`.** The `.bat` files spawn
+> `powershell.exe`, which inherits the caller's environment — and WezTerm's default shell is PS7.
+> PS5 then finds the Core-only `Microsoft.PowerShell.Utility`/`.Security` under the PS7 module dirs
+> *first* and refuses to load them, so `Get-FileHash` and `Set-ExecutionPolicy` vanish. Every Scoop
+> install then dies with the deeply unhelpful `URL <...> is not valid` (that is Scoop failing to
+> hash the download), and the script still reports success. `set "PSModulePath="` before the
+> `powershell` call makes it rebuild the correct default. Symptom to watch for: installs fail only
+> when the script is launched from a pwsh terminal, and work when launched from Explorer or cmd.
+
+> **TexTools ships zip-only since v3.1.1.3b.** The `Install_TexTools.exe` release asset is gone, so
+> the script prefers the installer if present and otherwise extracts the portable zip (no top-level
+> folder) to `%LOCALAPPDATA%\TexTools`. The old code piped an empty URL into curl and then tried to
+> run a file that was never downloaded.
+
+> **FFLogs installs to `%LOCALAPPDATA%\Programs\FF Logs Uploader`** — not `\FFLogs` or
+> `\Programs\fflogs`. Checking only those two meant the 178 MB installer was re-downloaded and
+> re-run on every single invocation.
 
 ### 7-context-menu-terminal-install.bat
 Enables the classic Windows context menu (always shows full menu instead of Windows 11's simplified version) and adds "Open in Terminal as Administrator", "Open in PowerShell as Administrator", "Open Git Bash here as Administrator", and "Open in WezTerm as Administrator" to the context menu for directories, directory backgrounds, and drives. Also removes the default non-admin "Open WezTerm here" entries added by WezTerm's own installer (so only the admin entry appears).
@@ -219,9 +449,22 @@ Work environment setup. Installs work-related applications via Chocolatey and Wi
 Relocates the Windows Downloads folder to a different drive (default: Z:). Separated from the main profile folders script for users who prefer Downloads on the system drive.
 
 ### optional/setup-start-menu.bat
-Backup and restore tool for Windows 11 Start Menu pinned apps layout. Option [1] backs up your current Start Menu layout to `start-menu-backup.bin` in the same folder. Option [2] restores the layout from the backup file. Use this to preserve your pinned apps arrangement across Windows reinstalls.
+Backup and restore tool for Windows 11 Start Menu pinned apps layout, backed by `start-menu-backup.bin`
+in the same folder. Takes `backup` or `restore` as an argument so it can run unattended (the repo's
+no-pauses rule); with no argument it falls back to the interactive prompt. Both directions verify by
+file size — a 0-byte backup is refused rather than silently restoring an empty Start Menu.
 
-### optional/setup-makeplace.bat
+### Undocumented optional scripts
+These exist in `optional/` and are **not** covered by the audit above — they still have the original
+no-verification shape:
+
+| File | Purpose |
+|---|---|
+| `optional/setup-optional-software.bat` | Additional software installs |
+| `optional/shallow-clone-ffxiv-profiles.bat` | Shallow-clones FFXIV profile repos |
+| `optional/open-rufus-latest.bat` | Opens the latest Rufus |
+
+### optional/setup-makeplace-ffxiv.bat
 Downloads and installs Re:MakePlace (community-maintained fork) directly from GitHub. Re:MakePlace is a standalone FFXIV housing layout preview/editor tool that lets you design and share housing layouts. Installs to `%LOCALAPPDATA%\ReMakePlace` since the app requires write permissions. Downloads 7-Zip portable if not already installed. Does not require Chocolatey. Launches the app after installation.
 
 **Installed packages:** Re:MakePlace (from GitHub), 7-Zip (signed installer, if needed)

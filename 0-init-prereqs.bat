@@ -9,6 +9,13 @@ if %errorlevel% neq 0 (
 :after_admin_check
 
 setlocal
+
+:: Windows PowerShell must not inherit PowerShell 7's PSModulePath, or it finds the Core-only
+:: Microsoft.PowerShell.Utility/Security first and refuses to load them - Invoke-RestMethod and
+:: Get-FileHash then vanish and the bootstrap fails in confusing ways. Clearing it here (inside
+:: setlocal) makes powershell.exe rebuild its own default.
+set "PSModulePath="
+
 set "SCRIPT=%~dp0sources\init-prereqs.ps1"
 if not exist "%SCRIPT%" (
     echo ERROR: Missing prerequisite script: %SCRIPT%
