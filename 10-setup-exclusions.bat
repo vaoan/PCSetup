@@ -10,6 +10,13 @@ if %errorlevel% neq 0 (
 
 setlocal
 
+:: Windows Defender is not installed in Server Core, so Add-MpPreference/Get-MpPreference do
+:: not exist and every exclusion below would fail.
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping Defender exclusions
+    exit /b 0
+)
+
 :: Add-MpPreference/Get-MpPreference (Defender), Get-PackageProvider and Install-Module all live
 :: in modules. Inheriting PowerShell 7's PSModulePath makes Windows PowerShell refuse to load
 :: them, so every exclusion here would silently do nothing.

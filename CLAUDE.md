@@ -242,7 +242,32 @@ test-local.bat            # test against main branch
 test-local.bat my-branch  # test against a specific branch
 ```
 
-The `PCSETUP_CI=1` env var is set inside the container. Scripts 5 and 6 detect it and skip their body (profile folder relocation and game launchers don't work in containers).
+The `PCSETUP_CI=1` env var is set inside the container. `remote-call.ps1` installs the container
+prerequisites, then runs `run-all.bat` — so **every numbered script executes**. Six skip their own
+body on that flag because Server Core physically cannot run them:
+
+| Skipped in CI | Why |
+|---|---|
+| `2-setup-windows.bat` | no winget (App Installer is absent and cannot be added), no WSL; the Scoop table alone is ~25 desktop apps per build |
+| `5-move-profile-folders.bat` | no user profile to relocate |
+| `6-setup-games.bat` | game launchers don't install headless |
+| `10-setup-exclusions.bat` | Defender isn't installed, so `Add-MpPreference` doesn't exist |
+| `11-setup-win11debloat.bat` | none of the consumer Appx packages are present |
+| `99-remove-windows-ai.bat` | no Copilot/Recall to remove |
+
+Scripts **0, 1, 3, 4, 7, 8 and 9 run for real**, and `container.tests.ps1` asserts their effects
+(execution policy, long paths, the npm CLIs) rather than merely that the files exist.
+
+> **The CI branch used to `return` before running anything.** `remote-call.ps1` had
+> `if ($env:PCSETUP_CI -eq '1') { ...bootstrap... } else { run-all.bat }` — so in the container it
+> installed Chocolatey, git, python, gh and nvm and then **stopped**. Pester asserted against a
+> machine that had never run a single setup script, which is why "Scoop installed" was red and why
+> none of the `run-all.bat` defects (empty `PSModulePath`, stale `%errorlevel%`, always exiting 0)
+> were ever caught here. The bootstrap is a prerequisite for the run, not a substitute for it.
+
+> **Keep the CI guards asserted.** `container.tests.ps1` checks that each of the six still contains
+> its `PCSETUP_CI` skip block. Delete one by accident and the container build starts failing for
+> reasons that say nothing about the code being tested.
 
 > **Assert against the package manager that actually installs the app.** The WinRAR/VLC/Streamlabs
 > checks hardcoded Chocolatey-era `C:\Program Files\...` paths and were never updated when the repo

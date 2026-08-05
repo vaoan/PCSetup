@@ -215,17 +215,21 @@ try {
             }
         }
     }
-    else {
-        $runAllPath = Join-Path $workDir "run-all.bat"
-        if (-not (Test-Path $runAllPath)) {
-            throw "run-all.bat was not found in the remote archive."
-        }
 
-        Write-Host "Executing remote runner from temp workspace: $workDir" -ForegroundColor Cyan
-        $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$runAllPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
-        if ($proc.ExitCode -ne 0) {
-            throw "Remote runner failed with exit code $($proc.ExitCode)."
-        }
+    # CI used to `return` here, so the container installed a handful of packages and never ran a
+    # single numbered script - the "full install" test asserted against a machine that had only
+    # been bootstrapped. The bootstrap above is a prerequisite for the run, not a substitute for
+    # it, so both paths now fall through to the runner. Scripts that cannot work in Server Core
+    # (2, 5, 6, 10, 11, 99) skip their own bodies on PCSETUP_CI=1.
+    $runAllPath = Join-Path $workDir "run-all.bat"
+    if (-not (Test-Path $runAllPath)) {
+        throw "run-all.bat was not found in the remote archive."
+    }
+
+    Write-Host "Executing remote runner from temp workspace: $workDir" -ForegroundColor Cyan
+    $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$runAllPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) {
+        throw "Remote runner failed with exit code $($proc.ExitCode)."
     }
 }
 finally {

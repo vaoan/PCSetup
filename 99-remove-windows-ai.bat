@@ -10,6 +10,13 @@ if %errorlevel% neq 0 (
 
 setlocal
 
+:: Server Core has no Copilot/Recall to remove, and the remote script targets Appx packages
+:: that do not exist there.
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping Windows AI removal
+    exit /b 0
+)
+
 :: Get-AppxPackage and friends live in modules the remote script relies on; an inherited
 :: PowerShell 7 PSModulePath makes Windows PowerShell refuse to load them.
 set "PSModulePath="

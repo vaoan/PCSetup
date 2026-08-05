@@ -10,6 +10,15 @@ if %errorLevel% neq 0 (
 
 SETLOCAL
 
+:: Server Core has no winget (App Installer is not present and cannot be added), no Appx
+:: surface worth speaking of, and no WSL - so the winget table, the direct-download GUI
+:: installers and the WSL/Claude Code section cannot run in a container at all. The Scoop
+:: table would technically install, but it is ~25 desktop apps and several GB per build.
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping Windows application setup
+    exit /b 0
+)
+
 :: Windows PowerShell must not inherit PowerShell 7's PSModulePath. If it does, it finds the
 :: Core-only Microsoft.PowerShell.Utility/Security first and refuses to load them - Get-FileHash
 :: disappears and every Scoop install then dies with "URL ... is not valid".

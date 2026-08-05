@@ -10,6 +10,12 @@ if %errorlevel% neq 0 (
 
 setlocal
 
+:: Server Core ships none of the consumer Appx packages Win11Debloat removes, and no OneDrive.
+if "%PCSETUP_CI%"=="1" (
+    echo SKIP: CI mode - skipping Win11Debloat
+    exit /b 0
+)
+
 :: Win11Debloat and the OneDrive cleanup lean on Get-AppxPackage / Get-ScheduledTask, which live
 :: in modules. An inherited PowerShell 7 PSModulePath makes Windows PowerShell refuse to load
 :: them, so the debloat would appear to run and remove nothing.

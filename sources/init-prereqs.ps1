@@ -588,6 +588,14 @@ if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
     throw 'npm is not available after nvm use lts.'
 }
 
-Enable-WslPrerequisites
+if ($env:PCSETUP_CI -eq '1') {
+    # A Server Core container has no hypervisor, no Appx surface and no winget, so every step
+    # in here can only warn. Skipping keeps the CI build from spending minutes on dism and
+    # winget calls whose failure is a foregone conclusion.
+    Write-Host "SKIP: CI mode - skipping WSL prerequisites." -ForegroundColor Yellow
+}
+else {
+    Enable-WslPrerequisites
+}
 
 Write-Host "Prerequisite initialization complete." -ForegroundColor Green
