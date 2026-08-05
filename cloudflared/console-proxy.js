@@ -10,33 +10,51 @@
 const http = require('http');
 const net  = require('net');
 const fs   = require('fs');
+const os   = require('os');
 const path = require('path');
 
 const PROXY_PORT    = 7681;
 const UPSTREAM_PORT = 7682;
 
+// Resolve, don't hardcode: the profile name is not always "Heiner" (this machine
+// is C:\Users\HeinerPC). setup-console-wsl.sh generates these keys into
+// /mnt/c/Users/$WIN_USER/Documents/Cloudflare/sshwifty/keys, and the PowerShell
+// scripts all use "$env:USERPROFILE\Documents\Cloudflare" — os.homedir() is the
+// same directory, so all three agree on any profile.
+const KEY_DIR = path.join(os.homedir(), 'Documents', 'Cloudflare', 'sshwifty', 'keys');
+
 const PRIVATE_KEY_FILES = {
-  'WSL Terminal (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/wsl-terminal',
-  'WSL Shell (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/wsl-shell',
-  'Candystore (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/candystore',
-  'Candystore (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/candystore-shell',
-  'Eclipse-con (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/eclipse-con',
-  'Eclipse-con (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/eclipse-con-shell',
-  'Puck (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/puck',
-  'Puck (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/puck-shell',
-  'AeleOS (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/aeleos',
-  'AeleOS (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/aeleos-shell',
-  'PCSetup (Persistent)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/pcsetup',
-  'PCSetup (Fresh)': 'C:/Users/Heiner/Documents/Cloudflare/sshwifty/keys/pcsetup-shell',
+  'WSL Terminal (Persistent)': 'wsl-terminal',
+  'WSL Shell (Fresh)': 'wsl-shell',
+  'Candystore (Persistent)': 'candystore',
+  'Candystore (Fresh)': 'candystore-shell',
+  'Eclipse-con (Persistent)': 'eclipse-con',
+  'Eclipse-con (Fresh)': 'eclipse-con-shell',
+  'Puck (Persistent)': 'puck',
+  'Puck (Fresh)': 'puck-shell',
+  'AeleOS (Persistent)': 'aeleos',
+  'AeleOS (Fresh)': 'aeleos-shell',
+  'PCSetup (Persistent)': 'pcsetup',
+  'PCSetup (Fresh)': 'pcsetup-shell',
 };
 
-function readPrivateKey(filePath) {
-  return fs.readFileSync(filePath, 'utf8');
-}
-
+// One unreadable key must not take the whole proxy down. These are read at module
+// load and only ever get JSON-serialized into the page for autofill, so a missing
+// entry costs that one preset its key — not console.ffxiv.be entirely.
 const privateKeys = {};
-for (const [title, relPath] of Object.entries(PRIVATE_KEY_FILES)) {
-  privateKeys[title] = readPrivateKey(relPath);
+const missingKeys = [];
+for (const [title, keyName] of Object.entries(PRIVATE_KEY_FILES)) {
+  const keyPath = path.join(KEY_DIR, keyName);
+  try {
+    privateKeys[title] = fs.readFileSync(keyPath, 'utf8');
+  } catch (err) {
+    missingKeys.push(`${title} -> ${keyPath} (${err.code || err.message})`);
+  }
+}
+if (missingKeys.length) {
+  console.error(`[console-proxy] WARNING: ${missingKeys.length}/${Object.keys(PRIVATE_KEY_FILES).length} preset key(s) unreadable; those presets will not autofill:`);
+  for (const m of missingKeys) console.error(`[console-proxy]   - ${m}`);
+  console.error('[console-proxy] Run setup-console-wsl.sh (generates the keys), then setup-console-windows.ps1.');
 }
 
 const launcherSrc = fs.readFileSync(path.join(__dirname, 'console-launcher.js'), 'utf8');
