@@ -254,6 +254,22 @@ test-local.bat            # test against main branch
 test-local.bat my-branch  # test against a specific branch
 ```
 
+**Automated:** `.github/workflows/container-test.yml` runs the same `docker build` on every push to
+`main`, every PR, and on demand (`gh workflow run container-test.yml -f branch=<name>`). Locally
+this needs Docker Desktop in Windows-containers mode, which is exactly why it went unrun for so
+long — and why `remote-call.ps1` could return before executing a single setup script without
+anyone noticing.
+
+> **`runs-on: windows-2022` is load-bearing.** The image is `servercore:ltsc2022`, and a Windows
+> container needs a host kernel of the same build — on `windows-2025` it will not start unless the
+> image is retagged to match.
+
+> **The container installs from GitHub, not from the checkout.** `Dockerfile.test` fetches
+> `https://i.ffxiv.be/?branch=<branch>`, so it tests the branch **as pushed**; `actions/checkout`
+> only supplies the build context and the `tests/` copy. A pull request from a fork would 404
+> inside the container, so the job skips those rather than failing misleadingly. It also means a
+> local commit proves nothing until it is pushed.
+
 The `PCSETUP_CI=1` env var is set inside the container. `remote-call.ps1` installs the container
 prerequisites, then runs `run-all.bat` — so **every numbered script executes**. Six skip their own
 body on that flag because Server Core physically cannot run them:

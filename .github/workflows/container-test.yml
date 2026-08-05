@@ -1,0 +1,76 @@
+# Builds Dockerfile.test on a Windows runner, which installs PCSetup into a clean Windows
+# Server Core container and then runs tests/container.tests.ps1 against it.
+#
+# This is the only automated check that the fresh-machine install path works. Running it by
+# hand (test-local.bat) needs Docker Desktop in Windows-containers mode, which is why it went
+# years without being run - and why remote-call.ps1 could return before running a single setup
+# script without anyone noticing.
+
+name: Container setup test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to install inside the container (defaults to the triggering ref)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # A Server Core build is slow and the runners are shared - never queue two for the same ref.
+  group: container-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container-install:
+    # windows-2022 is required, not incidental: the image is servercore:ltsc2022 and a Windows
+    # container needs a host kernel of the same build. On windows-2025 this fails to start
+    # unless the image is retagged to ltsc2025 as well.
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    # Dockerfile.test installs from https://i.ffxiv.be/?branch=<branch>, which resolves to
+    # github.com/vaoan/PCSetup - so the branch has to exist on THIS repo. A pull request from a
+    # fork would 404 inside the container and fail for a reason that says nothing about the code.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Check out repository
+        # Provides the working directory for `docker build` and the copy of tests/ that the
+        # image runs. Note the INSTALL still comes from the branch on GitHub, not from here.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve the branch to install
+        run: |
+          $branch = '${{ inputs.branch }}'
+          if (-not $branch) { $branch = '${{ github.head_ref }}' }
+          if (-not $branch) { $branch = '${{ github.ref_name }}' }
+          Write-Host "Installing branch: $branch"
+          "BRANCH=$branch" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Confirm Docker is in Windows-container mode
+        run: |
+          $os = (docker version --format '{{.Server.Os}}').Trim()
+          Write-Host "Docker server OS: $os"
+          if ($os -ne 'windows') {
+            throw "Runner is in '$os' container mode. Dockerfile.test needs Windows containers."
+          }
+
+      - name: Build the test image
+        # The build IS the test: the RUN layers execute run-all.bat and then Pester, so a
+        # non-zero exit from either fails the build. --progress=plain keeps the per-script
+        # output from run-all.bat readable in the log, which is where a failure gets diagnosed.
+        run: docker build --build-arg BRANCH=$env:BRANCH -f Dockerfile.test . --progress=plain
+
+      - name: Report container disk usage
+        if: always()
+        run: docker system df
