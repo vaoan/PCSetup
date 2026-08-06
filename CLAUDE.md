@@ -328,6 +328,38 @@ cloudflared\verify-console.ps1
 
 Checks port connectivity, HTTP 200 responses, and WSL systemd service status. Exits 0 if all pass, 1 if any fail.
 
+### Flow 2b — Full install in a Windows 11 VM (nothing skipped)
+
+```powershell
+tests\vm\run-vm-test.ps1              # first run: installs Windows, ~20 min, then checkpoints
+tests\vm\run-vm-test.ps1 -Revert      # every later run: reverts to the checkpoint, skips the install
+tests\vm\run-vm-test.ps1 -BuildIsoOnly  # just build the answer ISO (debugging this script)
+```
+
+The Docker suite can only ever cover part of the repo. This covers **all 13 scripts**, because a
+real Windows 11 desktop has the four things Server Core does not: winget, the consumer Appx
+packages, Defender, and WSL. `PCSETUP_CI` is deliberately **not** set in the guest, so scripts 2,
+5, 6, 10, 11 and 99 run their real bodies — the container guards are inert outside the container.
+
+- Generation 2 VM with **vTPM and Secure Boot**, so Windows 11's requirements are met rather than
+  bypassed. A bypassed install is not the machine this repo targets.
+- `autounattend.xml` is burned into a **56 KB second ISO** rather than repacked into the 8 GB
+  Windows ISO, so editing the answer file costs nothing.
+- The guest is driven over **PowerShell Direct** (`Invoke-Command -VMName`), which runs over VMBus
+  — no guest IP, firewall rule or WinRM setup, and it works before the network is up.
+- The install itself is `irm i.ffxiv.be | iex`, i.e. the documented fresh-machine path. **It pulls
+  the branch from GitHub, so unpushed local commits are not what gets tested.**
+
+> **`param()` must come before the auto-elevation block here.** PowerShell requires `param()` to be
+> the first statement in a file, so the elevate-first form used by every other `.ps1` in this repo
+> is a parse error in a script that takes parameters. The block sits after `param()` and forwards
+> `$PSBoundParameters` so the elevated copy runs the same command.
+
+> **`CreateResultImage()` returns a COM `IStream` PowerShell cannot read.** It arrives as
+> `System.__ComObject`, and calling `.Read()` fails with *"does not contain a method named 'Read'"*.
+> The copy goes through a small `Add-Type` helper that casts to `ComTypes.IStream`;
+> `Marshal.ReadInt32` supplies the bytes-read out-parameter so no `/unsafe` compile is needed.
+
 ### Flow 3 — Recovery contract tests
 
 ```powershell
