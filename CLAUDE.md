@@ -303,6 +303,15 @@ Scripts **0, 1, 3, 4, 7, 8 and 9 run for real**, and `container.tests.ps1` asser
 > its `PCSETUP_CI` skip block. Delete one by accident and the container build starts failing for
 > reasons that say nothing about the code being tested.
 
+> **Data-driven `It`s need `BeforeDiscovery` + `-ForEach`, never a `foreach` loop.** Pester
+> generates `It` blocks during **discovery** and runs their bodies later, in the **run** phase — a
+> loop variable from discovery no longer exists by then. Written as
+> `foreach ($name in $list) { It "$name ..." { ...$name... } }`, all six guard tests were generated
+> with the right names and then failed identically with
+> `Could not find a part of the path 'C:\workspace\'`: `$name` was empty inside the body, so
+> `"..\$name"` collapsed to the repo root. It looks like a path bug and is a scoping bug. Same
+> discovery-vs-run trap as the `-Skip:` note under Flow 3.
+
 > **Assert against the package manager that actually installs the app.** The WinRAR/VLC/Streamlabs
 > checks hardcoded Chocolatey-era `C:\Program Files\...` paths and were never updated when the repo
 > moved to Scoop, so they were permanently red — which is exactly why VLC being genuinely

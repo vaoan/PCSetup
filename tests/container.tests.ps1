@@ -113,20 +113,27 @@ Describe "container-incompatible scripts opt out explicitly" {
     # Server Core has no winget, no Defender and no consumer Appx packages. Those scripts skip
     # their own bodies on PCSETUP_CI=1 rather than failing the run - but the guard has to stay
     # present, or the container build starts failing for reasons that say nothing about the code.
-    $skipScripts = @(
-        '2-setup-windows.bat'
-        '5-move-profile-folders.bat'
-        '6-setup-games.bat'
-        '10-setup-exclusions.bat'
-        '11-setup-win11debloat.bat'
-        '99-remove-windows-ai.bat'
-    )
+    # BeforeDiscovery + -ForEach, NOT `foreach ($name in ...) { It "$name" { ... } }`. Pester
+    # generates the It blocks during discovery but runs their bodies later, in the run phase,
+    # where a discovery-phase loop variable no longer exists. Written the loop way, all six tests
+    # were generated with the correct names and then failed identically with
+    # "Could not find a part of the path 'C:\workspace\'" - $name was empty inside the body, so
+    # "..\$name" collapsed to the repo root. Same discovery-vs-run trap as the -Skip: note on
+    # recovery.tests.ps1.
+    BeforeDiscovery {
+        $skipScripts = @(
+            '2-setup-windows.bat'
+            '5-move-profile-folders.bat'
+            '6-setup-games.bat'
+            '10-setup-exclusions.bat'
+            '11-setup-win11debloat.bat'
+            '99-remove-windows-ai.bat'
+        )
+    }
 
-    foreach ($name in $skipScripts) {
-        It "$name skips its body under PCSETUP_CI" {
-            $body = Get-Content (Join-Path $PSScriptRoot "..\$name") -Raw
-            $body | Should -Match 'if "%PCSETUP_CI%"=="1" \('
-            $body | Should -Match 'SKIP: CI mode'
-        }
+    It "<_> skips its body under PCSETUP_CI" -ForEach $skipScripts {
+        $body = Get-Content (Join-Path $PSScriptRoot "..\$_") -Raw
+        $body | Should -Match 'if "%PCSETUP_CI%"=="1" \('
+        $body | Should -Match 'SKIP: CI mode'
     }
 }
