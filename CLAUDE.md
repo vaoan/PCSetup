@@ -887,8 +887,8 @@ Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forc
 |---|---|---|
 | WSL Persistent | `console` | `~` |
 | WSL Fresh | *(plain bash)* | `~` |
-| Candystore Persistent | `candyshop` | `/mnt/z/Github/candystore` |
-| Candystore Fresh | *(plain bash)* | `/mnt/z/Github/candystore` |
+| Libra Persistent | `libra` | `/mnt/z/Github/libra` |
+| Libra Fresh | *(plain bash)* | `/mnt/z/Github/libra` |
 | Eclipse-con Persistent | `eclipse-con` | `/mnt/z/Github/eclipse-con` |
 | Eclipse-con Fresh | *(plain bash)* | `/mnt/z/Github/eclipse-con` |
 | Puck Persistent | `puck` | `/mnt/z/Github/puck` |

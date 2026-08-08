@@ -7,8 +7,8 @@
   const PRESETS = [
     { group: 'WSL',           sub: 'Persistent', title: 'WSL Terminal (Persistent)' },
     { group: 'WSL',           sub: 'Fresh',      title: 'WSL Shell (Fresh)'         },
-    { group: 'Candystore',    sub: 'Persistent', title: 'Candystore (Persistent)'   },
-    { group: 'Candystore',    sub: 'Fresh',      title: 'Candystore (Fresh)'        },
+    { group: 'Libra',    sub: 'Persistent', title: 'Libra (Persistent)'   },
+    { group: 'Libra',    sub: 'Fresh',      title: 'Libra (Fresh)'        },
     { group: 'Eclipse-con',   sub: 'Persistent', title: 'Eclipse-con (Persistent)'  },
     { group: 'Eclipse-con',   sub: 'Fresh',      title: 'Eclipse-con (Fresh)'       },
     { group: 'Puck',          sub: 'Persistent', title: 'Puck (Persistent)'         },
@@ -21,7 +21,7 @@
 
   const GROUP_COLORS = {
     'WSL':         '#4caf82',
-    'Candystore':  '#7b6fcf',
+    'Libra':  '#7b6fcf',
     'Eclipse-con': '#d17a5b',
     'Puck':        '#c76fa0',
     'AeleOS':      '#e0a54a',

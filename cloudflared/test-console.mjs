@@ -61,8 +61,8 @@ try {
 await page.screenshot({ path: 'console-loaded.png', fullPage: true });
 
 const presetTitles = [
-  'Candystore (Persistent)',
-  'Candystore (Fresh)',
+  'Libra (Persistent)',
+  'Libra (Fresh)',
   'Eclipse-con (Persistent)',
   'Eclipse-con (Fresh)',
   'Puck (Persistent)',

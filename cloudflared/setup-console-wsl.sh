@@ -11,7 +11,7 @@ WIN_HOST=$(cmd.exe /c "echo %COMPUTERNAME%" 2>/dev/null | tr -d '\r\n')
 SSHWIFTY_KEY_DIR="/mnt/c/Users/$WIN_USER/Documents/Cloudflare/sshwifty/keys"
 PCSETUP_DIR="/mnt/z/Users/Heiner/Documents/PCSetup"
 ECLIPSE_DIR="/mnt/z/Github/eclipse-con"
-CANDYSHOP_DIR="/mnt/z/Github/candystore"
+LIBRA_DIR="/mnt/z/Github/libra"
 PUCK_DIR="/mnt/z/Github/puck"
 AELEOS_DIR="/mnt/z/Github/aeleos"
 CODE_USER=$(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" && $7 !~ /(false|nologin)$/ { print $1; exit }')
@@ -52,8 +52,8 @@ restrict_key_permissions() {
 mkdir -p "$SSHWIFTY_KEY_DIR"
 ensure_keypair "$SSHWIFTY_KEY_DIR/wsl-terminal" 'sshwifty-wsl-terminal'
 ensure_keypair "$SSHWIFTY_KEY_DIR/wsl-shell" 'sshwifty-wsl-shell'
-ensure_keypair "$SSHWIFTY_KEY_DIR/candystore" 'sshwifty-candystore'
-ensure_keypair "$SSHWIFTY_KEY_DIR/candystore-shell" 'sshwifty-candystore-shell'
+ensure_keypair "$SSHWIFTY_KEY_DIR/libra" 'sshwifty-libra'
+ensure_keypair "$SSHWIFTY_KEY_DIR/libra-shell" 'sshwifty-libra-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/eclipse-con" 'sshwifty-eclipse-con'
 ensure_keypair "$SSHWIFTY_KEY_DIR/eclipse-con-shell" 'sshwifty-eclipse-con-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/puck" 'sshwifty-puck'
@@ -64,8 +64,8 @@ ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup" 'sshwifty-pcsetup'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup-shell" 'sshwifty-pcsetup-shell'
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-terminal"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-shell"
-restrict_key_permissions "$SSHWIFTY_KEY_DIR/candystore"
-restrict_key_permissions "$SSHWIFTY_KEY_DIR/candystore-shell"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/libra"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/libra-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/eclipse-con"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/eclipse-con-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/puck"
@@ -148,8 +148,8 @@ chmod 700 /root/.ssh
 cat > /root/.ssh/authorized_keys << AUTHKEYS
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s console'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/wsl-terminal.pub") sshwifty
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/wsl-shell.pub") sshwifty-shell
-command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s candyshop -c /mnt/z/Github/candystore'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/candystore.pub") sshwifty-candystore
-command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/candystore && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/candystore-shell.pub") sshwifty-candystore-shell
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s libra -c /mnt/z/Github/libra'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/libra.pub") sshwifty-libra
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/libra && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/libra-shell.pub") sshwifty-libra-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s eclipse-con -c /mnt/z/Github/eclipse-con'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/eclipse-con.pub") sshwifty-eclipse-con
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/eclipse-con && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/eclipse-con-shell.pub") sshwifty-eclipse-con-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s puck -c /mnt/z/Github/puck'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/puck.pub") sshwifty-puck
@@ -212,7 +212,7 @@ echo "[setup-console-wsl] fix-terminal helper installed"
 # -- 5. wetty fallback shell script -------------------------------------------
 cat > /usr/local/bin/wetty-start-shell.sh << 'WETTYSHELL'
 #!/bin/bash
-exec tmux new-session -A -s main -c /mnt/z/Github/candystore
+exec tmux new-session -A -s main -c /mnt/z/Github/libra
 WETTYSHELL
 chmod +x /usr/local/bin/wetty-start-shell.sh
 
