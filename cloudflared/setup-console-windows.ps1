@@ -194,8 +194,8 @@ if (Test-Path $sshwiftyKeyDir) {
     $presetSpecs = @(
         @{ Title = 'WSL Terminal (Persistent)'; KeyBase = 'wsl-terminal' },
         @{ Title = 'WSL Shell (Fresh)';         KeyBase = 'wsl-shell' },
-        @{ Title = 'Candystore (Persistent)'; KeyBase = 'candystore' },
-        @{ Title = 'Candystore (Fresh)';      KeyBase = 'candystore-shell' },
+        @{ Title = 'Libra (Persistent)'; KeyBase = 'libra' },
+        @{ Title = 'Libra (Fresh)';      KeyBase = 'libra-shell' },
         @{ Title = 'Eclipse-con (Persistent)'; KeyBase = 'eclipse-con' },
         @{ Title = 'Eclipse-con (Fresh)';      KeyBase = 'eclipse-con-shell' },
         @{ Title = 'Puck (Persistent)';        KeyBase = 'puck' },
@@ -220,7 +220,7 @@ if (Test-Path $sshwiftyKeyDir) {
     }
 
     [IO.File]::WriteAllText($sshwiftyConfPath, ($sshwiftyConfig | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
-    Write-Log "sshwifty presets synchronized (Candystore, Eclipse-con, Puck, AeleOS, PCSetup) -> $wslSshHost"
+    Write-Log "sshwifty presets synchronized (Libra, Eclipse-con, Puck, AeleOS, PCSetup) -> $wslSshHost"
 } else {
     Fail "Missing generated key directory: $sshwiftyKeyDir. Run setup-console-wsl.sh before setup-console-windows.ps1."
 }

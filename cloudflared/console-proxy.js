@@ -26,8 +26,8 @@ const KEY_DIR = path.join(os.homedir(), 'Documents', 'Cloudflare', 'sshwifty', '
 const PRIVATE_KEY_FILES = {
   'WSL Terminal (Persistent)': 'wsl-terminal',
   'WSL Shell (Fresh)': 'wsl-shell',
-  'Candystore (Persistent)': 'candystore',
-  'Candystore (Fresh)': 'candystore-shell',
+  'Libra (Persistent)': 'libra',
+  'Libra (Fresh)': 'libra-shell',
   'Eclipse-con (Persistent)': 'eclipse-con',
   'Eclipse-con (Fresh)': 'eclipse-con-shell',
   'Puck (Persistent)': 'puck',
