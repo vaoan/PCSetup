@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ReportDir = (Join-Path $env:USERPROFILE '.cloudflared\reports'),
     [switch]$Headed
 )

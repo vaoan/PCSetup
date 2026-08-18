@@ -394,6 +394,20 @@ invariants instead. Every check corresponds to a defect that actually shipped:
 Needs `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets` for the two live-contract checks; they skip
 without it. All other checks are offline.
 
+> **Every `.ps1` must be ASCII-only or carry a UTF-8 BOM, and this is asserted.** Windows
+> PowerShell 5.1 decodes a BOM-less file as **ANSI (CP1252)**, not UTF-8. A UTF-8 em-dash
+> (`E2 80 94`) then arrives as three CP1252 characters ending in `0x94` — a literal **double
+> quote**. Inside a double-quoted string that closes the string early and the file stops parsing.
+> Three scripts were un-parseable this way: `allowlist-current-ip.ps1`, `transfer-ffxiv-be.ps1`
+> and `spotify-discord\login-spotify.ps1`. Files holding the same character survived **only**
+> because theirs sat in a comment, which makes this a landmine rather than a stable state — 16
+> files had non-ASCII bytes and no BOM. The failure is **invisible in pwsh**, which assumes UTF-8
+> either way, so it only shows up where the scripts actually run.
+
+> **The parse test scans the whole repo, not one folder.** Scoped to `cloudflared/`, it never
+> looked at `spotify-discord\login-spotify.ps1` — which was broken for as long as the encoding bug
+> existed.
+
 > **Gotcha:** the `-Skip:` condition is evaluated at Pester **discovery** time, before `BeforeAll`
 > runs. A flag set inside `BeforeAll` is still `$null` then, so the gated tests skip silently and
 > the run still looks green. The token probe therefore sits at script scope, not in `BeforeAll`.
@@ -1033,6 +1047,21 @@ Or run individual steps:
 .\install-tunnel.ps1        # Web tunnel
 ```
 
+> **`install-ssh-tunnel.ps1` aborted at step 2 of 6 on any machine without OpenSSH, and said the
+> opposite of what happened.** It ran `Add-WindowsCapability` and then tested `$LASTEXITCODE`. That
+> is a **cmdlet, not a native executable**, so it never sets `$LASTEXITCODE` — the check read
+> whatever the last native command (`cloudflared version`, in step 1) had left behind and printed
+> `X Failed to install OpenSSH Server` while the capability had installed perfectly. Steps 3–6
+> never ran, so the tunnel, its credentials and the `ssh-tunnel` scheduled task were never created.
+> This is the check-act-**verify** rule again: it now re-queries `Get-WindowsCapability` and
+> asserts `State -eq 'Installed'`. The `Start-Service sshd` below it had the same flaw, announcing
+> "OK SSH service running" unconditionally — including while sshd was still `Stopped`.
+
+> **A 530 and a 502 on `www`/`chat` mean different things.** 530 is the tunnel being down;
+> 502 is the tunnel up and the **local app** not running. This repo does not manage the web stack,
+> so restoring `ffxivbe-tunnel` moves those hostnames from 530 to 502 and no further — bring up
+> 7542 and 3000 yourself for a 200.
+
 > **Note on cloudflared installation:** Scripts auto-install the official signed MSI. Do NOT install via Chocolatey — Smart App Control blocks unsigned executables.
 
 > **Browser-based MCPs don't work in remote sessions** (Playwright, Chrome DevTools require a local display). All other Claude Code functionality works fine.
@@ -1080,7 +1109,7 @@ Already set up, survives PC formats:
 |---|---|
 | `cloudflared/post-format-recovery.ps1` | Master recovery script — does everything |
 | `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone). Registers the `ffxivbe-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals; survives the reboot network race). |
-| `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer. Registers the `ssh-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals). |
+| `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer. Registers the `ssh-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals). Pass `-MacPublicKey 'ssh-ed25519 ...'` or step 6 skips and Mac SSH is denied. |
 | `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper shared by all 3 tunnels — see the Web Console section. |
 | `cloudflared/install-scheduled-tasks.ps1` | Reinstall scheduled tasks only |
 | `cloudflared/toggle-tunnel.bat` | Start/stop web tunnel |

@@ -1,4 +1,4 @@
-# Provisions Cloudflare Zero Trust Access gating for every web-console hostname.
+﻿# Provisions Cloudflare Zero Trust Access gating for every web-console hostname.
 #
 # The whole point: on a fresh Windows install the tunnel + DNS get recreated,
 # but nothing recreates the Access *applications* — so the hostnames would route

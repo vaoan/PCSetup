@@ -1,4 +1,4 @@
-# Cloudflare Tunnel Auto-Installer
+﻿# Cloudflare Tunnel Auto-Installer
 # Run this script to automatically set up the tunnel
 # Automatically elevates to Administrator if needed
 

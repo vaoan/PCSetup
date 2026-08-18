@@ -1,4 +1,4 @@
-# Connect to / run commands on the RackNerd cloud VPS using credentials read
+﻿# Connect to / run commands on the RackNerd cloud VPS using credentials read
 # from the repo .secrets file (NEVER hardcode them). Requires plink (PuTTY).
 #
 # Usage:

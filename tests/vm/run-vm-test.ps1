@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Runs the full PCSetup install in a throwaway Windows 11 VM, with nothing skipped.
 
