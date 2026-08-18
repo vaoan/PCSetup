@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Transfers ffxiv.be from Rebrandly/Tucows to DNSimple and delegates DNS to Cloudflare.
 

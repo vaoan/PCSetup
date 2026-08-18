@@ -1,4 +1,4 @@
-# Optional switch used by the full recovery flow. When set, the script restores
+﻿# Optional switch used by the full recovery flow. When set, the script restores
 # the console stack but skips the final public-route verification.
 param(
     [switch]$SkipVerification

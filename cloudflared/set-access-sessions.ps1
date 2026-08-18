@@ -1,4 +1,4 @@
-# Sets Cloudflare Zero Trust Access app session_duration for every app on the account,
+﻿# Sets Cloudflare Zero Trust Access app session_duration for every app on the account,
 # and sets the global (org-level) session timeout to the same value.
 # Defaults to 8760h (~1 year). Run after a fresh install to keep logins long-lived.
 #

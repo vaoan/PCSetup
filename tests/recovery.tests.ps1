@@ -87,14 +87,58 @@ BeforeAll {
 
 Describe 'Recovery scripts - syntax' {
 
-    It 'every PowerShell script in cloudflared/ parses' {
+    # Defined in BeforeAll, NOT at script scope. Pester runs script-level code during
+    # DISCOVERY and It bodies later, in the RUN phase, so a function declared at
+    # script scope is gone by the time a test calls it -- it fails with
+    # "The term 'Get-RepoPowerShellFile' is not recognized", which reads like a typo
+    # rather than a scoping bug. Same discovery-vs-run trap as -Skip: and -ForEach.
+    BeforeAll {
+        # Every .ps1 the repo owns. node_modules is excluded because it holds
+        # thousands of vendored scripts nobody here maintains (playwright alone
+        # ships several), and .git because a hook copy is not source.
+        function Get-RepoPowerShellFile {
+            $repoRoot = Split-Path -Parent $PSScriptRoot
+            Get-ChildItem -Path $repoRoot -Filter *.ps1 -Recurse -File |
+                Where-Object { $_.FullName -notlike '*\node_modules\*' -and $_.FullName -notlike '*\.git\*' }
+        }
+    }
+
+    # Scans the WHOLE repo, not just cloudflared/. Scoped to one folder, this
+    # missed spotify-discord\login-spotify.ps1, which was un-parseable for as
+    # long as the encoding bug below existed.
+    It 'every PowerShell script in the repo parses' {
         $failures = @()
-        foreach ($f in Get-ChildItem (Join-Path $PSScriptRoot '..\cloudflared') -Filter *.ps1) {
+        foreach ($f in Get-RepoPowerShellFile) {
             $errs = $null; $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errs) | Out-Null
             if ($errs) { $failures += "$($f.Name): line $($errs[0].Extent.StartLineNumber) $($errs[0].Message)" }
         }
         $failures | Should -BeNullOrEmpty
+    }
+
+    # Windows PowerShell 5.1 decodes a BOM-less file as ANSI (CP1252), not UTF-8.
+    # A UTF-8 em-dash (E2 80 94) then arrives as three CP1252 characters ending in
+    # 0x94 -- a literal double-quote. Inside a double-quoted string that closes the
+    # string early, and the file stops parsing: "The string is missing the
+    # terminator". That is exactly how allowlist-current-ip.ps1,
+    # transfer-ffxiv-be.ps1 and login-spotify.ps1 broke, while other files holding
+    # the same character survived purely because theirs sat in a comment.
+    #
+    # So the rule is per-file and cheap to satisfy: stay ASCII, or carry a BOM.
+    # Note the failure is invisible in pwsh, which assumes UTF-8 either way.
+    It 'every PowerShell script is ASCII-only or carries a UTF-8 BOM' {
+        $offenders = @()
+        foreach ($f in Get-RepoPowerShellFile) {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            if ($bytes.Length -eq 0) { continue }
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            if ($hasBom) { continue }
+            $nonAscii = @($bytes | Where-Object { $_ -gt 0x7F }).Count
+            if ($nonAscii -gt 0) {
+                $offenders += "$($f.Name): $nonAscii non-ASCII byte(s) and no BOM - PS 5.1 will misread it as CP1252"
+            }
+        }
+        $offenders | Should -BeNullOrEmpty
     }
 
     It 'every shell script in cloudflared/ parses' -Skip:(-not $HasBash) {

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Deploys ffxiv-be-shortener.js to Cloudflare Workers and verifies every slug.
 

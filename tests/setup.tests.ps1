@@ -1,4 +1,4 @@
-#Requires -Modules Pester
+﻿#Requires -Modules Pester
 
 $ErrorActionPreference = 'Stop'
 $IsCI = $env:PCSETUP_CI -eq '1'

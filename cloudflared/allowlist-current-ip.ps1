@@ -1,4 +1,4 @@
-# Refreshes the "this PC" IP bypass so the current network skips the Zero Trust
+﻿# Refreshes the "this PC" IP bypass so the current network skips the Zero Trust
 # login prompt on every console hostname.
 #
 # In the reusable-policy model there is ONE account-level bypass policy

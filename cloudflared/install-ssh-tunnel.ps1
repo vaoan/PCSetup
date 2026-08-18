@@ -1,4 +1,4 @@
-# SSH Tunnel Auto-Installer
+﻿# SSH Tunnel Auto-Installer
 # Run this script to automatically set up SSH remote access via Cloudflare Tunnel
 # Automatically elevates to Administrator if needed
 
@@ -145,9 +145,18 @@ if ($sshCapability.State -eq "Installed") {
     Write-Host "  OK OpenSSH Server already installed" -ForegroundColor Green
 } else {
     Write-Host "  Installing OpenSSH Server..." -ForegroundColor Gray
-    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  X Failed to install OpenSSH Server" -ForegroundColor Red
+    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+
+    # Re-QUERY rather than trust an exit code. Add-WindowsCapability is a cmdlet,
+    # not a native executable, so it never sets $LASTEXITCODE -- the old check read
+    # whatever a previous native command (cloudflared version, in step 1) had left
+    # behind and aborted the whole installer with "X Failed to install OpenSSH
+    # Server" while the capability had in fact installed perfectly. Steps 3-6 never
+    # ran, so the tunnel and its scheduled task were never created, and post-format
+    # recovery would fail this way on every fresh machine.
+    $sshCapability = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+    if ($sshCapability.State -ne "Installed") {
+        Write-Host "  X Failed to install OpenSSH Server (state: $($sshCapability.State))" -ForegroundColor Red
         exit 1
     }
     Write-Host "  OK OpenSSH Server installed" -ForegroundColor Green
@@ -155,8 +164,20 @@ if ($sshCapability.State -eq "Installed") {
 
 # Configure and start SSH service
 Write-Host "  Configuring SSH service..." -ForegroundColor Gray
-Start-Service sshd -ErrorAction SilentlyContinue
 Set-Service -Name sshd -StartupType Automatic
+Start-Service sshd -ErrorAction SilentlyContinue
+
+# Same rule again: verify, do not announce. This previously printed "OK SSH service
+# running" unconditionally, including when sshd was still Stopped.
+$sshd = Get-Service sshd -ErrorAction SilentlyContinue
+if (-not $sshd) {
+    Write-Host "  X sshd service not found after install" -ForegroundColor Red
+    exit 1
+}
+if ($sshd.Status -ne 'Running') {
+    Write-Host "  X sshd is $($sshd.Status), not Running" -ForegroundColor Red
+    exit 1
+}
 Write-Host "  OK SSH service running and set to auto-start" -ForegroundColor Green
 
 # Configure firewall for all network profiles
