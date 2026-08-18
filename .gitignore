@@ -26,3 +26,7 @@ latest-chat.log
 node_modules/
 .wrangler/
 cloudflared/reports-*/
+
+# Playwright artifacts from cloudflared/test-console.mjs
+cloudflared/console-loaded.png
+cloudflared/console-presets.png

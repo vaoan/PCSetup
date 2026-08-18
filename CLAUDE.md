@@ -761,6 +761,7 @@ you log in with your email roughly once a year.
 | `cloudflared/start-console.ps1` | Refreshes portproxies, restarts all services + launches cloudflared via `tunnel-supervisor.ps1` |
 | `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper — waits for the Cloudflare edge to be reachable (`region*.v2.argotunnel.com:7844`) before launching cloudflared, and relaunches it if it exits. Makes tunnels survive the reboot network race (see note below). Used by all 3 tunnels (`web-console`, `ffxivbe-tunnel`, `ssh-tunnel`). |
 | `cloudflared/verify-console.ps1` | Verifies all console services are healthy (ports, HTTP 200, WSL systemd) — run after start-console.bat |
+| `cloudflared/console-health.ps1` | **Self-healing watchdog for the origin side.** Checks every origin component and restarts *only* what is dead. `-ReportOnly` to list healing opportunities without touching anything, `-Install` to register the `ConsoleHealth` task (every 5 min), `-Uninstall` to remove it. Never touches tmux and never recycles a live process. See "Self-healing" below. |
 | `cloudflared/setup-access-apps.ps1` | Provisions Zero Trust Access gating: reusable email-allow + this-PC IP-bypass policies attached to all 6 console apps, `8760h` (1yr) session. Idempotent; migrates old inline policies. Requires `CLOUDFLARE_ACCOUNT_API_TOKEN`. |
 | `cloudflared/allowlist-current-ip.ps1` | Rewrites the `PCSetup - This-PC IP bypass` reusable policy with this PC's current public IP (so home skips the login prompt). `-IpCidr` / `-DryRun` supported. |
 | `cloudflared/set-access-sessions.ps1` | Sets `session_duration` on every Zero Trust Access app + the org-global timeout (default `8760h` ≈ 1 year). Requires `CLOUDFLARE_ACCOUNT_API_TOKEN` in `.secrets`. |
@@ -780,6 +781,87 @@ you log in with your email roughly once a year.
 | `cloudflared/sync-secrets.ps1` | Secrets sync implementation |
 | `cloudflared/uninstall-console.ps1` | Full teardown: kills services, removes tasks/portproxies/files, deletes Cloudflare DNS + tunnel |
 | `cloudflared/uninstall-console.bat` | Admin wrapper for uninstall-console.ps1 |
+
+### Self-healing (`console-health.ps1`)
+
+**The tunnel has been supervised since `tunnel-supervisor.ps1` landed. The origin side was not** —
+and that asymmetry is what actually takes the console down.
+
+`start-console.ps1` launches `console-proxy.js`, sshwifty and the TCP relays with `Start-Process`
+and then exits. Nothing watches them. When one dies it stays dead until somebody manually runs
+`start-console.bat`, while cloudflared keeps cheerfully reconnecting to the edge and every request
+502s on "connection refused".
+
+> **Worked example — the 2026-08-18 outage.** `console.ffxiv.be` returned **502 Bad Gateway**, and
+> the obvious theory ("the internet dropped and the tunnel is stuck") was **wrong in every part**.
+> The tunnel was healthy the whole time: it lost the edge at `05:24:59` and re-registered at
+> `05:25:12`, 13 seconds later, exactly as designed. What was actually dead was
+> **`console-proxy.js` on 127.0.0.1:7681**, which had died at **04:08** — *before* the network blip,
+> so the blip was a red herring. `cloudflared-dev.log` said so in plain text for four hours:
+> `dial tcp 127.0.0.1:7681: connectex: No connection could be made`.
+>
+> It was not one process either. Every Node process started by the last `start-console.ps1` run was
+> gone — the launcher proxy **and** all four TCP relays **and** the SSH relay — leaving only
+> sshwifty (7682) and cloudflared. So `tools`/`git`/`code`/`ttyd` were down with it, and once the
+> web UI was back sshwifty reported
+> `dial tcp 127.0.0.1:2222: connectex: ... actively refused` because the SSH relay was still
+> missing. `verify-console.ps1` scored **22 of 53 checks failed**; the six ports 2222, 7681, 7683,
+> 7686, 7687 and 8080 were all "Not listening" while every WSL systemd unit was `active`. The whole
+> failure was the Windows origin layer, and nothing in the system was watching it.
+
+**Fix the outage / heal on demand:**
+
+```powershell
+cloudflared\console-health.ps1 -ReportOnly   # what is broken? changes nothing
+cloudflared\console-health.ps1               # start whatever is down
+cloudflared\console-health.ps1 -Install      # run it every 5 min, unattended
+```
+
+It checks, and repairs, in this order: the WSL VM + `WSLKeepAlive`; the WSL systemd units; the SSH
+relay (2222) and the four TCP relays (8080/7683/7686/7687); sshwifty (7682); `console-proxy.js`
+(7681); and the cloudflared supervisor. Log: `~\.cloudflared\console-health.log`.
+
+> **Use this instead of `start-console.bat` when the console is merely degraded.**
+> `start-console.bat` is a full restart: it runs **`tmux kill-session -t console`** and recycles
+> sshwifty and cloudflared. If you are reaching for it because one hostname 502s, you are about to
+> destroy live session state to fix a dead relay. `console-health.ps1` starts only what is missing.
+
+> **Safety contract — the whole reason this is safe to run every 5 minutes.** It never issues a
+> tmux command of any kind. It never restarts a process that is alive (sshwifty holds live SSH
+> sessions, so it is only ever *started* when genuinely down). Inside WSL it only ever runs
+> `systemctl start`, never `restart`, so running units keep whatever is attached to them. A repair
+> here is always "start something missing", never "recycle something working".
+
+> **A listening port is not a healthy service, and checking only ports misses the most common
+> failure.** WSL takes a **new IP** every time the VM restarts, and a relay left aiming at the old
+> one keeps its socket open while every connection times out — `Get-NetTCPConnection` says
+> `LISTEN`, `curl` says `000`. That is the documented "code.ffxiv.be 502 after WSL restarted" bug.
+> So the watchdog compares each relay's `--target-host` against the current WSL IP and restarts it
+> on drift, and probes 7681 over HTTP (with `Host: console.ffxiv.be`, since sshwifty 403s any other
+> Host) to catch a wedged proxy that holds the port while answering nothing.
+
+> **The task is registered `S4U`, and that is deliberate.** `-WindowStyle Hidden` on the PowerShell
+> action is **not** sufficient: with `LogonType InteractiveToken` the task runs in the desktop
+> session and Task Scheduler still flashes a console window for a fraction of a second on every
+> fire — every 5 minutes, forever. S4U ("run whether the user is logged on or not", no stored
+> password) runs it in **session 0**, where nothing is ever drawn. It keeps the user identity so
+> `$env:USERPROFILE` still resolves, and the relays it starts bind loopback, which is machine-wide
+> rather than per-session, so cloudflared still reaches them. Registration falls back to
+> `InteractiveToken` if S4U is refused, and says so.
+
+> **Running it by hand from a pipe looks like a hang; it isn't.** The script finishes in ~5s, but a
+> long-lived service it starts inherits the console handle, so `.\console-health.ps1 | grep ...`
+> sits there until that service exits. Confirm completion from the tail of
+> `console-health.log` ("check end"), or redirect to a file instead of piping. `-ReportOnly` starts
+> nothing and so always returns immediately.
+
+> **Verified by breaking it, not by watching it pass.** A watchdog that has only ever seen a
+> healthy machine is worth nothing. Each behaviour was proven by reintroducing the fault: killing
+> relay 7686 (detected, and `-ReportOnly` provably left it down); starting 7686 aimed at a bogus
+> `172.30.99.99` (port said `LISTEN`, traffic said `HTTP 000`, the watchdog reported *"relaying to
+> a stale WSL IP"*); and killing relay 7687 then firing the **scheduled task** — healed
+> unattended in ~9s, `LastTaskResult 0`, with sshwifty and cloudflared still on their original PIDs
+> and the tmux server untouched.
 
 ### Installable app (PWA)
 
