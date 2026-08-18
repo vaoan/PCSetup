@@ -15,7 +15,14 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repoZipUrl = "https://github.com/vaoan/PCSetup/archive/refs/heads/$Branch.zip"
 $workDir = Join-Path $env:TEMP ("PCSetup-remote-{0}-{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), (Get-Random))
-$repoRootName = "PCSetup-$Branch"
+# NOTE: deliberately not "PCSetup-$Branch". GitHub replaces every '/' in a branch
+# name with '-' in the archive's top-level folder, so branch fix/foo extracts to
+# PCSetup-fix-foo. String-building the name matched zero entries for any branch
+# with a slash, the workspace was materialized EMPTY, and the run died much later
+# with the thoroughly misleading "run-all.bat was not found in the remote archive"
+# - i.e. it looked like a broken download rather than a branch-name bug. The real
+# root name is read from the archive itself below.
+$repoRootName = $null
 $allowedExtensions = @(".bat", ".config", ".v")
 # One level of subfolder is materialized too: 0-init-prereqs.bat runs sources\init-prereqs.ps1,
 # and a top-level-only workspace made script 0 abort with "Missing prerequisite script".
@@ -34,6 +41,16 @@ try {
     try {
         $zip = New-Object System.IO.Compression.ZipArchive($memStream, [System.IO.Compression.ZipArchiveMode]::Read)
         try {
+            # Resolve the archive's actual top-level folder rather than assuming it.
+            $repoRootName = $zip.Entries |
+                Where-Object { $_.FullName -match '^[^/]+/' } |
+                ForEach-Object { ($_.FullName -split '/')[0] } |
+                Select-Object -First 1
+            if ([string]::IsNullOrWhiteSpace($repoRootName)) {
+                throw "Could not determine the archive root folder in $repoZipUrl (branch '$Branch')."
+            }
+            Write-Host "Archive root: $repoRootName" -ForegroundColor Cyan
+
             foreach ($entry in $zip.Entries) {
                 if ([string]::IsNullOrWhiteSpace($entry.FullName)) { continue }
                 if ($entry.FullName -notlike "$repoRootName/*") { continue }
@@ -80,6 +97,15 @@ try {
     finally {
         $memStream.Dispose()
     }
+
+    # Fail where the problem actually is. An empty workspace used to sail on and
+    # only blow up much later at the run-all.bat check, which reads as a broken
+    # download and sends you looking at the network rather than at the filter above.
+    $materialized = @(Get-ChildItem -Path $workDir -File -Recurse)
+    if ($materialized.Count -eq 0) {
+        throw "No files were materialized from $repoZipUrl (archive root '$repoRootName'). The archive downloaded but nothing matched the allowlist."
+    }
+    Write-Host ("Materialized {0} files from the archive." -f $materialized.Count) -ForegroundColor Cyan
 
     $manifestPath = Join-Path $workDir "remote-call.manifest.json"
     $manifest = [ordered]@{

@@ -164,6 +164,17 @@ The URL is served by a Cloudflare Worker (`cloudflared/install-worker/`) that pr
 ### remote-call.ps1
 Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`, and `.v` files **plus `sources\*.ps1` / `sources\*.reg`** into a temporary folder under `%TEMP%`, writes a source manifest there, executes `run-all.bat` from that isolated temp workspace, and cleans up afterward. Use this when you want the latest remote setup flow without depending on the current local repo folder.
 
+> **The archive's top-level folder is read from the zip, never string-built — a branch name with a
+> `/` broke it.** GitHub replaces every `/` in a branch name with `-` in the archive root, so
+> `fix/console-origin-self-healing` extracts to `PCSetup-fix-console-origin-self-healing`. The old
+> `$repoRootName = "PCSetup-$Branch"` produced `PCSetup-fix/console-origin-self-healing`, which
+> matched **zero** entries — the download succeeded, the workspace was materialized **empty**, and
+> the run died much later at `run-all.bat was not found in the remote archive`. That reads as a
+> broken download and sends you looking at the network, not at a branch name. Measured against the
+> live zip: 0 entries matched by the old root, 157 by the resolved one; `main` is unchanged at 156
+> either way. `remote-call.ps1` now also fails immediately if the allowlist materializes **no**
+> files, so the error names the real problem instead of surfacing four steps later.
+
 > **Anything a numbered script reads at runtime must be on the allowlist**, or the temp workspace
 > is missing it and the script fails in a way that looks like a broken download. `sources\` is
 > there because `0-init-prereqs.bat` runs `sources\init-prereqs.ps1`. Add a new folder by adding it
