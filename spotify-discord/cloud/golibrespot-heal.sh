@@ -63,6 +63,18 @@ done
 
 mkdir -p "$STATE_DIR" "$WORK"
 
+# Serialize runs. An upgrade takes ~90s (download + restart + a verification
+# poll), which is longer than the 2-minute timer's margin once a manual run is
+# also in play - and overlapping runs were observed interleaving in testing,
+# one reporting "already on the latest release" while another was mid-upgrade.
+# Worse, a second run could restart the service inside the first run's
+# verification window and make a good upgrade look like a failed one.
+exec 9>"$STATE_DIR/heal.lock"
+if ! flock -n 9; then
+    echo "[golibrespot-heal] another run is already in progress; exiting"
+    exit 0
+fi
+
 log() {
     # Goes to the journal (tag: golibrespot-heal) and to stdout when run by hand.
     local msg="$*"
@@ -78,8 +90,17 @@ stamp_write() { [ "$DRY_RUN" -eq 1 ] || echo "$(now)" > "$STATE_DIR/$1"; }
 # --- observation -------------------------------------------------------------
 
 # HTTP status code from the control API, or 000 when it does not answer.
+#
+# NOTE: no `|| echo 000` fallback. curl still prints %{http_code} (as 000) when
+# the connection fails AND exits non-zero, so the fallback appended a second
+# 000 and the code became the string "000000" - which compares unequal to
+# "200" so the behaviour was right, but every log line read "HTTP 000000" and
+# any future `= "000"` test would have been quietly false.
 api_code() {
-    curl -s -o "$WORK/status.json" -m 5 -w '%{http_code}' "$API/status" 2>/dev/null || echo 000
+    local code
+    code=$(curl -s -o "$WORK/status.json" -m 5 -w '%{http_code}' "$API/status" 2>/dev/null)
+    [ -n "$code" ] || code=000
+    echo "$code"
 }
 
 # True while audio is actually playing - the guard that keeps this script from

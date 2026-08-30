@@ -250,6 +250,36 @@ perfectly good upgrade, unattended, where nobody would notice for weeks.
 > a broken state, because SD-001 makes playback impossible, so an affected box is idle by
 > definition.
 
+> **Runs are serialized with `flock`.** An upgrade takes ~90s (download, restart, verification
+> poll), which outlasts the timer's margin once a manual run is also in play. Overlapping runs were
+> observed interleaving during testing — one logging *"already on the latest release"* while another
+> was mid-upgrade — and a second run could restart the service inside the first run's verification
+> window, making a good upgrade look like a failed one.
+
+### Verified by breaking it, on the live box (2026-08-30)
+
+| What was proven | How | Result |
+|---|---|---|
+| **Unattended upgrade of a stale binary (SD-005)** | Installed the real broken v0.7.4, cleared the weekly stamp, then **touched nothing** | The scheduled timer did it alone: `22:00:36 check start (version=0.7.4)` → `22:00:41 UPGRADING 0.7.4 -> 0.9.0` → `22:02:15 UPGRADE OK: now running 0.9.0 and login5 authenticated` |
+| **Escalation ladder** | Made the control API unreachable (config port) with a stale binary | Run 1 restarted once; run 2 logged *"persisted after a restart - restarting cannot fix this"* and escalated to an upgrade — exactly the SD-001 shape |
+| **Rollback on failed verification** | Left the API unverifiable so the new binary could not pass | `verify: /status returned 000` → `UPGRADE FAILED verification - rolling back to 0.7.4`; the restored binary was **byte-identical** to the pre-upgrade one |
+| **Credentials never at risk** | Checked after every step | `state.json` intact throughout, plus a dated backup and `state.owner.json` |
+| **Rate limiting** | Second upgrade attempt within 24h | *"but an upgrade was attempted <24h ago; holding off"* |
+| **Serialization** | Held the lock, launched a second run | *"another run is already in progress; exiting"* |
+
+Two defects in the healer were found **by this testing** and fixed: `api_code` appended a second
+`000` on connection failure (logs read `HTTP 000000`), and there was no lock, so runs overlapped.
+
+> **SD-001 itself could not be reproduced on demand, and that is worth knowing.** Reinstalling the
+> genuinely broken v0.7.4 did **not** reproduce the failure: it logged `authenticated Login5`,
+> `/player/play` returned **200**, and CPU sat at 1%. That is consistent with the root cause rather
+> than against it — the missing `hasher.Reset()` only corrupts iterations 2+ of the hashcash loop,
+> so it can only bite when Spotify actually issues a hashcash challenge, and none was being issued
+> (most likely because v0.9.0 had refreshed the stored credentials). **So the SD-001 detector is
+> validated against the recorded journal from the real outage, not against a live reproduction.**
+> Do not assume a quiet v0.7.4 means the bug is gone; it means the challenge is not currently being
+> served.
+
 ## Gotchas — every one of these actually happened
 
 > **A stale go-librespot binary breaks playback with `/player/play → HTTP 500`, and nothing else

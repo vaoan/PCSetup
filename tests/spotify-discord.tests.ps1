@@ -290,6 +290,18 @@ Describe 'Spotify-Discord bridge: self-healing watchdog' {
         $healer | Should -Match 'MIN_SECONDS_BETWEEN_RESTARTS'
         $healer | Should -Match 'MIN_SECONDS_BETWEEN_UPGRADES'
     }
+
+    It 'serializes concurrent runs' {
+        # An upgrade outlasts the 2-minute timer interval. Overlapping runs were
+        # observed interleaving during the rollback test, and a second run could
+        # restart the service inside the first run's verification window.
+        (Get-Content $script:Healer -Raw) | Should -Match 'flock'
+    }
+
+    It 'does not double-append the curl failure code' {
+        # `curl -w %{http_code} || echo 000` yields "000000", not "000".
+        (Get-Content $script:Healer -Raw) | Should -Not -Match "http_code\}' `"\`$API/status`" 2>/dev/null \|\| echo 000"
+    }
 }
 
 Describe 'Spotify-Discord bridge: installer wiring' {
