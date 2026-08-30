@@ -61,6 +61,11 @@ if (!TOKEN) {
   process.exit(1);
 }
 
+/**
+ * Log a line to the journal, prefixed so `journalctl` output is greppable per module.
+ *
+ * @param args - Values forwarded to `console.log`.
+ */
 function log(...args) {
   console.log('[bot]', ...args);
 }
@@ -71,6 +76,21 @@ function log(...args) {
 // Holding an idle O_RDWR fd open guarantees the pipe always has a writer, so the
 // reader never EOFs. We never read or write through this fd.
 let keepAliveFd = null;
+
+/**
+ * Hold an idle `O_RDWR` descriptor open on the FIFO so it always has a writer.
+ *
+ * go-librespot opens and closes its writer end between tracks and on pause. If
+ * ffmpeg were the only handle, the pipe would hit EOF and ffmpeg would exit
+ * every time playback stopped. This descriptor is never read from or written
+ * to — it exists purely to keep the pipe from EOF-ing. **Do not "clean up" this
+ * seemingly unused descriptor.**
+ *
+ * Exits the process if the FIFO is missing, since nothing downstream can work
+ * without it and a clear startup error beats a silent no-audio bridge.
+ *
+ * @failureMode SD-007 This is the entire mitigation for the FIFO EOF failure.
+ */
 function ensureFifoKeepAlive() {
   if (!fs.existsSync(FIFO)) {
     console.error(`[bot] FIFO ${FIFO} does not exist. Did setup run mkfifo + start go-librespot?`);
@@ -89,6 +109,20 @@ const player = createAudioPlayer({
 
 let ffmpeg = null;
 
+/**
+ * (Re)start the ffmpeg transcode from the FIFO into the Discord audio player.
+ *
+ * Reads raw `s16le` at the pipe's native rate and emits `s16le` at 48 kHz,
+ * which `@discordjs/voice` consumes directly as {@link StreamType.Raw}. Any
+ * existing ffmpeg is killed first, with its `exit` listener removed so the
+ * teardown does not trigger the respawn handler and race a second instance.
+ *
+ * ffmpeg exiting is normal and self-healing: the `exit` handler respawns it
+ * after 1s.
+ *
+ * @failureMode SD-007 Calls {@link ensureFifoKeepAlive} first; without that the
+ * respawn loop would fire on every pause.
+ */
 function startStream() {
   ensureFifoKeepAlive();
 
@@ -116,8 +150,20 @@ function startStream() {
   log(`streaming pipe → voice (bitrate=${OPUS_BITRATE}, fec=${OPUS_FEC}, resampler=${RESAMPLER || 'default'})`);
 }
 
-// Tune the Opus encoder for music quality + packet-loss resilience. Guarded so
-// it degrades gracefully if the encoder API differs.
+/**
+ * Tune the Opus encoder for music quality and packet-loss resilience.
+ *
+ * Bitrate is capped to the target voice channel's own limit (96k unboosted;
+ * 128/256/384k at boost tiers 1/2/3) so the encoder never exceeds what the
+ * channel accepts. Inband FEC is the main reliability win — Opus embeds
+ * recovery data so brief packet loss does not become an audible dropout.
+ *
+ * Every call is feature-detected and the whole body is guarded: a
+ * `@discordjs/voice` upgrade that renames these methods must degrade to default
+ * encoder settings, never take the audio path down.
+ *
+ * @param resource - The audio resource whose encoder should be tuned.
+ */
 function tuneEncoder(resource) {
   try {
     const enc = resource.encoder;
@@ -146,6 +192,25 @@ const VOICE_DEBUG = process.env.DEBUG_VOICE === '1'; // verbose voice/UDP loggin
 const EMPTY_DISCONNECT_MS = Math.max(0, parseInt(process.env.EMPTY_DISCONNECT_SECONDS || '90', 10)) * 1000;
 let emptyTimer = null;
 
+/**
+ * Join a voice channel, subscribe it to the player, and start streaming.
+ *
+ * Waits for the connection to actually reach `Ready` (20s budget) before
+ * subscribing, so a failed handshake surfaces as a thrown error rather than a
+ * bot that appears connected but is silent.
+ *
+ * A `Disconnected` event is treated as recoverable if the connection returns to
+ * `Signalling`/`Connecting` within 5s — that is what a channel move or a brief
+ * blip looks like. Only a genuine drop tears the connection down.
+ *
+ * @param guild - The Discord guild containing the channel.
+ * @param channelId - Voice channel to join.
+ * @throws If the connection does not reach `Ready` within 20 seconds.
+ * @failureMode SD-006 A voice websocket that opens, receives Hello and closes —
+ * surfacing here as an aborted `entersState` with `net-state 1 -> 6` — means
+ * `@discordjs/voice` is speaking gateway v4. Check the dependency version
+ * before debugging the network.
+ */
 async function connectTo(guild, channelId) {
   // Cap the encoder to the channel's own bitrate limit (96k unboosted, more when
   // the server is boosted) so we never exceed it.
@@ -202,6 +267,15 @@ async function connectTo(guild, channelId) {
   checkListeners(); // handle joining an already-empty channel
 }
 
+/**
+ * Disconnect from voice and tear down the transcoder.
+ *
+ * Removes ffmpeg's `exit` listener before killing it, so the deliberate
+ * teardown does not trip the 1s respawn in {@link startStream} and leave an
+ * orphaned transcoder writing into a destroyed connection.
+ *
+ * Safe to call when not connected.
+ */
 function leaveVoice() {
   if (emptyTimer) { clearTimeout(emptyTimer); emptyTimer = null; }
   if (connection) {
@@ -216,9 +290,17 @@ function leaveVoice() {
 }
 
 // ── Auto-leave when only bots remain ──────────────────────────────────────────
-// Counts real humans in the bot's channel — every bot (this one, the TTS bot,
-// other music bots) has user.bot === true and is excluded. If zero humans remain
-// past the grace period, disconnect and pause playback.
+
+/**
+ * Count real people in the bot's current voice channel.
+ *
+ * Every bot (this one, the TTS bot, other music bots) has `user.bot === true`
+ * and is excluded, so a channel containing only bots counts as empty.
+ *
+ * @returns The number of human members, or `-1` when not connected or the
+ * channel cannot be resolved. `-1` is distinct from `0` on purpose: "unknown"
+ * must not trigger the auto-leave that "genuinely empty" does.
+ */
 function humanListeners() {
   if (!connection || !connection.joinConfig) return -1;
   const guild = client.guilds.cache.get(connection.joinConfig.guildId);
@@ -227,6 +309,17 @@ function humanListeners() {
   return channel.members.filter((m) => !m.user?.bot).size;
 }
 
+/**
+ * Start or cancel the auto-leave countdown based on who is still listening.
+ *
+ * Called on voice-state changes and after connecting. When the last human
+ * leaves, playback is paused and the bot disconnects after a grace period
+ * (`EMPTY_DISCONNECT_SECONDS`, 0 disables) — the grace period is what stops a
+ * brief reconnect from ending the session. Anyone rejoining cancels it.
+ *
+ * Pausing go-librespot as well as leaving matters: otherwise the Spotify
+ * account keeps "playing" into a channel nobody is in.
+ */
 function checkListeners() {
   const humans = humanListeners();
   if (humans === -1) return; // not connected
@@ -253,7 +346,20 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-// Voice helper the DJ engine uses to pull the bot into the caller's channel.
+/**
+ * Ensure the bot is in the voice channel of whoever ran the command.
+ *
+ * Injected into the DJ engine so `dj.js` can pull the speaker to the caller
+ * without importing the voice internals — the audio path stays owned by this
+ * module.
+ *
+ * Returns an error object rather than throwing, because "you're not in a voice
+ * channel" is a normal user mistake that deserves a friendly reply.
+ *
+ * @param ix - The Discord chat-input interaction.
+ * @returns `{ channelName }` on success, or `{ error }` with a message to show
+ * the user.
+ */
 async function ensureVoiceForInteraction(ix) {
   const channel = ix.member?.voice?.channel;
   if (!channel) return { error: 'Join a voice channel first, then try again.' };
@@ -276,6 +382,14 @@ const commands = [
   ].map((c) => c.toJSON()),
 ];
 
+/**
+ * Register every module's slash commands with Discord.
+ *
+ * Registers against `DISCORD_GUILD_ID` when set, because guild commands appear
+ * instantly whereas global commands can take up to an hour to propagate.
+ *
+ * @param appId - The Discord application id to register under.
+ */
 async function registerCommands(appId) {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   if (GUILD_ID) {
@@ -359,6 +473,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // Re-evaluate whenever anyone joins/leaves/moves voice channels.
 client.on(Events.VoiceStateUpdate, () => { try { checkListeners(); } catch (e) { log('listener check:', e.message); } });
 
+/**
+ * Shut down cleanly on SIGINT/SIGTERM.
+ *
+ * Closes the FIFO keep-alive descriptor explicitly so the pipe is released
+ * rather than left held by a lingering process, then destroys the Discord
+ * client so systemd sees a clean exit instead of having to time out and
+ * SIGKILL.
+ */
 function shutdown() {
   log('shutting down');
   leaveVoice();

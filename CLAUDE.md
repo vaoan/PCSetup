@@ -1210,6 +1210,16 @@ Spotify app → go-librespot (Connect device, OAuth login) → /tmp/spotify-disc
   → bot.js → ffmpeg (44.1→48 kHz) → @discordjs/voice → Discord voice channel
 ```
 
+> **It does not run on this PC — read `spotify-discord/CLAUDE.md` first.** The live bridge runs on
+> the RackNerd **cloud VPS** (`spotify-discord/cloud/`), reached with `cloud\vps-ssh.ps1`. The local
+> WSL deployment described below is **retired**: verified 2026-08-30, this machine has no
+> `go-librespot`/`spotify-discord-bot` units, no `/etc/spotify-discord.env`, no
+> `SpotifyDiscordBridge` task, and WSL is in `nat` mode with no `.wslconfig` — despite mirrored mode
+> being listed as a hard requirement here. Debugging a bridge failure locally finds an empty machine
+> and looks like a catastrophic uninstall. Known failure modes are catalogued in
+> `spotify-discord/FAILURES.md`; most are now repaired unattended by
+> `spotify-discord/cloud/golibrespot-heal.sh`.
+
 Runs as two **WSL systemd services** (`go-librespot`, `spotify-discord-bot`),
 enabled at boot, held alive by `WSLKeepAlive`, and (re)started at logon by the
 `SpotifyDiscordBridge` scheduled task. OAuth login (not LAN zeroconf) is used so
