@@ -13,9 +13,29 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const LIBRESPOT = process.env.GO_LIBRESPOT_API || 'http://127.0.0.1:3678';
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || '';
 const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || '';
+/**
+ * Whether Spotify Web API search is configured.
+ *
+ * When false the bot is links-only: `/play` and `/radio` still accept Spotify
+ * track links, but cannot search by song name or expand albums and playlists.
+ * This is a degraded mode, not an error, so it is exported and checked rather
+ * than throwing at startup.
+ */
 const SEARCH_ENABLED = Boolean(SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET);
 
+/**
+ * Log a line to the journal, prefixed so `journalctl` output is greppable per module.
+ *
+ * @param a - Values forwarded to `console.log`.
+ */
 function log(...a) { console.log('[dj]', ...a); }
+
+/**
+ * Format a duration as `m:ss` for queue and player-card display.
+ *
+ * @param ms - Duration in milliseconds.
+ * @returns The formatted duration; `'0:00'` for missing or negative input.
+ */
 const fmtDur = (ms) => {
   if (!ms || ms < 0) return '0:00';
   const s = Math.round(ms / 1000);
@@ -24,6 +44,26 @@ const fmtDur = (ms) => {
 };
 
 // ── go-librespot HTTP API ─────────────────────────────────────────────────────
+
+/**
+ * Call go-librespot's local control API.
+ *
+ * The HTTP verb is chosen by whether a body was supplied: go-librespot's
+ * `/player/*` endpoints are **POST-only**. This is why the no-argument wrappers
+ * below pass `{}` rather than nothing — dropping those braces turns them into
+ * GETs and every transport control starts failing with HTTP 405.
+ *
+ * @param path - API path, e.g. `/player/play`.
+ * @param body - JSON body. Omit entirely to issue a GET.
+ * @returns The parsed JSON response, or `{}` when the response has no body.
+ * @throws If the API returns a non-2xx status. The thrown message is what
+ * surfaces to the user in Discord, so it names the path and status.
+ * @failureMode SD-010 The GET-vs-POST rule above.
+ * @failureMode SD-001 A `HTTP 500` from `/player/play` here is almost never a
+ * bug in this function — it is go-librespot failing to resolve the track's
+ * context. Read `journalctl -u go-librespot` for the real error before
+ * debugging anything on the Discord side.
+ */
 async function lrs(path, body) {
   const res = await fetch(LIBRESPOT + path, {
     method: body === undefined ? 'GET' : 'POST',
@@ -34,6 +74,12 @@ async function lrs(path, body) {
   const t = await res.text();
   return t ? JSON.parse(t) : {};
 }
+/**
+ * Thin typed-ish wrapper over go-librespot's player endpoints.
+ *
+ * Every mutating call passes a body (`{}` at minimum) so {@link lrs} issues a
+ * POST — see its `@failureMode SD-010` note.
+ */
 const api = {
   status: () => lrs('/status'),
   play: (uri, opts = {}) => lrs('/player/play', { uri, paused: false, skip_to_uri: opts.skipToUri }),
@@ -50,6 +96,18 @@ const api = {
 
 // ── Spotify Web API (search + link resolution) ───────────────────────────────
 let spTokenCache = { token: null, exp: 0 };
+
+/**
+ * Get a cached Spotify Web API app token (client-credentials grant).
+ *
+ * This is a separate, app-level credential from the user account go-librespot
+ * streams with — it only powers search and link resolution, never playback.
+ * Cached until 60s before expiry so a token that dies in flight is refreshed
+ * rather than used.
+ *
+ * @returns A bearer token for the Spotify Web API.
+ * @throws If search is not configured, or the token request fails.
+ */
 async function spToken() {
   if (!SEARCH_ENABLED) throw new Error('Spotify search is not configured');
   if (spTokenCache.token && Date.now() < spTokenCache.exp) return spTokenCache.token;
@@ -64,6 +122,13 @@ async function spToken() {
   spTokenCache = { token: j.access_token, exp: Date.now() + (j.expires_in - 60) * 1000 };
   return spTokenCache.token;
 }
+/**
+ * GET a Spotify Web API path with an app token.
+ *
+ * @param path - Path below `/v1`, e.g. `/tracks/{id}`.
+ * @returns The parsed JSON response.
+ * @throws If the request fails or returns a non-2xx status.
+ */
 async function sp(path) {
   const res = await fetch('https://api.spotify.com/v1' + path, {
     headers: { Authorization: `Bearer ${await spToken()}` },
@@ -71,6 +136,13 @@ async function sp(path) {
   if (!res.ok) throw new Error(`Spotify ${path} → HTTP ${res.status}`);
   return res.json();
 }
+/**
+ * Normalize a Spotify Web API track object into the shape the queue stores.
+ *
+ * @param t - A track object from the Spotify Web API.
+ * @param addedBy - Display name of whoever queued it, for attribution.
+ * @returns The internal track record.
+ */
 const trackFrom = (t, addedBy) => ({
   uri: t.uri,
   id: t.id,
@@ -81,12 +153,37 @@ const trackFrom = (t, addedBy) => ({
   albumArt: t.album?.images?.[0]?.url,
   addedBy,
 });
+/**
+ * Find the single best-matching track for a free-text query.
+ *
+ * @param query - Free-text search, e.g. an artist and song name.
+ * @param addedBy - Display name of whoever queued it.
+ * @returns The top match, or `null` if Spotify returned no results.
+ * @throws If search is not configured or the Web API call fails.
+ */
 async function searchTrack(query, addedBy) {
   const j = await sp(`/search?type=track&limit=1&q=${encodeURIComponent(query)}`);
   const t = j.tracks?.items?.[0];
   return t ? trackFrom(t, addedBy) : null;
 }
-// Resolve a Spotify link/URI into one or more tracks.
+/**
+ * Turn whatever the user typed into a list of queueable tracks.
+ *
+ * Accepts a Spotify track/album/playlist link or URI (including `intl-xx`
+ * localized share links), or free text when search is configured.
+ *
+ * Degrades deliberately when search is off: a *track* link still works, because
+ * a bare URI is enough for go-librespot to play and the metadata fills in from
+ * the player events. Album and playlist links cannot be expanded without the
+ * Web API, so they return a friendly error.
+ *
+ * Returns an `error` string instead of throwing for anything the user can fix
+ * by typing something else.
+ *
+ * @param input - A Spotify link/URI, or free text to search for.
+ * @param addedBy - Display name of whoever queued it.
+ * @returns `{ tracks, label? }` on success, or `{ error }` to show the user.
+ */
 async function resolveInput(input, addedBy) {
   const m = input.match(/(?:open\.spotify\.com\/(?:intl-[a-z]+\/)?|spotify:)(track|album|playlist)[/:]([A-Za-z0-9]+)/i);
   if (!m) {
@@ -114,6 +211,29 @@ async function resolveInput(input, addedBy) {
 }
 
 // ── Queue + player engine ─────────────────────────────────────────────────────
+
+/**
+ * Build the DJ engine: a bot-managed queue layered over go-librespot.
+ *
+ * All mutable playback state (queue, current track, pause flag, the live player
+ * card) is closed over rather than held at module scope, so the engine owns its
+ * own state and `bot.js` cannot reach in and desynchronize it.
+ *
+ * Voice control is injected rather than imported: the engine can pull the bot
+ * into a channel without depending on the audio path's internals.
+ *
+ * Note the division of labour with Spotify itself — go-librespot remains the
+ * source of truth for what is *actually* playing (the user may drive playback
+ * from the Spotify app at any time), and this queue only decides what to play
+ * *next*. That is why the player card reads live state instead of assuming its
+ * own queue is authoritative.
+ *
+ * @param deps - Voice helpers provided by `bot.js`.
+ * @param deps.ensureVoiceForInteraction - Pull the bot into the caller's channel.
+ * @param deps.leaveVoice - Disconnect from voice and stop the transcoder.
+ * @returns The engine's public surface: `handleInteraction`, `handleButton`,
+ * and read-only `current` / `queue` accessors.
+ */
 function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   const queue = [];        // upcoming tracks (reorderable)
   let current = null;      // now playing
@@ -388,7 +508,21 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   return { handleInteraction, handleButton, get current() { return current; }, get queue() { return queue; } };
 }
 
-// WebSocket to go-librespot /events with auto-reconnect.
+/**
+ * Subscribe to go-librespot's `/events` WebSocket, reconnecting forever.
+ *
+ * The 2s reconnect-on-close is what lets go-librespot be restarted — by the
+ * self-healing watchdog, by an account switch, or by hand — without restarting
+ * the bot: the socket simply re-establishes itself. Verified in production
+ * after an unattended binary upgrade.
+ *
+ * Malformed frames are ignored rather than thrown, so one bad event cannot kill
+ * the listener and silently stop queue advancement.
+ *
+ * @param onEvent - Called with each decoded event object.
+ * @failureMode SD-004 If the control API is down this reconnects every 2s until
+ * the watchdog repairs it; no manual bot restart is needed.
+ */
 function connectEvents(onEvent) {
   let ws;
   const connect = () => {
@@ -400,7 +534,13 @@ function connectEvents(onEvent) {
   connect();
 }
 
-// Slash command definitions (merged into the bot's registration).
+/**
+ * Slash commands owned by this module, serialized for Discord's registration API.
+ *
+ * Merged with the other modules' commands in `bot.js` and registered in one
+ * call — Discord's API replaces the whole command set per registration, so
+ * registering these separately would delete the others.
+ */
 const SLASH_COMMANDS = [
   new SlashCommandBuilder().setName('play').setDescription('Play or queue a song (name or Spotify link)')
     .addStringOption((o) => o.setName('query').setDescription('Song name or Spotify track/album/playlist link').setRequired(true)),
