@@ -793,7 +793,7 @@ you log in with your email roughly once a year.
 | `cloudflared/setup-console-windows.ps1` | First-time Windows setup: provisions tunnel + DNS, gates hostnames via `setup-access-apps.ps1`, writes configs, creates scheduled tasks |
 | `cloudflared/setup-console-wsl.sh` | First-time WSL setup: sshd, authorized_keys, code-server, ttyd services |
 | `cloudflared/restore-code-server-icons.sh` | Repaints code-server's icons with the classic pink VS Code logo. **Re-run after every code-server upgrade** — see below. |
-| `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel + PWA manifest, and serves the PWA assets |
+| `cloudflared/console-proxy.js` | Node.js proxy (Windows 7681→7682) that injects the quick-connect panel + PWA manifest, serves the PWA assets, and patches an **Enter** key into SSHwifty's special-keys menu (see below) |
 | `cloudflared/console-launcher.js` | Quick-connect panel UI injected into sshwifty's HTML |
 | `cloudflared/console-pwa-manifest.webmanifest` | PWA manifest ("SSH Console") served at `/console-pwa-manifest.webmanifest` |
 | `cloudflared/console-pwa-sw.js` | Minimal pass-through service worker (satisfies Chrome's installability requirement; no caching) |
@@ -887,6 +887,22 @@ relay (2222) and the four TCP relays (8080/7683/7686/7687); sshwifty (7682); `co
 > a stale WSL IP"*); and killing relay 7687 then firing the **scheduled task** — healed
 > unattended in ~9s, `LastTaskResult 0`, with sshwifty and cloudflared still on their original PIDs
 > and the tmux server untouched.
+
+> **The special-keys menu gains an Enter key here, not in SSHwifty.** SSHwifty's on-screen
+> special-keys menu (click the session tab) ships *Misc Keys* as Escape / Tab / Insert / Delete
+> and no Enter, which makes it useless on a phone for anything needing a newline. That list is
+> baked into a **minified asset bundle**, not the HTML, so `console-proxy.js` buffers
+> `*/javascript` responses, finds the `Tab` entry and clones it as `Enter` (keyCode/which 13)
+> immediately after. The clone is derived from the matched Tab object rather than written as a
+> literal, so it keeps the bundle's minifier style (`!1` vs `false`) and survives an upgrade that
+> reshapes it; if the regex stops matching, the bundle passes through untouched and the menu is
+> merely missing Enter again, never broken.
+>
+> **The patched bundle must be served `no-cache`.** The asset filename is content-hashed
+> **upstream** and does *not* change when we patch it, so SSHwifty's own
+> `cache-control: max-age=5184000` would pin the unpatched copy in every browser for 60 days.
+> The proxy overrides the header and drops the etag — but a browser that cached the file
+> *before* this landed still needs one hard refresh (Ctrl+Shift+R).
 
 ### Installable app (PWA)
 
