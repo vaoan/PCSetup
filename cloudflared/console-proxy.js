@@ -89,6 +89,34 @@ const PWA_ASSETS = {
   '/console-pwa-icon-512.png':         { file: 'console-pwa-icon-512.png',         type: 'image/png' },
 };
 
+// --- Extra "special key": Enter -------------------------------------------
+// SSHwifty's on-screen special-keys menu (click the session tab) ships
+// Escape / Tab / Insert / Delete under "Misc Keys" and has no Enter, which
+// makes the menu useless on a phone for anything that needs a newline.
+// The list is baked into a minified asset bundle, not into the HTML, so it is
+// patched here on the way through: find the "Tab" entry and clone it as
+// "Enter" (keyCode/which 13) immediately after it.
+//
+// The clone is derived from the matched Tab entry rather than written out as a
+// literal, so it keeps whatever minifier style the bundle uses (`!1` vs
+// `false`) and survives an sshwifty upgrade that changes it. If the shape ever
+// stops matching, the regex simply doesn't fire — the bundle is passed through
+// untouched and the menu is merely missing Enter again, never broken.
+const TAB_KEY_ENTRY = /\["Tab",\s*\{[^{}]*?keyCode:\s*9\b[^{}]*?\}\]/;
+
+function patchSpecialKeys(js) {
+  if (/\["Enter",\s*\{/.test(js)) return js;   // already patched / upstream added it
+  const m = js.match(TAB_KEY_ENTRY);
+  if (!m) return js;
+  const enter = m[0]
+    .replace('["Tab",', '["Enter",')
+    .replace('code:"Tab"', 'code:"Enter"')
+    .replace('key:"Tab"', 'key:"Enter"')
+    .replace(/keyCode:\s*9\b/, 'keyCode:13')
+    .replace(/which:\s*9\b/, 'which:13');
+  return js.replace(TAB_KEY_ENTRY, m[0] + ',' + enter);
+}
+
 function copyHeaders(src, overrides) {
   const out = {};
   for (const key of Object.keys(src)) {
@@ -134,6 +162,37 @@ const server = http.createServer((req, res) => { // nosemgrep
 
   const proxyReq = http.request(options, (proxyRes) => { // nosemgrep
     const ct = proxyRes.headers['content-type'] || '';
+
+    // JS bundles: buffer only so the special-keys list can gain an Enter key.
+    if (ct.includes('javascript')) {
+      const jsChunks = [];
+      proxyRes.on('data', chunk => jsChunks.push(chunk));
+      proxyRes.on('end', () => {
+        const original = Buffer.concat(jsChunks).toString('utf8');
+        const patched = patchSpecialKeys(original);
+        if (patched === original) {
+          const headers = copyHeaders(proxyRes.headers, { 'content-length': jsChunks.reduce((n, c) => n + c.length, 0) });
+          delete headers['transfer-encoding'];
+          res.writeHead(proxyRes.statusCode, headers);
+          res.end(Buffer.concat(jsChunks));
+          return;
+        }
+        const body = Buffer.from(patched, 'utf8');
+        // The asset filename is content-hashed upstream and does NOT change when
+        // we patch it, so sshwifty's 60-day max-age would pin the unpatched copy
+        // in every browser that already has it. Force revalidation instead.
+        const headers = copyHeaders(proxyRes.headers, {
+          'content-length': body.length,
+          'cache-control': 'no-cache',
+        });
+        delete headers['content-encoding'];
+        delete headers['transfer-encoding'];
+        delete headers['etag'];
+        res.writeHead(proxyRes.statusCode, headers);
+        res.end(body);
+      });
+      return;
+    }
 
     if (!ct.includes('text/html')) {
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
