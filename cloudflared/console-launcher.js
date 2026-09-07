@@ -15,6 +15,8 @@
     { group: 'Puck',          sub: 'Fresh',      title: 'Puck (Fresh)'              },
     { group: 'AeleOS',        sub: 'Persistent', title: 'AeleOS (Persistent)'       },
     { group: 'AeleOS',        sub: 'Fresh',      title: 'AeleOS (Fresh)'            },
+    { group: 'Orrery',        sub: 'Persistent', title: 'Orrery (Persistent)'       },
+    { group: 'Orrery',        sub: 'Fresh',      title: 'Orrery (Fresh)'            },
     { group: 'PCSetup',       sub: 'Persistent', title: 'PCSetup (Persistent)'      },
     { group: 'PCSetup',       sub: 'Fresh',      title: 'PCSetup (Fresh)'           },
   ];
@@ -25,6 +27,7 @@
     'Eclipse-con': '#d17a5b',
     'Puck':        '#c76fa0',
     'AeleOS':      '#e0a54a',
+    'Orrery':      '#8fa8c8',
     'PCSetup':     '#4f8fdf',
   };
 

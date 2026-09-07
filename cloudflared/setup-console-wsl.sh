@@ -60,6 +60,8 @@ ensure_keypair "$SSHWIFTY_KEY_DIR/puck" 'sshwifty-puck'
 ensure_keypair "$SSHWIFTY_KEY_DIR/puck-shell" 'sshwifty-puck-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/aeleos" 'sshwifty-aeleos'
 ensure_keypair "$SSHWIFTY_KEY_DIR/aeleos-shell" 'sshwifty-aeleos-shell'
+ensure_keypair "$SSHWIFTY_KEY_DIR/orrery" 'sshwifty-orrery'
+ensure_keypair "$SSHWIFTY_KEY_DIR/orrery-shell" 'sshwifty-orrery-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup" 'sshwifty-pcsetup'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup-shell" 'sshwifty-pcsetup-shell'
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-terminal"
@@ -72,6 +74,8 @@ restrict_key_permissions "$SSHWIFTY_KEY_DIR/puck"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/puck-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/aeleos"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/aeleos-shell"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/orrery"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/orrery-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup-shell"
 
@@ -156,6 +160,8 @@ command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session 
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/puck && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/puck-shell.pub") sshwifty-puck-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s aeleos -c /mnt/z/Github/aeleos'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/aeleos.pub") sshwifty-aeleos
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/aeleos && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/aeleos-shell.pub") sshwifty-aeleos-shell
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s orrery -c /mnt/z/Github/Orrery'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/orrery.pub") sshwifty-orrery
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/Orrery && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/orrery-shell.pub") sshwifty-orrery-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s pcsetup -c /mnt/z/Users/Heiner/Documents/PCSetup'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup.pub") sshwifty-pcsetup
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Users/Heiner/Documents/PCSetup && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup-shell.pub") sshwifty-pcsetup-shell
 AUTHKEYS

@@ -663,7 +663,7 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 | Hostname | Purpose |
 |---|---|
 | `tools.ffxiv.be` | Dashboard — links to all dev tools |
-| `console.ffxiv.be` | SSH web client (sshwifty) with 8 quick-connect presets |
+| `console.ffxiv.be` | SSH web client (sshwifty) with 14 quick-connect presets |
 | `dev.ffxiv.be` | Direct SSH to WSL (for native SSH clients) |
 | `code.ffxiv.be` | VS Code in the browser (code-server) |
 | `ttyd.ffxiv.be` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |

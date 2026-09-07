@@ -34,6 +34,8 @@ const PRIVATE_KEY_FILES = {
   'Puck (Fresh)': 'puck-shell',
   'AeleOS (Persistent)': 'aeleos',
   'AeleOS (Fresh)': 'aeleos-shell',
+  'Orrery (Persistent)': 'orrery',
+  'Orrery (Fresh)': 'orrery-shell',
   'PCSetup (Persistent)': 'pcsetup',
   'PCSetup (Fresh)': 'pcsetup-shell',
 };
