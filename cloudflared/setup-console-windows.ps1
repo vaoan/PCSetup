@@ -202,6 +202,8 @@ if (Test-Path $sshwiftyKeyDir) {
         @{ Title = 'Puck (Fresh)';             KeyBase = 'puck-shell' },
         @{ Title = 'AeleOS (Persistent)';      KeyBase = 'aeleos' },
         @{ Title = 'AeleOS (Fresh)';           KeyBase = 'aeleos-shell' },
+        @{ Title = 'Orrery (Persistent)';      KeyBase = 'orrery' },
+        @{ Title = 'Orrery (Fresh)';           KeyBase = 'orrery-shell' },
         @{ Title = 'PCSetup (Persistent)';     KeyBase = 'pcsetup' },
         @{ Title = 'PCSetup (Fresh)';          KeyBase = 'pcsetup-shell' }
     )
@@ -220,7 +222,7 @@ if (Test-Path $sshwiftyKeyDir) {
     }
 
     [IO.File]::WriteAllText($sshwiftyConfPath, ($sshwiftyConfig | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
-    Write-Log "sshwifty presets synchronized (Libra, Eclipse-con, Puck, AeleOS, PCSetup) -> $wslSshHost"
+    Write-Log "sshwifty presets synchronized (Libra, Eclipse-con, Puck, AeleOS, Orrery, PCSetup) -> $wslSshHost"
 } else {
     Fail "Missing generated key directory: $sshwiftyKeyDir. Run setup-console-wsl.sh before setup-console-windows.ps1."
 }
