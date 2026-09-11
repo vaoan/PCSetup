@@ -127,7 +127,8 @@ function Ensure-Shortcuts {
             $s.Arguments = $t.Args
             $s.WorkingDirectory = $PSScriptRoot
             $s.Description = 'Downloads the Twitch VOD link in the clipboard (max 720p) into Videos'
-            $s.IconLocation = '%SystemRoot%\System32\imageres.dll,175'
+            $icon = Join-Path $PSScriptRoot 'twitch.ico'
+            $s.IconLocation = if (Test-Path -LiteralPath $icon) { "$icon,0" } else { '%SystemRoot%\System32\imageres.dll,175' }
             $s.Save()
             if (Test-Path -LiteralPath $t.Path) { Write-Ok "Recreated shortcut in $($t.Where): $($t.Path)" } else { Write-Warn "Could not create shortcut: $($t.Path)" }
         }
