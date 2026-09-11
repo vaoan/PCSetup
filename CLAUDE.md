@@ -675,6 +675,27 @@ pointed at a temp folder, launched through CMD exactly like the `.bat` does):
   what a real fresh PC wants, so it is left alone. Full cold run measured at 49 s (scoop, 7zip, git,
   CLI, ffmpeg, plus a 20 s test download).
 
+### optional/download-youtube-video.bat
+YouTube twin of `download-twitch-vod.bat`: same `.bat` shape, same clipboard flow, same scoop
+bootstrap, same shortcut recreation (`Download YouTube Video.lnk` in Start Menu Programs and in
+Videos, `cmd.exe /c` form), same window feedback and message-box failures. `download-youtube-video.ps1`
+accepts `watch?v=`, `youtu.be/`, `/shorts/`, `/live/`, `/embed/` links (extra query params like `&t=`
+or `?si=` are ignored, the id is re-wrapped into a clean URL) and uses **yt-dlp** with **deno** as its
+JavaScript runtime (yt-dlp 2026.x needs one to unlock every YouTube format; scoop package `deno`).
+
+Format choice is `-f 'bv*+ba/b' -S "res:720,fps,vcodec:h264,acodec:m4a,ext:mp4"`: best stream at or
+below 720p, preferring h264 + aac so the file plays in the stock Windows player (yt-dlp's default
+would pick AV1 720p60, which does not). Separate video/audio streams are merged by ffmpeg via
+`--ffmpeg-location`. `-N 16` parallel fragments measured 154 Mbit/s vs 141 at `-N 8` on this line;
+a 10-minute 720p60 video downloads in about 5 s plus merge. Output name is
+`<upload date> <channel> - <title> [<id>].mp4`; the template must end in `%(ext)s` or yt-dlp
+appends its own extension, so the final path is computed as `<base>.mp4` and verified (> 200 KB).
+
+If the info fetch fails with "Sign in to confirm you're not a bot", it retries with
+`--cookies-from-browser` firefox, then chrome, then edge, and reuses whichever worked for the
+download. `-Ending <seconds|m:ss>` maps to `--download-sections "*0-<end>"` which **re-encodes** with
+ffmpeg (slow, prints libx264 stats) — it is a test aid, not a trim feature.
+
 ### Undocumented optional scripts
 These exist in `optional/` and are **not** covered by the audit above — they still have the original
 no-verification shape:
