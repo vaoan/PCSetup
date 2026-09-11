@@ -631,6 +631,50 @@ in the same folder. Takes `backup` or `restore` as an argument so it can run una
 no-pauses rule); with no argument it falls back to the interactive prompt. Both directions verify by
 file size — a 0-byte backup is refused rather than silently restoring an empty Start Menu.
 
+### optional/download-twitch-vod.bat
+Double-click with a Twitch VOD link (`twitch.tv/videos/<id>`, also `m.twitch.tv` and
+`twitch.tv/<channel>/video/<id>`) in the clipboard. The `.bat` only elevates, clears `PSModulePath`,
+and runs `download-twitch-vod.ps1`, which: reads the clipboard, bootstraps **scoop itself** if the
+PC is fresh (same get.scoop.sh-to-file + `-RunAsAdmin` route as `sources\init-prereqs.ps1`, then
+`git` so buckets can update), resolves `TwitchDownloaderCLI` and `ffmpeg` (installing
+`twitchdownloader-cli` / `ffmpeg` with scoop if missing; the CLI is a self-contained 66 MB exe, no
+.NET runtime needed), fetches the VOD
+metadata with `TwitchDownloaderCLI info --format Raw`, picks the best quality **at or below 720p**
+from the m3u8 variant list, and downloads with 24 threads (benchmarked on this connection: 10 threads
+gave ~32 Mbit/s, 24 gave ~77, 40 dropped back to ~58) into `[Environment]::GetFolderPath('MyVideos')`
+(so it follows the relocated profile folders) as `<date> <channel> - <title> [<id>].mp4`. Progress from
+the CLI is shown in the window; on success Explorer opens with the file selected and the window closes
+after 8 s; on failure a message box explains why. Verifies the output file exists and is over 1 MB
+rather than trusting the exit code.
+
+Launchers: the script recreates two shortcuts whenever they are missing — `Download Twitch VOD.lnk`
+in `%APPDATA%\Microsoft\Windows\Start Menu\Programs` (target `cmd.exe /c "<bat>"`, same shape as the
+FFXIV profile launcher `Me.lnk`, which is what makes Windows offer **Pin to Start**) and an identical
+one in the Videos folder. Pinning itself cannot be scripted on Windows 11; it is
+a one-time right-click → Pin to Start after the first run.
+
+Gotchas: the output name contains `[id]`, so every path check uses `-LiteralPath` — `Test-Path`
+treats brackets as wildcards and reported the finished file as missing. Manual runs accept `-Url`,
+`-MaxHeight` and `-Ending` (e.g. `-Ending 20s` for a quick test download).
+
+Bootstrap gotchas, all hit while simulating a fresh PC (scoop and git hidden from PATH, `USERPROFILE`
+pointed at a temp folder, launched through CMD exactly like the `.bat` does):
+- **`2>&1` on a native command under `$ErrorActionPreference = 'Stop'` is fatal.** Any stderr line
+  from the scoop installer or `scoop install` becomes a terminating `NativeCommandError`. External
+  calls go through `Invoke-Native`, which flips the preference to `Continue` for the duration.
+- **The scoop installer needs `Expand-Archive`**, which lives in `Program Files\WindowsPowerShell\Modules`,
+  not `$PSHOME`. Unsetting `PSModulePath` from CMD (`set "PSModulePath="`) is fine — 5.1 rebuilds
+  its stock path — but setting it to an *empty string* from pwsh is not; the child then has no
+  module path at all and the installer dies at "Extracting...". The script sets 5.1's three stock
+  module folders explicitly before spawning the installer so it works from any launcher.
+- **A half-finished `%USERPROFILE%\scoop` blocks every retry** ("exists and is not empty, please
+  specify another path. Abort."). scoop is treated as installed only if `shims\scoop.ps1` exists;
+  otherwise a leftover folder is moved to `scoop.broken-<timestamp>` (never deleted) and the
+  installer runs again.
+- The installer appends `scoop\shims` and `scoop\apps\git\current\cmd` to the **user** PATH; that is
+  what a real fresh PC wants, so it is left alone. Full cold run measured at 49 s (scoop, 7zip, git,
+  CLI, ffmpeg, plus a 20 s test download).
+
 ### Undocumented optional scripts
 These exist in `optional/` and are **not** covered by the audit above — they still have the original
 no-verification shape:
