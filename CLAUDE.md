@@ -655,7 +655,18 @@ a one-time right-click → Pin to Start after the first run.
 
 Gotchas: the output name contains `[id]`, so every path check uses `-LiteralPath` — `Test-Path`
 treats brackets as wildcards and reported the finished file as missing. Manual runs accept `-Url`,
-`-MaxHeight` and `-Ending` (e.g. `-Ending 20s` for a quick test download).
+`-MaxHeight`, `-Ending` (e.g. `-Ending 20s` for a quick test download) and `-NoMessageBox` (failures
+go to the console only, so a test run cannot block on a dialog).
+
+**Disk space** (2026-09-12 field failure): a 5 h 10 m VOD at 720p60 needs ~8 GB; Z: had 3.4 GB
+free. The CLI downloaded all 1861 parts into `%TEMP%\TwitchDownloader\<id>_<ticks>` (on C:), then
+ffmpeg's finalize onto Z: failed — and the CLI **never removes or reuses that folder**, so two
+retries left 15 GB of dead `.ts` parts on C:. The script now (a) reads `BANDWIDTH=` from the
+`#EXT-X-STREAM-INF` line of the picked quality and refuses up front when
+`bandwidth / 8 × length × 1.15` exceeds the free space on either the Videos drive or the temp drive,
+naming both numbers, and (b) deletes every `<id>_<ticks>` folder under the temp path before and
+after each run. Note `Z:` holds the profile folders and is often near full — `$RECYCLE.BIN` alone
+was 25 GB.
 
 Bootstrap gotchas, all hit while simulating a fresh PC (scoop and git hidden from PATH, `USERPROFILE`
 pointed at a temp folder, launched through CMD exactly like the `.bat` does):

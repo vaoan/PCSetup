@@ -10,7 +10,8 @@
 param(
     [string]$Url,
     [int]$MaxHeight = 720,
-    [string]$Ending
+    [string]$Ending,
+    [switch]$NoMessageBox   # tests: report failures in the console only
 )
 
 # Auto-elevate to Administrator (forwarding any parameters)
@@ -18,6 +19,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     $fwd = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -MaxHeight $MaxHeight"
     if ($Url)    { $fwd += " -Url `"$Url`"" }
     if ($Ending) { $fwd += " -Ending `"$Ending`"" }
+    if ($NoMessageBox) { $fwd += " -NoMessageBox" }
     Start-Process PowerShell -ArgumentList $fwd -Verb RunAs
     exit
 }
@@ -33,6 +35,7 @@ function Write-Warn([string]$Text) { Write-Host "   $Text" -ForegroundColor Yell
 
 function Fail([string]$Message) {
     Write-Host "`nFAILED: $Message" -ForegroundColor Red
+    if ($NoMessageBox) { exit 1 }
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show($Message, 'Twitch VOD download failed',
@@ -213,7 +216,8 @@ for ($i = 0; $i -lt $infoLines.Count; $i++) {
         if ($next -match 'RESOLUTION=(\d+)x(\d+)') {
             $height = [int]$Matches[2]
             $fps = if ($next -match 'FRAME-RATE=([\d.]+)') { [double]$Matches[1] } else { 30 }
-            $qualities += [pscustomobject]@{ Name = $name; Height = $height; Fps = $fps }
+            $bw  = if ($next -match 'BANDWIDTH=(\d+)') { [long]$Matches[1] } else { 0 }
+            $qualities += [pscustomobject]@{ Name = $name; Height = $height; Fps = $fps; Bandwidth = $bw }
         }
     }
 }
@@ -252,6 +256,39 @@ if (Test-Path -LiteralPath $outPath) {
 $tempDir = Join-Path $env:TEMP 'TwitchDownloader'
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 
+# The CLI writes every .ts part into a fresh "<id>_<ticks>" folder under the temp path and never
+# reuses or removes it when a run fails - two failed attempts at a 5-hour VOD left 15 GB behind.
+# Nothing in there is resumable, so clear it before and after every run.
+function Clear-TempParts {
+    Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        try { [IO.Directory]::Delete($_.FullName, $true) } catch { Write-Warn "Could not remove old temp parts $($_.Name): $($_.Exception.Message)" }
+    }
+}
+$stale = @(Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue)
+if ($stale.Count) {
+    $staleGb = [Math]::Round((Get-ChildItem -LiteralPath $tempDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 1)
+    Write-Warn "Removing $($stale.Count) leftover temp folder(s) from earlier runs ($staleGb GB)"
+    Clear-TempParts
+}
+
+# Free-space check before downloading: the parts land on the temp drive, then ffmpeg writes the
+# final file to the Videos drive, so both need room. Estimate from the stream's declared bandwidth.
+# Skipped for -Ending test runs. This is what failed silently on a 5-hour VOD with 3 GB free on Z:.
+if (-not $Ending -and $pick.Bandwidth -gt 0) {
+    $needBytes = [long]($pick.Bandwidth / 8 * $length * 1.15)
+    $needGb    = [Math]::Round($needBytes / 1GB, 1)
+    Write-Ok "Estimated size: ~$needGb GB"
+    foreach ($check in @(@{ Path = $videosDir; What = 'Videos folder' }, @{ Path = $tempDir; What = 'temp folder (download parts)' })) {
+        $root = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $check.Path).ProviderPath)
+        $free = (New-Object IO.DriveInfo $root).AvailableFreeSpace
+        $freeGb = [Math]::Round($free / 1GB, 1)
+        if ($free -lt $needBytes) {
+            Fail "Not enough disk space on $root for the $($check.What).`n`nNeeded: ~$needGb GB (${length}s at $($pick.Name))`nFree:   $freeGb GB on $root`n`nFree up space on $root or pick a lower quality with -MaxHeight 480, then try again."
+        }
+        Write-Ok "Free on ${root}: $freeGb GB ($($check.What))"
+    }
+}
+
 # ---------------------------------------------------------------------------
 Write-Step "Downloading $($pick.Name) with 24 parallel threads"
 Write-Info 'Progress is printed below by TwitchDownloaderCLI. Closing this window cancels the download.'
@@ -274,10 +311,12 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 & $cli @cliArgs
 $cliExit = $LASTEXITCODE
 $sw.Stop()
+Clear-TempParts
 
 # Verify the file rather than trusting the exit code.
 if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 1MB) {
-    Fail "Download did not produce a usable file (exit code $cliExit).`n`nExpected: $outPath"
+    $freeNow = [Math]::Round((New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($videosDir))).AvailableFreeSpace / 1GB, 1)
+    Fail "Download did not produce a usable file (exit code $cliExit).`n`nExpected: $outPath`nFree space on the Videos drive now: $freeNow GB`n`nScroll up in the window for the CLI's error."
 }
 if ($cliExit -ne 0) { Write-Warn "TwitchDownloaderCLI exited with code $cliExit but the file exists - check it plays." }
 
