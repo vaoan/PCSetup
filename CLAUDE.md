@@ -654,6 +654,24 @@ a running app.
 > (`ConvertFrom-WingetTable`), and `setup.tests.ps1` extracts it **from the generated file** and
 > runs it against a captured table, so what is tested is what CMD actually wrote.
 
+> **Collect the outdated lists with `@(...)` and only then pipe them - never pipe the helper
+> function itself.** Both bugs shipped in the first real run and both are the same PowerShell 5.1
+> trap. `Get-WingetOutdated | Where-Object { ... }` handed Where-Object the whole ArrayList as
+> **one** object: `$_.Id` member-enumerated into an array, the skip table never matched, and the
+> summary printed the merged nonsense `Winamp Windows Subsystem for Linux (Winamp.Winamp
+> Microsoft.WSL) still outdated`. `$before = Get-ScoopOutdated` with a single outdated app came
+> back as a bare PSCustomObject whose `.Count` is empty in 5.1, so it printed `Scoop: updated 0
+> of .`. Neither is visible in pwsh, and the parser test could not see either because the parser
+> was right - the *call sites* were wrong. `setup.tests.ps1` now walks the generated file's AST and
+> fails if either helper feeds a pipeline or is assigned without `@()`.
+
+> **Winamp shows as outdated forever, on purpose.** winget compares the installed `5.92.0` with the
+> available `5.92.0.10042` and reports it every run even right after a successful install. That is
+> a winget version-string quirk, not a failed upgrade, and it is deliberately **not** in the skip
+> table: the install still runs, and the summary line is accepted noise. The same goes for a Scoop
+> app that is open (Chrome, typically) - it lands in the failure list because Scoop refuses to
+> replace a running app, and the fix is to close it, not to change the script.
+
 > **Test hook: `PCSETUP_GENERATE_ONLY=1`** makes the `.bat` skip elevation, write the PowerShell file
 > to `%TEMP%\temp-update-all.ps1` and stop. The tests use it to parse the output under Windows
 > PowerShell 5.1 and to exercise the parser without upgrading anything on the test machine.

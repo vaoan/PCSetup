@@ -69,13 +69,14 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     try {
 >>"%SCRIPT%" echo         scoop update 2^>^&1 ^| Out-Host
->>"%SCRIPT%" echo         $before = Get-ScoopOutdated
+>>"%SCRIPT%" echo         # @() on every call: with one outdated app the bare row has no .Count in 5.1 ("updated 0 of .").
+>>"%SCRIPT%" echo         $before = @(Get-ScoopOutdated)
 >>"%SCRIPT%" echo         if ($before.Count -eq 0) { Write-Host "Scoop: everything up to date." -ForegroundColor Green }
 >>"%SCRIPT%" echo         else {
 >>"%SCRIPT%" echo             $names = ($before ^| ForEach-Object { $_.Name }) -join ', '
 >>"%SCRIPT%" echo             Write-Host "Scoop: $($before.Count) outdated: $names" -ForegroundColor Cyan
 >>"%SCRIPT%" echo             scoop update * 2^>^&1 ^| Out-Host
->>"%SCRIPT%" echo             $after = Get-ScoopOutdated
+>>"%SCRIPT%" echo             $after = @(Get-ScoopOutdated)
 >>"%SCRIPT%" echo             foreach ($row in $after) { Add-Failure "scoop: $($row.Name) still $($row.'Installed Version'), latest $($row.'Latest Version') - close the app if it is running and re-run" }
 >>"%SCRIPT%" echo             Write-Host "Scoop: updated $($before.Count - $after.Count) of $($before.Count)." -ForegroundColor Green
 >>"%SCRIPT%" echo         }
@@ -114,15 +115,19 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo     return ,$result
 >>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Streams the rows out one by one; callers collect with @(...) and only then pipe. Piping the
+>>"%SCRIPT%" echo # function directly handed Where-Object the whole list as ONE object, so the skip table never
+>>"%SCRIPT%" echo # matched and $app.Name printed both names merged ("Winamp Windows Subsystem for Linux").
 >>"%SCRIPT%" echo function Get-WingetOutdated {
 >>"%SCRIPT%" echo     $lines = @(^& winget upgrade --accept-source-agreements 2^>$null)
->>"%SCRIPT%" echo     return ,(ConvertFrom-WingetTable $lines)
+>>"%SCRIPT%" echo     $rows = ConvertFrom-WingetTable $lines
+>>"%SCRIPT%" echo     return @($rows)
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo Write-Section "winget"
 >>"%SCRIPT%" echo if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Add-Note "winget not available; skipping." }
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     try {
->>"%SCRIPT%" echo         $outdated = Get-WingetOutdated
+>>"%SCRIPT%" echo         $outdated = @(Get-WingetOutdated)
 >>"%SCRIPT%" echo         if ($outdated.Count -eq 0) { Write-Host "winget: everything up to date." -ForegroundColor Green }
 >>"%SCRIPT%" echo         else {
 >>"%SCRIPT%" echo             $ids = ($outdated ^| ForEach-Object { $_.Id }) -join ', '
@@ -133,7 +138,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo                 ^& winget upgrade --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity 2^>^&1 ^| Out-Host
 >>"%SCRIPT%" echo             }
 >>"%SCRIPT%" echo             # Never trust winget's exit code (nonzero for benign states): ask it again instead.
->>"%SCRIPT%" echo             $still = @(Get-WingetOutdated ^| Where-Object { -not $wingetSkip.ContainsKey($_.Id) })
+>>"%SCRIPT%" echo             $after = @(Get-WingetOutdated)
+>>"%SCRIPT%" echo             $still = @($after ^| Where-Object { -not $wingetSkip.ContainsKey($_.Id) })
 >>"%SCRIPT%" echo             foreach ($app in $still) { Add-Failure "winget: $($app.Name) ($($app.Id)) still outdated" }
 >>"%SCRIPT%" echo             $attempted = @($outdated ^| Where-Object { -not $wingetSkip.ContainsKey($_.Id) })
 >>"%SCRIPT%" echo             Write-Host "winget: updated $($attempted.Count - $still.Count) of $($attempted.Count)." -ForegroundColor Green

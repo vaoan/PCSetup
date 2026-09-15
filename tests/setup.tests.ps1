@@ -425,6 +425,47 @@ Describe "update-all" {
         @($rows | ForEach-Object { $_.Name })[1] | Should -Be 'Windows Subsystem for Linux'
         (ConvertFrom-WingetTable @('No installed package found matching input criteria.')).Count | Should -Be 0
     }
+    It "consumes the outdated lists by variable, never by piping the function directly" {
+        # Both helpers return a collection. In Windows PowerShell 5.1 a function's output is
+        # unrolled one level, so `Get-WingetOutdated | Where-Object` hands Where-Object the whole
+        # ArrayList as ONE object: `$_.Id` then member-enumerates into an array, the skip table
+        # never matches, and the failure printed the merged nonsense
+        # "Winamp Windows Subsystem for Linux (Winamp.Winamp Microsoft.WSL) still outdated".
+        # `Get-ScoopOutdated` has the mirror problem: one outdated app comes back as a bare
+        # PSCustomObject whose .Count is empty in 5.1, which printed "Scoop: updated 0 of .".
+        $generated = Join-Path $env:TEMP 'temp-update-all.ps1'
+        Remove-Item $generated -Force -ErrorAction SilentlyContinue
+        $env:PCSETUP_GENERATE_ONLY = '1'
+        try { & cmd.exe /c "`"$script:updateAllBat`"" | Out-Null } finally { $env:PCSETUP_GENERATE_ONLY = $null }
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($generated, [ref]$tokens, [ref]$errors)
+        $calls = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in @('Get-WingetOutdated', 'Get-ScoopOutdated') }, $true)
+        @($calls).Count | Should -BeGreaterThan 2
+        foreach ($call in $calls) {
+            $pipeline = $call.Parent
+            $pipeline.PipelineElements.Count | Should -Be 1 -Because "$($call.Extent.Text) at line $($call.Extent.StartLineNumber) must not feed a pipeline"
+            $assignment = $pipeline.Parent
+            while ($assignment -and $assignment -isnot [System.Management.Automation.Language.AssignmentStatementAst]) { $assignment = $assignment.Parent }
+            $assignment | Should -Not -BeNullOrEmpty -Because "$($call.Extent.Text) at line $($call.Extent.StartLineNumber) must be assigned to a variable first"
+            $assignment.Right.Extent.Text | Should -Match '^@\(' -Because "$($call.Extent.Text) at line $($call.Extent.StartLineNumber) must be wrapped in @() so one row still has a Count"
+        }
+    }
+    It "generated winget parser gives one row a Count of 1" {
+        $generated = Join-Path $env:TEMP 'temp-update-all.ps1'
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($generated, [ref]$tokens, [ref]$errors)
+        $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertFrom-WingetTable' }, $true) | Select-Object -First 1
+        Invoke-Expression $fn.Extent.Text
+        $one = @(ConvertFrom-WingetTable @(
+            "Name   Id            Version Available    Source",
+            "--------------------------------------------------",
+            "Winamp Winamp.Winamp 5.92.0  5.92.0.10042 winget",
+            "1 upgrades available."
+        ))
+        $one.Count | Should -Be 1
+        $one[0].Id | Should -Be 'Winamp.Winamp'
+        $one[0].Name | Should -Be 'Winamp'
+    }
     It "generated script parses under Windows PowerShell 5.1" {
         # PCSETUP_GENERATE_ONLY makes the .bat write the PowerShell file and stop, so the real
         # CMD echo/escape processing is exercised without upgrading anything on this machine.
