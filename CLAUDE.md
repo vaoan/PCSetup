@@ -631,105 +631,68 @@ in the same folder. Takes `backup` or `restore` as an argument so it can run una
 no-pauses rule); with no argument it falls back to the interactive prompt. Both directions verify by
 file size — a 0-byte backup is refused rather than silently restoring an empty Start Menu.
 
-### optional/download-twitch-vod.bat
-Double-click with a Twitch VOD link (`twitch.tv/videos/<id>`, also `m.twitch.tv` and
-`twitch.tv/<channel>/video/<id>`) in the clipboard. The `.bat` only elevates, clears `PSModulePath`,
-and runs `download-twitch-vod.ps1`, which: reads the clipboard, bootstraps **scoop itself** if the
-PC is fresh (same get.scoop.sh-to-file + `-RunAsAdmin` route as `sources\init-prereqs.ps1`, then
-`git` so buckets can update), resolves `TwitchDownloaderCLI` and `ffmpeg` (installing
-`twitchdownloader-cli` / `ffmpeg` with scoop if missing; the CLI is a self-contained 66 MB exe, no
-.NET runtime needed), fetches the VOD
-metadata with `TwitchDownloaderCLI info --format Raw`, picks the best quality **at or below 720p**
-from the m3u8 variant list, and downloads with 24 threads (benchmarked on this connection: 10 threads
-gave ~32 Mbit/s, 24 gave ~77, 40 dropped back to ~58) into `[Environment]::GetFolderPath('MyVideos')`
-(so it follows the relocated profile folders) as `<date> <channel> - <title> [<id>].mp4`. Progress from
-the CLI is shown in the window; on success Explorer opens with the file selected and the window closes
-after 8 s; on failure a message box explains why. Verifies the output file exists and is over 1 MB
-rather than trusting the exit code.
+### optional/download-video.bat
+One clipboard-driven downloader for **Twitch VODs, YouTube videos and Instagram reels/posts**
+(it replaced three per-site scripts on 2026-09-14). Double-click with a link in the clipboard; the
+`.bat` only elevates, clears `PSModulePath`, and runs `download-video.ps1`, which detects the site
+from the URL, installs only what that site needs (scoop itself first on a fresh PC — same
+get.scoop.sh-to-file + `-RunAsAdmin` route as `sources\init-prereqs.ps1`, then `git`), downloads
+into `[Environment]::GetFolderPath('MyVideos')` (Pictures for Instagram photo posts), shows the
+tool's live progress, opens Explorer on the finished file and closes after 8 s; failures end in a
+message box. Output names are `<date> <channel> - <title> [<id>].mp4`. Manual runs accept `-Url`,
+`-MaxHeight` (Twitch/YouTube cap, default 720), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
+YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
 
-Launchers: the script recreates two shortcuts whenever they are missing — `Download Twitch VOD.lnk`
-in `%APPDATA%\Microsoft\Windows\Start Menu\Programs` (target `cmd.exe /c "<bat>"`, same shape as the
-FFXIV profile launcher `Me.lnk`, which is what makes Windows offer **Pin to Start**) and an identical
-one in the Videos folder. Pinning itself cannot be scripted on Windows 11; it is
-a one-time right-click → Pin to Start after the first run.
+| Site | Tools (scoop) | Selection | Speed |
+|---|---|---|---|
+| Twitch | `twitchdownloader-cli`, `ffmpeg` | best m3u8 variant ≤ 720p (`-q NAME`) | 24 threads: 10 → 32 Mbit/s, 24 → 176, 40+ slower; 72-min VOD in 56 s |
+| YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res:720,fps,vcodec:h264,acodec:m4a,ext:mp4"` (default would pick AV1, which the stock player cannot play) | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
+| Instagram | `yt-dlp`, `gallery-dl`, `ffmpeg` | best quality (reels are VP9-only DASH, no h264 exists); photo posts/carousels fall to gallery-dl into **Pictures** as `<name> (n of N).<ext>` | `-N 8` |
 
-Gotchas: the output name contains `[id]`, so every path check uses `-LiteralPath` — `Test-Path`
-treats brackets as wildcards and reported the finished file as missing. Manual runs accept `-Url`,
-`-MaxHeight`, `-Ending` (e.g. `-Ending 20s` for a quick test download) and `-NoMessageBox` (failures
-go to the console only, so a test run cannot block on a dialog).
+**Launchers.** The script recreates `Download Video.lnk` in `%APPDATA%\Microsoft\Windows\Start
+Menu\Programs` and in the Videos folder whenever either is missing, target `cmd.exe /c "<bat>"`
+(same shape as the FFXIV profile launcher `Me.lnk`, which is what makes Windows offer **Pin to
+Start**), icon `download-video.ico`. It also deletes the three old per-site shortcuts. Pinning itself
+cannot be scripted on Windows 11; it is a one-time right-click → Pin to Start.
 
-**Disk space** (2026-09-12 field failure): a 5 h 10 m VOD at 720p60 needs ~8 GB; Z: had 3.4 GB
-free. The CLI downloaded all 1861 parts into `%TEMP%\TwitchDownloader\<id>_<ticks>` (on C:), then
-ffmpeg's finalize onto Z: failed — and the CLI **never removes or reuses that folder**, so two
-retries left 15 GB of dead `.ts` parts on C:. The script now (a) reads `BANDWIDTH=` from the
-`#EXT-X-STREAM-INF` line of the picked quality and refuses up front when
-`bandwidth / 8 × length × 1.15` exceeds the free space on either the Videos drive or the temp drive,
-naming both numbers, and (b) deletes every `<id>_<ticks>` folder under the temp path before and
-after each run. Note `Z:` holds the profile folders and is often near full — `$RECYCLE.BIN` alone
-was 25 GB.
+**Instagram login.** Instagram serves almost nothing anonymously, and on this PC no tool can read
+Chrome or Edge cookies: Chrome holds `Network\Cookies` with an exclusive lock while it runs (yt-dlp
+issue 7271, gallery-dl "Permission denied"), and Edge/Chrome 127+ use app-bound encryption DPAPI
+cannot open (yt-dlp issue 10927). Firefox cookies are readable but the user does not use Firefox.
+Supported path: a one-time export with the Chrome extension **Get cookies.txt LOCALLY** — the script
+adopts the newest `*instagram.com_cookies*.txt` from the Downloads folder (resolved from the `User
+Shell Folders` registry key, since Downloads is relocated) into `%APPDATA%\PCSetup\instagram-cookies.txt`
+and tries, in order: that file, Firefox cookies, none. Login-shaped failures end in a message box
+with the three-step setup. Verified with the user's export: a reel downloaded and merged in 3 s.
+YouTube has its own fallback: on "Sign in to confirm you're not a bot" it retries with
+`--cookies-from-browser` firefox → chrome → edge.
 
-Bootstrap gotchas, all hit while simulating a fresh PC (scoop and git hidden from PATH, `USERPROFILE`
-pointed at a temp folder, launched through CMD exactly like the `.bat` does):
-- **`2>&1` on a native command under `$ErrorActionPreference = 'Stop'` is fatal.** Any stderr line
-  from the scoop installer or `scoop install` becomes a terminating `NativeCommandError`. External
-  calls go through `Invoke-Native`, which flips the preference to `Continue` for the duration.
-- **The scoop installer needs `Expand-Archive`**, which lives in `Program Files\WindowsPowerShell\Modules`,
-  not `$PSHOME`. Unsetting `PSModulePath` from CMD (`set "PSModulePath="`) is fine — 5.1 rebuilds
-  its stock path — but setting it to an *empty string* from pwsh is not; the child then has no
-  module path at all and the installer dies at "Extracting...". The script sets 5.1's three stock
-  module folders explicitly before spawning the installer so it works from any launcher.
-- **A half-finished `%USERPROFILE%\scoop` blocks every retry** ("exists and is not empty, please
-  specify another path. Abort."). scoop is treated as installed only if `shims\scoop.ps1` exists;
-  otherwise a leftover folder is moved to `scoop.broken-<timestamp>` (never deleted) and the
-  installer runs again.
-- The installer appends `scoop\shims` and `scoop\apps\git\current\cmd` to the **user** PATH; that is
-  what a real fresh PC wants, so it is left alone. Full cold run measured at 49 s (scoop, 7zip, git,
-  CLI, ffmpeg, plus a 20 s test download).
+**Disk space (Twitch).** A 5 h 10 m VOD at 720p60 needs ~8 GB; Z: had 3.4 GB free, the CLI
+downloaded all 1861 parts into `%TEMP%\TwitchDownloader\<id>_<ticks>` (on C:), then ffmpeg's finalize
+onto Z: failed — and the CLI **never removes or reuses that folder**, so two retries left 15 GB of
+dead `.ts` parts. The script reads `BANDWIDTH=` from the picked `#EXT-X-STREAM-INF` line and refuses
+up front when `bandwidth / 8 × length × 1.15` exceeds free space on the Videos drive or the temp
+drive, naming both numbers, and deletes every `<id>_<ticks>` folder before and after each run. `Z:`
+holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB).
 
-### optional/download-youtube-video.bat
-YouTube twin of `download-twitch-vod.bat`: same `.bat` shape, same clipboard flow, same scoop
-bootstrap, same shortcut recreation (`Download YouTube Video.lnk` in Start Menu Programs and in
-Videos, `cmd.exe /c` form), same window feedback and message-box failures. `download-youtube-video.ps1`
-accepts `watch?v=`, `youtu.be/`, `/shorts/`, `/live/`, `/embed/` links (extra query params like `&t=`
-or `?si=` are ignored, the id is re-wrapped into a clean URL) and uses **yt-dlp** with **deno** as its
-JavaScript runtime (yt-dlp 2026.x needs one to unlock every YouTube format; scoop package `deno`).
-
-Format choice is `-f 'bv*+ba/b' -S "res:720,fps,vcodec:h264,acodec:m4a,ext:mp4"`: best stream at or
-below 720p, preferring h264 + aac so the file plays in the stock Windows player (yt-dlp's default
-would pick AV1 720p60, which does not). Separate video/audio streams are merged by ffmpeg via
-`--ffmpeg-location`. `-N 16` parallel fragments measured 154 Mbit/s vs 141 at `-N 8` on this line;
-a 10-minute 720p60 video downloads in about 5 s plus merge. Output name is
-`<upload date> <channel> - <title> [<id>].mp4`; the template must end in `%(ext)s` or yt-dlp
-appends its own extension, so the final path is computed as `<base>.mp4` and verified (> 200 KB).
-
-If the info fetch fails with "Sign in to confirm you're not a bot", it retries with
-`--cookies-from-browser` firefox, then chrome, then edge, and reuses whichever worked for the
-download. `-Ending <seconds|m:ss>` maps to `--download-sections "*0-<end>"` which **re-encodes** with
-ffmpeg (slow, prints libx264 stats) — it is a test aid, not a trim feature.
-
-### optional/download-instagram-post.bat
-Instagram sibling of the Twitch/YouTube downloaders (same `.bat` shape, bootstrap, `cmd.exe /c`
-shortcuts `Download Instagram Post.lnk`, icon `instagram.ico`, window feedback, `-NoMessageBox`).
-Accepts `/reel/`, `/reels/`, `/p/`, `/tv/` and `/<user>/reel/` links; the shortcode is re-wrapped
-into a clean URL (tracking params like `?stkn=` dropped). Reels and videos go through **yt-dlp**
-(best quality, h264/aac preferred, `-N 8`) into Videos as `<date> <account> - <caption 60> [<code>].mp4`;
-when yt-dlp finds no video the script falls to **gallery-dl** for photo posts and carousels, which
-land in **Pictures** as `<name> (n of N).<ext>` (downloaded to `%TEMP%\InstagramDownload\<code>` with
-`-f '{num}.{extension}'` and renamed, so no reliance on Instagram-specific metadata keys).
-
-**Login is the whole problem.** Instagram serves almost nothing anonymously, and on this PC no tool
-can read Chrome or Edge cookies: Chrome holds `Network\Cookies` with an exclusive lock while it runs
-(yt-dlp issue 7271, gallery-dl gets "Permission denied"), and Edge/Chrome 127+ use app-bound
-encryption that DPAPI cannot open (yt-dlp issue 10927). Firefox cookies *are* readable but the user
-does not use Firefox. Supported path: a one-time export with the Chrome extension **Get cookies.txt
-LOCALLY** — the script adopts the newest `*instagram.com_cookies*.txt` from the Downloads folder
-(resolved from the `User Shell Folders` registry key, since Downloads is relocated) into
-`%APPDATA%\PCSetup\instagram-cookies.txt` and tries, in order: that file, Firefox cookies, none.
-Every source that fails with a login-shaped error ends in a message box with the three-step
-setup. Both paths verified against a real reel: no cookies → the setup message; with the user's
-export in Downloads → adopted, downloaded and merged in 3 s. Note Instagram serves reels as
-**VP9-only DASH** (no h264 variant at all), so the h264 preference in the sort is moot there and the
-best-resolution VP9 stream is picked; Windows 11 plays VP9 natively.
+Gotchas that bit while building it:
+- Output names carry `[id]`, so every path check uses `-LiteralPath` — `Test-Path` treats brackets as
+  wildcards and reported a finished file as missing.
+- `2>&1` on a native command under `$ErrorActionPreference = 'Stop'` is fatal: any stderr line
+  becomes a terminating `NativeCommandError`. External calls go through `Invoke-Native` /
+  `Get-NativeOutput` / `Invoke-Streaming`, which flip the preference to `Continue`. `Invoke-Streaming`
+  must `Write-Host` the lines and `return` only `$LASTEXITCODE` — returning the lines too made
+  `$exit` an array and the "exited with code" warning printed the whole progress log.
+- The scoop installer needs `Expand-Archive` from `Program Files\WindowsPowerShell\Modules`.
+  Unsetting `PSModulePath` from CMD is fine (5.1 rebuilds its stock path) but an *empty string* from
+  pwsh is not; the script sets 5.1's three stock module folders explicitly before spawning it.
+- A half-finished `%USERPROFILE%\scoop` blocks every retry ("exists and is not empty ... Abort.");
+  scoop counts as installed only if `shims\scoop.ps1` exists, otherwise the folder is moved to
+  `scoop.broken-<timestamp>` and the installer runs again.
+- yt-dlp's `-o` template must end in `%(ext)s` or it appends its own extension; the final path is
+  computed as `<base>.mp4` and verified by size.
+- Simulated fresh PC (scoop and git hidden from PATH, `USERPROFILE` in a temp folder, launched via
+  CMD like the `.bat`): full cold run 49 s including a 20 s test download.
 
 ### Undocumented optional scripts
 These exist in `optional/` and are **not** covered by the audit above — they still have the original
