@@ -3,7 +3,7 @@
 Runs the bridge on an always-on Linux VPS (RackNerd, Hetzner, or any KVM box)
 instead of your PC — so it's available 24/7 with clean, low-latency audio. A real
 VPS has proper outbound UDP, so Discord voice and the OAuth callback just work
-(none of the WSL mirrored-networking gymnastics needed locally).
+(no WSL networking workarounds, which is why the local WSL variant was retired).
 
 Same stack as local: `go-librespot` (Spotify Connect device) → FIFO → `bot.js`
 (ffmpeg + @discordjs/voice v8) → Discord voice channel.
@@ -59,19 +59,12 @@ completes. Credentials persist across reboots (genuinely one-time).
 Open Spotify → Connect/devices icon → pick **Discord** → play. The bot auto-joins
 `DISCORD_VOICE_CHANNEL_ID` (or use `/join` from a voice channel).
 
-## 5. Retire the local WSL bot
+## 5. Only one instance per bot token
 
-Only **one** instance can run per bot token, so turn off the local one to avoid a
-conflict (go-librespot as a second Spotify device is harmless, but two bot
-processes on the same token will clash):
-
-```powershell
-# On Windows / WSL:
-wsl -d Ubuntu-24.04 --user root -- systemctl disable --now spotify-discord-bot go-librespot
-Disable-ScheduledTask -TaskName SpotifyDiscordBridge
-```
-
-(Leave the repo scripts in place — they're your fallback if the VPS ever dies.)
+Only **one** bot process can run per token, so never start a second copy of
+`bot.js` anywhere (a second go-librespot device is harmless; two bots clash).
+The local WSL variant that used to live next to this folder was removed from the
+repo on 2026-09-15 — the VPS is the only install.
 
 ## Files
 

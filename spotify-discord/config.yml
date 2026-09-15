@@ -1,5 +1,5 @@
-# go-librespot config — deployed to ~/.config/go-librespot/config.yml by the
-# WSL setup script. Streams a Spotify Connect device into a named pipe that the
+# go-librespot config — deployed to ~/.config/go-librespot/config.yml by
+# cloud/setup-cloud.sh on the VPS. Streams a Spotify Connect device into a named pipe that the
 # Discord bot reads.
 #
 # Docs: https://github.com/devgianlu/go-librespot
@@ -22,13 +22,12 @@ normalisation_disabled: false
 # Log into your Spotify account via OAuth (one-time interactive browser login).
 # This makes the "Discord" device appear in your Spotify Connect list on ALL
 # your devices over the internet — not just the local network. zeroconf mode
-# would only work on the same LAN and breaks under WSL2's NAT, so we use OAuth.
+# would only work on the same LAN as the VPS, so we use OAuth.
 credentials:
   type: interactive
   interactive:
-    # Fixed OAuth callback port so a stable netsh portproxy can bridge the
-    # browser redirect from Windows into WSL (WSL2 localhost forwarding is
-    # unreliable on long-running VMs). Only used during the one-time login.
+    # Fixed OAuth callback port so the one-time login can be done over a known
+    # SSH tunnel (ssh -L 8898:localhost:8898, see cloud/login-spotify-cloud.sh).
     callback_port: 8898
 
 # Local control/status API (used by nothing yet, handy for future controls).

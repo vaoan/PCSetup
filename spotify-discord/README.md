@@ -8,6 +8,13 @@ is only the output device.
 
 Requires **Spotify Premium**.
 
+**It runs on an always-on Linux VPS, not on this PC.** Install, login and updates
+are all in **`cloud/README.md`**. The local WSL variant (systemd units inside
+Ubuntu-24.04, a `SpotifyDiscordBridge` scheduled task, and a WSL mirrored-networking
+prerequisite) was removed on 2026-09-15: it was never in use after the VPS went
+live, and its docs kept getting cited as a reason not to touch local WSL. If you
+ever need it back, it is in git history before that date.
+
 ## How it works
 
 ```
@@ -22,84 +29,29 @@ bot.js  →  ffmpeg (44.1 kHz → 48 kHz)  →  @discordjs/voice (v8)  →  voic
 
 - go-librespot logs into your account with **OAuth** (not LAN zeroconf), so the
   device shows up in your Connect list **everywhere over the internet**.
-- Both pieces run as **systemd services in WSL** (`go-librespot`,
-  `spotify-discord-bot`), enabled at boot, held alive by the `WSLKeepAlive` task,
-  and (re)started at logon by the `SpotifyDiscordBridge` scheduled task.
-
-## Networking: WSL mirrored mode (required)
-
-This bridge requires **WSL2 mirrored networking** (`networkingMode=mirrored` in
-`%USERPROFILE%\.wslconfig`). Two reasons:
-
-1. **Discord voice needs a clean network path.** Under WSL2's default NAT the
-   voice UDP handshake and the OAuth callback are flaky. Mirrored mode gives WSL
-   the Windows network stack directly.
-2. **`hostAddressLoopback=true`** lets Windows (cloudflared) reach WSL services on
-   `127.0.0.1` directly.
-
-`setup-wsl-mirrored.ps1` writes this config and restarts WSL (idempotent).
-
-> **Console impact (already handled):** mirrored mode makes WSL and Windows share
-> ports, so the web console no longer uses the Windows `tcp-relay.js`/`ssh-proxy.js`
-> relays, and WSL sshd moves to **2222** (Windows OpenSSH keeps 22). `start-console.ps1`
-> auto-detects mirrored mode and does the right thing — no manual action needed.
+- Both pieces run as **systemd services on the VPS** (`go-librespot`,
+  `spotify-discord-bot`), enabled at boot. A real VPS has clean outbound UDP, so
+  Discord voice and the OAuth callback just work — no networking workarounds.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `bot.js` | discord.js bot: reads the pipe, joins voice, streams audio |
-| `config.yml` | go-librespot config (pipe output, OAuth login, fixed callback port) |
+| `dj.js`, `accounts.js` | Bot modules (DJ commands, account handling) |
+| `config.yml` | go-librespot config (pipe output, OAuth login, fixed callback port 8898) |
 | `package.json` | Node deps (**`@discordjs/voice` ≥ 0.19** = voice gateway v8) |
-| `setup-spotify-discord.bat` | One-click installer: mirrored net → WSL install → scheduled task |
-| `setup-wsl-mirrored.ps1` | Sets WSL to mirrored networking (prereq) |
-| `setup-spotify-discord-wsl.sh` | WSL installer — go-librespot, deps, systemd services |
-| `install-scheduled-task.ps1` | Registers the `SpotifyDiscordBridge` logon task |
-| `login-spotify.ps1` | One-time Spotify OAuth login (Windows, mirrored-aware) |
-| `login-spotify.sh` | Older WSL-only OAuth helper (PS1 is preferred) |
-| `.env.example` | Reference for the runtime env (`/etc/spotify-discord.env`) |
+| `.env.example` | Reference for the runtime env the VPS installer writes to `/etc/spotify-discord.env` |
+| `cloud/setup-cloud.sh` | One-command VPS installer (deps, go-librespot, bot, systemd). Pulls the files above from GitHub `main` |
+| `cloud/login-spotify-cloud.sh` | One-time Spotify OAuth over an SSH tunnel |
+| `cloud/vps-ssh.ps1` | Connect to / deploy on the VPS using the `.secrets` entries |
 
-## First-time setup
+## Setup, restore and updates
 
-1. **Create the Discord bot** at <https://discord.com/developers/applications>:
-   - New Application → **Bot** → Reset Token → copy it.
-   - **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`; bot
-     permissions **View Channels + Connect + Speak** (`permissions=3146752`).
-     Open the generated URL to invite it to your server.
-   - Copy your **Server ID** and target **Voice Channel ID** (Developer Mode →
-     right-click → Copy ID). *(Or let the bot print them: it logs `VOICECHAN`
-     lines for every voice channel on startup.)*
-
-2. **Add the secrets** to GitHub, then sync:
-   - GitHub → repo Settings → Secrets → Actions, add `DISCORD_BOT_TOKEN`,
-     `DISCORD_GUILD_ID`, `DISCORD_VOICE_CHANNEL_ID`.
-   - Run `cloudflared\sync-secrets.bat` to pull them into `.secrets`.
-
-3. **Install** (double-click or run):
-   ```
-   spotify-discord\setup-spotify-discord.bat
-   ```
-   This runs all three steps: mirrored networking → WSL install → scheduled task.
-
-4. **One-time Spotify login**:
-   ```
-   powershell -ExecutionPolicy Bypass -File spotify-discord\login-spotify.ps1
-   ```
-   Log in with Premium and click **Agree**. A "connection reset/refused" page
-   after Agree is normal — the login still completes. Credentials are
-   account-scoped and reused across reboots (genuinely one-time).
-
-5. **Use it** — open Spotify, hit the Connect/devices icon, pick **Discord**, and
-   play. The bot auto-joins `DISCORD_VOICE_CHANNEL_ID` (or use `/join`).
-
-## Run it on a cloud VPS (always-on, better sound)
-
-For 24/7 availability and cleaner audio (no WSL CPU jitter), run the bridge on a
-cheap always-on Linux VPS instead of your PC. A real VPS has proper outbound UDP,
-so none of the mirrored-networking setup is needed. See **`cloud/README.md`** —
-it's a one-command installer plus an SSH-tunnel login. Recommended: any KVM VPS
-with ≥ 1 GB RAM (a private music bot uses ~5–10% CPU / ~150 MB RAM / ~50 MB per
-hour of listening).
+See **`cloud/README.md`**. In short: add `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`
+and `DISCORD_VOICE_CHANNEL_ID` to GitHub Secrets and run `cloudflared\sync-secrets.bat`,
+run `setup-cloud.sh` on the VPS, then do the one-time Spotify login through an SSH
+tunnel. Nothing on this PC needs to be installed or restored after a format.
 
 ## Slash commands
 
@@ -110,18 +62,7 @@ hour of listening).
 | `/reconnect` | Restart the audio stream (if it ever stalls) |
 | `/status` | Show voice / ffmpeg / pipe status |
 
-## Restore after a format
-
-Fully reproducible from this repo:
-
-1. Restore WSL, run `cloudflared\sync-secrets.bat` (brings back the 3 Discord secrets).
-2. Run `spotify-discord\setup-spotify-discord.bat` (mirrored net + install + task).
-3. Run `login-spotify.ps1` once (Spotify OAuth can't live in a secret).
-
-systemd services are enabled and the `SpotifyDiscordBridge` task starts them at
-logon — nothing to do day to day.
-
-## Troubleshooting
+## Troubleshooting (on the VPS)
 
 ```bash
 # Live logs
@@ -138,20 +79,21 @@ journalctl -u spotify-discord-bot | grep -E 'voice:|streaming|net-state'
   websocket is being closed right after Hello. This is the **voice gateway v4**
   problem — Discord rejects v4. Fix: `@discordjs/voice` must be **≥ 0.19** (uses
   v8). Verify: `grep -o 'v=[0-9]' node_modules/@discordjs/voice/dist/index.js`.
-- **Device not showing in Spotify:** go-librespot needs login → run `login-spotify.ps1`.
-- **WSL VM asleep (services dead):** `wsl --list --running`; the `WSLKeepAlive`
-  task should prevent it.
+- **Device not showing in Spotify:** go-librespot needs login → `cloud/login-spotify-cloud.sh`.
+- **Someone is listening right now?** `curl -s 127.0.0.1:3678/status` shows
+  `"stopped":false` while playback is active. Restarting go-librespot cuts the
+  audio, so check before any restart.
 
 ## Hard-won gotchas (why the scripts look the way they do)
 
 - **go-librespot needs `HOME`** — it calls `os.UserConfigDir()` before parsing
   `--config_dir`, so the systemd unit sets `Environment=HOME=/root`.
 - **OAuth callback / restart churn** — go-librespot's login callback is on a fixed
-  port (`credentials.interactive.callback_port: 8898`); `login-spotify.ps1`
-  temporarily disables service auto-restart so the PKCE challenge can't rotate
-  mid-login.
-- **Voice gateway v8** — the single biggest fix. Everything else (NAT vs mirrored)
-  was a red herring for *voice*; the real blocker was the outdated library.
+  port (`credentials.interactive.callback_port: 8898`); the login helper stops
+  the service first so the PKCE challenge can't rotate mid-login.
+- **Voice gateway v8** — the single biggest fix. Everything else (NAT vs mirrored
+  networking, back when this ran in WSL) was a red herring for *voice*; the real
+  blocker was the outdated library.
 - **Encryption** — `@noble/ciphers` + `libsodium-wrappers` are installed for the
   v8 AEAD encryption modes.
 
