@@ -213,6 +213,15 @@ Describe "2-setup-windows" {
     It "Claude Code installed" -Skip:($IsCI) {
         (Get-Command claude -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
     }
+    It "Patch My PC declared in the winget table" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $script | Should -Match "Id = 'PatchMyPC\.PatchMyPC'"
+    }
+    It "Patch My PC installed" -Skip:($IsCI) {
+        $installed = (Test-Path "$env:ProgramFiles\Patch My PC\Patch My PC Home Updater\PatchMyPC-HomeUpdater.exe") -or
+            (Test-WingetPackageInstalled -Id 'PatchMyPC.PatchMyPC')
+        [bool]$installed | Should -BeTrue
+    }
 }
 
 # ─────────────────────────────────────────────
@@ -350,6 +359,83 @@ Describe "99-remove-windows-ai" {
         $script | Should -Match '-backupMode'
         $script | Should -Match '-EnableLogging'
         $script | Should -Match 'powershell\.exe'
+    }
+}
+
+# -----------------------------
+# update-all (utility, no number prefix)
+# -----------------------------
+Describe "update-all" {
+    BeforeAll {
+        $script:updateAllBat = Join-Path $PSScriptRoot "..\update-all.bat"
+        $script:updateAllText = if (Test-Path $script:updateAllBat) { Get-Content $script:updateAllBat -Raw } else { '' }
+    }
+    It "script exists" {
+        Test-Path $script:updateAllBat | Should -BeTrue
+    }
+    It "clears PSModulePath before spawning Windows PowerShell" {
+        $script:updateAllText | Should -Match 'set "PSModulePath="'
+    }
+    It "puts redirection first on every generated line" {
+        # `echo ... 3>>"%SCRIPT%"` eats a trailing standalone digit as a file handle (see 3-setup-node.bat).
+        $trailing = ($script:updateAllText -split "`r?`n") | Where-Object { $_ -match '^\s*echo\b.*>>\s*"%SCRIPT%"\s*$' }
+        $trailing | Should -BeNullOrEmpty
+    }
+    It "updates every package manager the setup scripts install with" {
+        $script:updateAllText | Should -Match 'scoop update \*'
+        $script:updateAllText | Should -Match 'winget upgrade'
+        $script:updateAllText | Should -Match 'choco upgrade all'
+        $script:updateAllText | Should -Match 'npm\.cmd install -g \$name@latest'
+    }
+    It "runs Patch My PC silently as the final sweep" {
+        $script:updateAllText | Should -Match 'PatchMyPC-HomeUpdater\.exe'
+        $script:updateAllText | Should -Match "'/s'"
+    }
+    It "never upgrades WSL through winget (restarting it kills the console and Spotify services)" {
+        $script:updateAllText | Should -Match "'Microsoft\.WSL'"
+    }
+    It "generated winget parser reads a captured upgrade table" {
+        # The parser is extracted from the GENERATED file, so this exercises what CMD's echo
+        # actually wrote. The first version lost its '^' anchors to CMD and returned zero rows
+        # while winget itself listed 21 upgrades - which no static check on the .bat could see.
+        $generated = Join-Path $env:TEMP 'temp-update-all.ps1'
+        Remove-Item $generated -Force -ErrorAction SilentlyContinue
+        $env:PCSETUP_GENERATE_ONLY = '1'
+        try { & cmd.exe /c "`"$script:updateAllBat`"" | Out-Null } finally { $env:PCSETUP_GENERATE_ONLY = $null }
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($generated, [ref]$tokens, [ref]$errors)
+        $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertFrom-WingetTable' }, $true) | Select-Object -First 1
+        $fn | Should -Not -BeNullOrEmpty
+        Invoke-Expression $fn.Extent.Text
+        $fixture = @(
+            "   -`r   \`r   |`r   /`rName                        Id                          Version      Available    Source",
+            "-------------------------------------------------------------------------------------------------",
+            "AdGuard                     AdGuard.AdGuard             7.22.5282.0  8.0.5570     winget",
+            "Windows Subsystem for Linux Microsoft.WSL               2.7.11.0     2.7.13       winget",
+            "Docker Desktop              Docker.DockerDesktop        4.85.0       4.91.0       winget",
+            "3 upgrades available.",
+            "",
+            "The following packages have an upgrade available, but require explicit targeting for upgrade:",
+            "Name                        Id                          Version      Available    Source",
+            "-------------------------------------------------------------------------------------------------",
+            "Something Pinned            Vendor.Pinned               1.0          2.0          winget"
+        )
+        $rows = ConvertFrom-WingetTable $fixture
+        @($rows | ForEach-Object { $_.Id }) | Should -Be @('AdGuard.AdGuard', 'Microsoft.WSL', 'Docker.DockerDesktop')
+        @($rows | ForEach-Object { $_.Name })[1] | Should -Be 'Windows Subsystem for Linux'
+        (ConvertFrom-WingetTable @('No installed package found matching input criteria.')).Count | Should -Be 0
+    }
+    It "generated script parses under Windows PowerShell 5.1" {
+        # PCSETUP_GENERATE_ONLY makes the .bat write the PowerShell file and stop, so the real
+        # CMD echo/escape processing is exercised without upgrading anything on this machine.
+        $generated = Join-Path $env:TEMP 'temp-update-all.ps1'
+        Remove-Item $generated -Force -ErrorAction SilentlyContinue
+        $env:PCSETUP_GENERATE_ONLY = '1'
+        try { & cmd.exe /c "`"$script:updateAllBat`"" | Out-Null } finally { $env:PCSETUP_GENERATE_ONLY = $null }
+        Test-Path $generated | Should -BeTrue
+        $probe = "`$t=`$null;`$e=`$null;[void][System.Management.Automation.Language.Parser]::ParseFile('$generated',[ref]`$t,[ref]`$e);if(`$e){`$e|ForEach-Object{`$_.ToString()};exit 1}"
+        $out = & powershell.exe -NoProfile -NonInteractive -Command $probe 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $out
     }
 }
 

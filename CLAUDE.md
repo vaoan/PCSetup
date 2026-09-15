@@ -456,7 +456,7 @@ optional `Source` for msstore-only packages). Every entry is verified after inst
 that failed is listed at the end, with the script exiting non-zero.
 
 **Scoop:** Chrome, Discord, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
-**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, NVIDIA App (msstore)
+**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, NVIDIA App (msstore)
 
 > **Docker Desktop is here so `test-local.bat` can actually be run.** Without it the container
 > test only ever runs in GitHub Actions, which is how the fresh-install path went unexercised long
@@ -614,6 +614,49 @@ Runs Win11Debloat in unattended mode to apply default tweaks and remove common o
 
 ### 99-remove-windows-ai.bat
 Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
+
+## Updating everything afterwards: `update-all.bat`
+
+Utility script (no number prefix, run whenever). One double-click updates everything the numbered
+scripts installed, **through the package manager that installed it**, then runs Patch My PC as a
+sweep for the direct-download apps no manager owns (Discord Canary, Chrome Remote Desktop, Mudfish,
+IceDrive). Patch My PC itself is installed by `2-setup-windows.bat` (`PatchMyPC.PatchMyPC`, MSI, lands
+in `%ProgramFiles%\Patch My PC\Patch My PC Home Updater\`). Order and verification:
+
+| Step | Act | Verify (what counts as a failure) |
+|---|---|---|
+| Scoop | `scoop update`, then `scoop update *` | `scoop status` rows that still have a Latest Version. Held packages are ignored; "Manifest removed" rows are reported as notes, not failures |
+| winget | parse `winget upgrade`, then `winget upgrade --id <id> -e --silent` **per ID** | re-parse the list; anything still there and not in the skip table |
+| Chocolatey | `choco upgrade all -y` | `choco outdated --limit-output` rows not pinned |
+| npm | `npm install -g <pkg>@latest` per outdated package | `npm outdated -g --json` entries whose current differs from latest |
+| Patch My PC | `PatchMyPC-HomeUpdater.exe /s` (silent, no GUI, exits when done) | non-zero exit code |
+
+The window closes on its own, so the summary is also appended to
+`%LOCALAPPDATA%\PCSetup\update-all.log` (a transcript). Exit code is non-zero if anything is still
+outdated afterwards; a Scoop app that is running will show up there, since Scoop refuses to replace
+a running app.
+
+> **Not `winget upgrade --all`, on purpose.** The list is parsed and each app is upgraded by ID so
+> the `$wingetSkip` table is honoured. It holds `Microsoft.WSL`: upgrading WSL restarts the VM,
+> which kills every console service and the Spotify bridge mid-run. Add a row to skip anything else.
+> Patch My PC does not know about WSL, so the sweep cannot reintroduce it.
+
+> **npm is `install -g <pkg>@latest` per package, not `npm update -g`.** `update -g` stays inside the
+> semver range recorded at install time, so a new major of Codex or Copilot CLI would never arrive.
+
+> **Two CMD escaping bugs shipped in the first draft, and both were invisible to a parse check.**
+> (1) `^|` inside a double-quoted `Write-Host "...$(($x ^| ForEach-Object ...))"` stored a literal
+> caret: the joins are now done on their own line and only the variable goes into the string.
+> (2) `^` regex anchors in single quotes (`'^\s*$'`, `'^-{5,}'`, `'^Name\s+Id'`) were eaten by CMD, so
+> the blank-line check became `'\s*$'`, matched **every** line, and the winget loop broke out at
+> the first data row: the script saw 0 upgrades while winget listed 21. The parser now uses
+> `StartsWith`/`IsNullOrWhiteSpace` instead of anchors, is a pure function
+> (`ConvertFrom-WingetTable`), and `setup.tests.ps1` extracts it **from the generated file** and
+> runs it against a captured table, so what is tested is what CMD actually wrote.
+
+> **Test hook: `PCSETUP_GENERATE_ONLY=1`** makes the `.bat` skip elevation, write the PowerShell file
+> to `%TEMP%\temp-update-all.ps1` and stop. The tests use it to parse the output under Windows
+> PowerShell 5.1 and to exercise the parser without upgrading anything on the test machine.
 
 ## Optional Scripts (`optional/`)
 
