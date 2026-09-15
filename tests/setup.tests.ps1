@@ -391,7 +391,7 @@ Describe "update-all" {
         $script:updateAllText | Should -Match 'PatchMyPC-HomeUpdater\.exe'
         $script:updateAllText | Should -Match "'/s'"
     }
-    It "never upgrades WSL through winget (restarting it kills the console and Spotify services)" {
+    It "never upgrades WSL through winget (restarting the VM kills the WSL-hosted console services)" {
         $script:updateAllText | Should -Match "'Microsoft\.WSL'"
     }
     It "generated winget parser reads a captured upgrade table" {

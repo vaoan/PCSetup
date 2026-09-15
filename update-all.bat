@@ -89,7 +89,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # Deliberately not `winget upgrade --all`: the list is parsed and each app is upgraded by
 >>"%SCRIPT%" echo # ID so that entries in this table are never touched. Add a row to skip something else.
 >>"%SCRIPT%" echo $wingetSkip = @{
->>"%SCRIPT%" echo     'Microsoft.WSL' = 'upgrading WSL restarts the VM, which kills the console services and the Spotify bridge'
+>>"%SCRIPT%" echo     'Microsoft.WSL' = 'upgrading WSL restarts the VM, which kills every WSL-hosted console service (code-server, ttyd, ungit, dashboard, sshd)'
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo # Pure parser so the test suite can feed it a captured table. No regex anchors here: a
 >>"%SCRIPT%" echo # caret outside double quotes is eaten by CMD on the way into this file, so the anchored

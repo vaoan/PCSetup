@@ -638,8 +638,10 @@ a running app.
 
 > **Not `winget upgrade --all`, on purpose.** The list is parsed and each app is upgraded by ID so
 > the `$wingetSkip` table is honoured. It holds `Microsoft.WSL`: upgrading WSL restarts the VM,
-> which kills every console service and the Spotify bridge mid-run. Add a row to skip anything else.
-> Patch My PC does not know about WSL, so the sweep cannot reintroduce it.
+> which kills every WSL-hosted console service (code-server, ttyd, ungit, dashboard, sshd) mid-run.
+> The Spotify bridge is **not** affected: it runs on the VPS, not in local WSL (see the Spotify
+> section). Add a row to skip anything else. Patch My PC does not know about WSL, so the sweep
+> cannot reintroduce it.
 
 > **npm is `install -g <pkg>@latest` per package, not `npm update -g`.** `update -g` stays inside the
 > semver range recorded at install time, so a new major of Codex or Copilot CLI would never arrive.
@@ -1334,7 +1336,13 @@ Spotify app → go-librespot (Connect device, OAuth login) → /tmp/spotify-disc
   → bot.js → ffmpeg (44.1→48 kHz) → @discordjs/voice → Discord voice channel
 ```
 
-Runs as two **WSL systemd services** (`go-librespot`, `spotify-discord-bot`),
+> **This runs on the RackNerd VPS, not on this PC.** See `spotify-discord/cloud/README.md`.
+> Verified 2026-09-15: local WSL has no `go-librespot` / `spotify-discord-bot` units and there
+> is no `SpotifyDiscordBridge` scheduled task. Nothing on this machine (WSL restarts, `update-all`,
+> `start-console.bat`) can interrupt it. The local WSL install below is the legacy option and is
+> not in use.
+
+Local (legacy) layout: two **WSL systemd services** (`go-librespot`, `spotify-discord-bot`),
 enabled at boot, held alive by `WSLKeepAlive`, and (re)started at logon by the
 `SpotifyDiscordBridge` scheduled task. OAuth login (not LAN zeroconf) is used so
 the device appears in Connect over the internet.
