@@ -178,7 +178,10 @@ chmod +x /usr/local/bin/claude
 
 cat > /usr/local/bin/codex << WRAPPER
 #!/bin/bash
-exec /mnt/c/Users/$WIN_USER/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe "\$@"
+# The Windows Codex CLI is installed by npm, not the retired desktop-app path.
+# Invoke its Node entrypoint directly: .cmd shims cannot run under Bash/WSL.
+exec "/mnt/c/Users/$WIN_USER/scoop/apps/nvm/current/nodejs/nodejs/node.exe" \
+    "C:\\Users\\$WIN_USER\\scoop\\apps\\nvm\\current\\nodejs\\nodejs\\node_modules\\@openai\\codex\\bin\\codex.js" "\$@"
 WRAPPER
 chmod +x /usr/local/bin/codex
 echo "[setup-console-wsl] claude/codex wrappers installed"
