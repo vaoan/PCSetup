@@ -707,6 +707,28 @@ If the info fetch fails with "Sign in to confirm you're not a bot", it retries w
 download. `-Ending <seconds|m:ss>` maps to `--download-sections "*0-<end>"` which **re-encodes** with
 ffmpeg (slow, prints libx264 stats) — it is a test aid, not a trim feature.
 
+### optional/download-instagram-post.bat
+Instagram sibling of the Twitch/YouTube downloaders (same `.bat` shape, bootstrap, `cmd.exe /c`
+shortcuts `Download Instagram Post.lnk`, icon `instagram.ico`, window feedback, `-NoMessageBox`).
+Accepts `/reel/`, `/reels/`, `/p/`, `/tv/` and `/<user>/reel/` links; the shortcode is re-wrapped
+into a clean URL (tracking params like `?stkn=` dropped). Reels and videos go through **yt-dlp**
+(best quality, h264/aac preferred, `-N 8`) into Videos as `<date> <account> - <caption 60> [<code>].mp4`;
+when yt-dlp finds no video the script falls to **gallery-dl** for photo posts and carousels, which
+land in **Pictures** as `<name> (n of N).<ext>` (downloaded to `%TEMP%\InstagramDownload\<code>` with
+`-f '{num}.{extension}'` and renamed, so no reliance on Instagram-specific metadata keys).
+
+**Login is the whole problem.** Instagram serves almost nothing anonymously, and on this PC no tool
+can read Chrome or Edge cookies: Chrome holds `Network\Cookies` with an exclusive lock while it runs
+(yt-dlp issue 7271, gallery-dl gets "Permission denied"), and Edge/Chrome 127+ use app-bound
+encryption that DPAPI cannot open (yt-dlp issue 10927). Firefox cookies *are* readable but the user
+does not use Firefox. Supported path: a one-time export with the Chrome extension **Get cookies.txt
+LOCALLY** — the script adopts the newest `*instagram.com_cookies*.txt` from the Downloads folder
+(resolved from the `User Shell Folders` registry key, since Downloads is relocated) into
+`%APPDATA%\PCSetup\instagram-cookies.txt` and tries, in order: that file, Firefox cookies, none.
+Every source that fails with a login-shaped error ends in a message box with the three-step
+setup. The success path could not be exercised in-session (no Instagram login available); the
+no-login path was verified end to end against a real reel.
+
 ### Undocumented optional scripts
 These exist in `optional/` and are **not** covered by the audit above — they still have the original
 no-verification shape:
