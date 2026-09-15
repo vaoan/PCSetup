@@ -726,8 +726,10 @@ LOCALLY** — the script adopts the newest `*instagram.com_cookies*.txt` from th
 (resolved from the `User Shell Folders` registry key, since Downloads is relocated) into
 `%APPDATA%\PCSetup\instagram-cookies.txt` and tries, in order: that file, Firefox cookies, none.
 Every source that fails with a login-shaped error ends in a message box with the three-step
-setup. The success path could not be exercised in-session (no Instagram login available); the
-no-login path was verified end to end against a real reel.
+setup. Both paths verified against a real reel: no cookies → the setup message; with the user's
+export in Downloads → adopted, downloaded and merged in 3 s. Note Instagram serves reels as
+**VP9-only DASH** (no h264 variant at all), so the h264 preference in the sort is moot there and the
+best-resolution VP9 stream is picked; Windows 11 plays VP9 natively.
 
 ### Undocumented optional scripts
 These exist in `optional/` and are **not** covered by the audit above — they still have the original
