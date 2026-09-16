@@ -4,9 +4,11 @@
 # (scoop itself included, so it works on a freshly formatted PC), downloads into the Videos
 # folder (Pictures for Instagram photo posts), shows progress in the window, opens Explorer on
 # the finished file, and reports failures in a message box. Launched by download-video.bat.
+# Twitch/YouTube names end in a quality tag ([1080p60]); an earlier download of the same video at a
+# different quality is kept and the new quality lands next to it - only an identical version is skipped.
 #
-#   Twitch     TwitchDownloaderCLI + ffmpeg   max 720p, 24 threads, disk-space check first
-#   YouTube    yt-dlp + deno + ffmpeg         max 720p, h264/aac preferred, 16 fragment connections
+#   Twitch     TwitchDownloaderCLI + ffmpeg   highest quality available, 24 threads, disk-space check first
+#   YouTube    yt-dlp + deno + ffmpeg         highest quality available (h264/aac preferred at equal resolution), 16 fragment connections
 #   Instagram  yt-dlp + gallery-dl + ffmpeg   best quality; needs a one-time cookie export (see below)
 #
 # Instagram serves almost nothing without a login and no tool can read Chrome/Edge cookies on
@@ -15,13 +17,13 @@
 #
 # Optional parameters (for manual runs):
 #   -Url           use this link instead of the clipboard
-#   -MaxHeight     Twitch/YouTube resolution cap (default 720)
+#   -MaxHeight     Twitch/YouTube resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
 #   -Ending        test aid: only the first part - Twitch "20s", YouTube seconds like "30" (re-encodes)
 #   -NoMessageBox  failures go to the console only (tests)
 
 param(
     [string]$Url,
-    [int]$MaxHeight = 720,
+    [int]$MaxHeight = 0,
     [string]$Ending,
     [switch]$NoMessageBox
 )
@@ -95,20 +97,177 @@ function Get-NativeOutput([scriptblock]$Command) {
     finally { $ErrorActionPreference = $prev }
 }
 
-# Stream a native command's output straight to the window (progress bars) and return its exit code.
+# Run a download tool and show its progress as ONE bar redrawn in place, returning the exit code.
+# The tools refresh their progress with "\r", but through the pipe every refresh arrives as its own
+# line, so the window used to fill with hundreds of "[download]  43.7% of ..." lines. Lines that
+# look like progress are folded into the bar; anything else (errors, destination, merge notices)
+# is printed above it and the bar redraws on the next update. When output is redirected (tests,
+# logs) the bar is written as a plain line, only when the whole-number percentage or stage changes.
+# Recognised shapes, captured from the real tools under Windows PowerShell 5.1:
+#   TwitchDownloaderCLI  [STATUS] - Downloading 45% [2/4]        (stages 1/4..4/4, some without a %)
+#   yt-dlp               [download]  43.7% of   11.28MiB at  257.95KiB/s ETA 00:25
+#                        ...occasionally with a message glued on: "ETA 00:25[download] Got error: ..."
+#   ffmpeg (-Ending)     frame=  135 fps= 65 q=31.0 size=  256KiB time=00:00:02.46 bitrate=...
 function Invoke-Streaming([scriptblock]$Command) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & $Command 2>&1 | ForEach-Object { Write-Host "$_" }; return $LASTEXITCODE }
+    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
+    $width      = try { [Math]::Max(60, [Console]::WindowWidth) } catch { 120 }
+    $barWidth   = 30
+    $st = @{ Shown = $false; LastPct = -1; LastLabel = '' }
+
+    $clearBar = {
+        if ($st.Shown) { Write-Host -NoNewline ("`r" + (' ' * ($width - 1)) + "`r"); $st.Shown = $false }
+    }
+    $render = {
+        param([string]$Label, [double]$Pct, [string]$Detail)
+        if ($Pct -ge 0) {
+            $filled = [int][Math]::Round($barWidth * [Math]::Min(100.0, $Pct) / 100.0)
+            $text = "$Label [" + ('#' * $filled) + ('-' * ($barWidth - $filled)) + '] ' + ('{0,5:0.0}%' -f $Pct)
+        } else {
+            $text = "$Label ..."
+        }
+        if ($Detail) { $text += " $Detail" }
+        if ($redirected) {
+            $whole = if ($Pct -ge 0) { [int][Math]::Floor($Pct) } else { -1 }
+            if ($whole -ne $st.LastPct -or $Label -ne $st.LastLabel) { Write-Host $text; $st.LastPct = $whole; $st.LastLabel = $Label }
+        } else {
+            if ($text.Length -gt $width - 1) { $text = $text.Substring(0, $width - 1) }
+            Write-Host -NoNewline ("`r" + $text.PadRight($width - 1)) -ForegroundColor Cyan
+            $st.Shown = $true
+        }
+    }
+
+    try {
+        & $Command 2>&1 | ForEach-Object {
+            $line = "$_"
+            if (-not $line.Trim()) { return }
+            $rest = ''
+            if ($line -match '^\[STATUS\] - (.+?)(?: (\d+)%)? \[(\d+)/(\d+)\]\s*(.*)$') {
+                $label = "$($Matches[1]) [$($Matches[3])/$($Matches[4])]"
+                $pct   = if ($Matches[2]) { [double]$Matches[2] } else { -1 }
+                $rest  = $Matches[5]
+                & $render $label $pct ''
+            } elseif ($line -match '^\[download\]\s+([\d.]+)% of\s+(~?\s*[\d.]+\w+)(?:\s+in\s+([\d:]+))?(?:\s+at\s+([^\s\[]+))?(?:\s+ETA\s+([^\s\[]+))?(.*)$') {
+                # Fields stop at "[" because a message is sometimes glued on with no line break.
+                $pct    = [double]$Matches[1]
+                $detail = "of $($Matches[2] -replace '\s', '')"
+                if ($Matches[3]) { $detail += " in $($Matches[3])" }
+                if ($Matches[4]) { $detail += " at $($Matches[4])" }
+                if ($Matches[5]) { $detail += " ETA $($Matches[5])" }
+                $rest   = $Matches[6]
+                & $render 'Downloading' $pct $detail
+            } elseif ($line -match '^frame=.*?time=(\S+)') {
+                & $render 'Re-encoding' -1 "time $($Matches[1])"
+            } else {
+                & $clearBar
+                Write-Host $line
+            }
+            if ($rest.Trim()) { & $clearBar; Write-Host $rest.Trim() }
+        }
+        $code = $LASTEXITCODE
+        if ($st.Shown) { Write-Host '' }
+        return $code
+    }
     finally { $ErrorActionPreference = $prev }
 }
 
-function Show-Existing([string]$Path) {
+function Show-Existing([string]$Path, [string]$Tag) {
     $sizeMb = [Math]::Round((Get-Item -LiteralPath $Path).Length / 1MB)
-    Write-Warn "Already downloaded ($sizeMb MB) - opening its folder instead."
+    $at = if ($Tag) { " at $Tag" } else { '' }
+    Write-Warn "Already downloaded$at ($sizeMb MB) - opening its folder instead."
     Start-Process explorer.exe -ArgumentList "/select,`"$Path`""
     Start-Sleep -Seconds 4
     exit 0
+}
+
+# ---------------------------------------------------------------------------- versions on disk
+# Twitch and YouTube files carry a quality tag - "<date> <channel> - <title> [<id>] [1080p60].mp4" -
+# so the same video can exist at several qualities and "already downloaded" means "already
+# downloaded at THIS quality". Files from before the tag existed are recognised by their [id],
+# probed with ffprobe, renamed to the tagged form, and only skipped when height, fps and length
+# all match what is about to be downloaded. Anything that differs, or cannot be probed, is left
+# alone and the requested quality is downloaded next to it.
+function Format-QualityTag([int]$Height, [double]$Fps) {
+    return ('{0}p{1}' -f $Height, [int][Math]::Round($Fps))
+}
+
+function Get-FfprobePath([string]$Ffmpeg) {
+    $probe = Join-Path (Split-Path -Parent $Ffmpeg) 'ffprobe.exe'    # ships next to ffmpeg (scoop shim and bin alike)
+    if (Test-Path -LiteralPath $probe) { return $probe }
+    $cmd = Get-Command ffprobe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+# Height, rounded fps and duration of a video file, or $null when ffprobe cannot read it.
+function Get-VideoSpec([string]$Path, [string]$Ffprobe) {
+    if (-not $Ffprobe) { return $null }
+    $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams v:0 -show_entries 'stream=height,r_frame_rate:format=duration' -of csv=p=0 $Path }
+    $height = 0; $fps = 0.0; $seconds = 0.0
+    foreach ($line in $lines) {
+        if ($line -match '^(\d+),(\d+)/(\d+)\s*$') {
+            $height = [int]$Matches[1]
+            if ([int]$Matches[3] -ne 0) { $fps = [double]$Matches[2] / [double]$Matches[3] }
+        } elseif ($line -match '^([\d.]+)\s*$') {
+            $seconds = [double]$Matches[1]
+        }
+    }
+    if ($height -le 0) { return $null }
+    return [pscustomobject]@{ Height = $height; Fps = $fps; Tag = (Format-QualityTag $height $fps); Seconds = $seconds }
+}
+
+# Looks at every .mp4 in $Dir that carries [$Id] in its name. Exits through Show-Existing when the
+# requested version is already there (renaming a legacy untagged file to the tagged name first);
+# otherwise renames legacy files to their real quality and returns so the download proceeds.
+# $ExpectedSeconds = 0 disables the length check (used for -Ending test runs).
+function Resolve-ExistingVersions([string]$Dir, [string]$Id, [string]$BaseName, [string]$Tag, [int]$ExpectedSeconds, [string]$Ffprobe) {
+    $specPath = Join-Path $Dir "$BaseName [$Tag].mp4"
+    $files = @(Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue |
+               Where-Object { $_.Extension -eq '.mp4' -and $_.Name.Contains("[$Id]") })
+    if (-not $files.Count) { return }
+    if (-not $Ffprobe) { Write-Warn 'ffprobe not found - cannot compare the existing file(s), downloading anyway.' }
+
+    $others = @()
+    foreach ($f in $files) {
+        $spec = Get-VideoSpec $f.FullName $Ffprobe
+        if (-not $spec) {
+            Write-Warn "Existing : $($f.Name) - unreadable, ignoring it"
+            $others += $f.Name
+            continue
+        }
+        $complete = ($ExpectedSeconds -le 0) -or ($spec.Seconds -ge $ExpectedSeconds * 0.95)
+        $lenNote  = if ($complete) { Format-Duration ([int]$spec.Seconds) } else { "only $(Format-Duration ([int]$spec.Seconds)) of $(Format-Duration $ExpectedSeconds)" }
+        Write-Info "Existing : $($f.Name) -> $($spec.Tag), $lenNote"
+
+        if ($spec.Tag -eq $Tag -and $complete) {
+            # Same version. Make sure it sits under the tagged name, then stop.
+            $target = $specPath
+            if ($f.FullName -ne $target) {
+                try { Move-Item -LiteralPath $f.FullName -Destination $target -ErrorAction Stop; Write-Ok "Renamed : $(Split-Path $target -Leaf)" }
+                catch { Write-Warn "Could not rename to the tagged name: $($_.Exception.Message)"; $target = $f.FullName }
+            }
+            Show-Existing $target $Tag
+        }
+
+        if ($f.FullName -eq $specPath) {
+            # Right name, wrong content (partial or mis-tagged): the download replaces it.
+            Write-Warn "Replacing it: it is not a complete $Tag download."
+            continue
+        }
+        # A different quality (or a partial file). Keep it, but under a name that says what it is.
+        $others += $f.Name
+        $wanted = if ($complete) { "$BaseName [$($spec.Tag)].mp4" } else { $null }
+        if ($wanted -and $f.Name -ne $wanted) {
+            $dest = Join-Path $Dir $wanted
+            if (Test-Path -LiteralPath $dest) { Write-Warn "Not renaming $($f.Name): $wanted already exists" }
+            else {
+                try { Move-Item -LiteralPath $f.FullName -Destination $dest -ErrorAction Stop; Write-Ok "Renamed : $wanted" }
+                catch { Write-Warn "Could not rename $($f.Name): $($_.Exception.Message)" }
+            }
+        }
+    }
+    if ($others.Count) { Write-Ok "Downloading $Tag next to the $($others.Count) other version(s)." }
 }
 
 function Finish([string]$Path, [string]$Summary) {
@@ -269,18 +428,25 @@ function Invoke-Twitch([string]$VodId) {
     }
     if (-not $qualities) { Fail 'No video qualities were listed for this VOD.' }
     Write-Info ("Available: " + (($qualities | ForEach-Object { $_.Name }) -join ', '))
-    $pick = $qualities | Where-Object { $_.Height -le $MaxHeight } | Sort-Object Height, Fps -Descending | Select-Object -First 1
+    # No cap by default: take the highest resolution, then the highest frame rate. With -MaxHeight,
+    # take the best variant at or under it, falling back to the lowest one if nothing fits.
+    $candidates = if ($MaxHeight -gt 0) { @($qualities | Where-Object { $_.Height -le $MaxHeight }) } else { @($qualities) }
+    $pick = $candidates | Sort-Object Height, Fps -Descending | Select-Object -First 1
     if (-not $pick) { $pick = $qualities | Sort-Object Height, Fps | Select-Object -First 1 }
-    Write-Ok "Quality : $($pick.Name) ($($pick.Height)p, max allowed ${MaxHeight}p)"
+    $capNote = if ($MaxHeight -gt 0) { "max allowed ${MaxHeight}p" } else { 'best available' }
+    Write-Ok "Quality : $($pick.Name) ($($pick.Height)p, $capNote)"
 
     Write-Step 'Preparing output'
     $videosDir = Get-KnownFolder 'MyVideos' 'Videos'
     $safeTitle = Get-SafeName $title 120; if (-not $safeTitle) { $safeTitle = 'untitled' }
-    $fileName = "$date $(Get-SafeName $channel 40) - $safeTitle [$VodId].mp4"
+    $tag      = Format-QualityTag $pick.Height $pick.Fps     # from the resolution, not $pick.Name ("1080p60 (source)")
+    $baseName = "$date $(Get-SafeName $channel 40) - $safeTitle [$VodId]"
+    $fileName = "$baseName [$tag].mp4"
     $outPath  = Join-Path $videosDir $fileName
     Write-Ok "Folder  : $videosDir"
     Write-Ok "File    : $fileName"
-    if (Test-Path -LiteralPath $outPath) { Show-Existing $outPath }
+    $expected = if ($Ending) { 0 } else { $length }
+    Resolve-ExistingVersions -Dir $videosDir -Id $VodId -BaseName $baseName -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg)
 
     $tempDir = Join-Path $env:TEMP 'TwitchDownloader'
     New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -311,14 +477,14 @@ function Invoke-Twitch([string]$VodId) {
             $free = (New-Object IO.DriveInfo $root).AvailableFreeSpace
             $freeGb = [Math]::Round($free / 1GB, 1)
             if ($free -lt $needBytes) {
-                Fail "Not enough disk space on $root for the $($check.What).`n`nNeeded: ~$needGb GB (${length}s at $($pick.Name))`nFree:   $freeGb GB on $root`n`nFree up space on $root or pick a lower quality with -MaxHeight 480, then try again."
+                Fail "Not enough disk space on $root for the $($check.What).`n`nNeeded: ~$needGb GB (${length}s at $($pick.Name))`nFree:   $freeGb GB on $root`n`nFree up space on $root or pick a lower quality with -MaxHeight 720 (or 480), then try again."
             }
             Write-Ok "Free on ${root}: $freeGb GB ($($check.What))"
         }
     }
 
     Write-Step "Downloading $($pick.Name) with 24 parallel threads"
-    Write-Info 'Progress is printed below by TwitchDownloaderCLI. Closing this window cancels the download.'
+    Write-Info 'Progress bar below. Closing this window cancels the download.'
     Write-Host ''
     $cliArgs = @('videodownload', '--id', $VodId, '-o', $outPath, '-q', $pick.Name, '--threads', '24',
                  '--ffmpeg-path', $ffmpeg, '--temp-path', $tempDir, '--collision', 'Overwrite', '--banner', 'false')
@@ -347,9 +513,12 @@ function Invoke-YouTube([string]$VideoId) {
     $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
     $deno   = Resolve-ScoopTool 'deno'   'deno'     # JS runtime yt-dlp needs to unlock all YouTube formats
 
-    # Best video <= MaxHeight, preferring h264 + aac in mp4 so the file plays in anything (AV1/VP9 do
-    # not play in the stock Windows player). yt-dlp merges separate video/audio streams with ffmpeg.
-    $common = @('--no-playlist', '-f', 'bv*+ba/b', '-S', "res:$MaxHeight,fps,vcodec:h264,acodec:m4a,ext:mp4",
+    # Highest resolution available (or <= MaxHeight when given), then highest fps; at equal resolution
+    # prefer h264 + aac in mp4 so the file plays in anything (AV1/VP9 do not play in the stock Windows
+    # player). Resolution outranks codec, so a 1440p/4K VP9-only upload is still taken at full size.
+    # yt-dlp merges separate video/audio streams with ffmpeg.
+    $resKey = if ($MaxHeight -gt 0) { "res:$MaxHeight" } else { 'res' }
+    $common = @('--no-playlist', '-f', 'bv*+ba/b', '-S', "$resKey,fps,vcodec:h264,acodec:m4a,ext:mp4",
                 '--ffmpeg-location', $ffmpeg, '--js-runtimes', "deno:$deno")
 
     Write-Step 'Fetching video info'
@@ -376,24 +545,30 @@ function Invoke-YouTube([string]$VideoId) {
     Write-Ok "Title   : $title"
     Write-Ok "Uploaded: $date"
     Write-Ok "Length  : $(Format-Duration $length)"
-    Write-Ok "Quality : $($info.format_id) $($info.width)x$($info.height) $($info.fps)fps $($info.vcodec) + $($info.acodec) (max allowed ${MaxHeight}p)"
+    $capNote = if ($MaxHeight -gt 0) { "max allowed ${MaxHeight}p" } else { 'best available' }
+    Write-Ok "Quality : $($info.format_id) $($info.width)x$($info.height) $($info.fps)fps $($info.vcodec) + $($info.acodec) ($capNote)"
     if ($sizeGuess) { Write-Ok "Size    : ~$sizeGuess MB" }
     if ($info.is_live) { Fail 'This is a live stream that is still running. Wait until it ends, then download the recording.' }
 
     Write-Step 'Preparing output'
     $videosDir = Get-KnownFolder 'MyVideos' 'Videos'
     $safeTitle = Get-SafeName $title 120; if (-not $safeTitle) { $safeTitle = 'untitled' }
-    $baseName = "$date $(Get-SafeName $channel 40) - $safeTitle [$VideoId]"
+    $tag      = Format-QualityTag ([int]$info.height) ([double]$info.fps)
+    $idBase   = "$date $(Get-SafeName $channel 40) - $safeTitle [$VideoId]"
+    $baseName = "$idBase [$tag]"
     $outPath  = Join-Path $videosDir "$baseName.mp4"
     Write-Ok "Folder  : $videosDir"
     Write-Ok "File    : $baseName.mp4"
-    if (Test-Path -LiteralPath $outPath) { Show-Existing $outPath }
+    $expected = if ($Ending) { 0 } else { $length }
+    Resolve-ExistingVersions -Dir $videosDir -Id $VideoId -BaseName $idBase -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg)
 
     Write-Step 'Downloading with 16 parallel fragment connections'
-    Write-Info 'Progress is printed below by yt-dlp. Closing this window cancels the download.'
+    Write-Info 'Progress bar below. Closing this window cancels the download.'
     Write-Host ''
     # yt-dlp needs %(ext)s in the template; with --merge-output-format mp4 the result is always .mp4.
-    $dlArgs = $common + $cookieArgs + @('--merge-output-format', 'mp4', '-N', '16', '--no-mtime', '--progress',
+    # --force-overwrites: a file already at this exact name was judged incomplete or mis-tagged above,
+    # and yt-dlp would otherwise skip the download and report success.
+    $dlArgs = $common + $cookieArgs + @('--merge-output-format', 'mp4', '-N', '16', '--no-mtime', '--progress', '--force-overwrites',
                                         '-o', (Join-Path $videosDir "$baseName.%(ext)s"))
     if ($Ending) { $dlArgs += @('--download-sections', "*0-$Ending", '--force-keyframes-at-cuts') }
     $sw = [Diagnostics.Stopwatch]::StartNew()

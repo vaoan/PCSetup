@@ -702,15 +702,28 @@ from the URL, installs only what that site needs (scoop itself first on a fresh 
 get.scoop.sh-to-file + `-RunAsAdmin` route as `sources\init-prereqs.ps1`, then `git`), downloads
 into `[Environment]::GetFolderPath('MyVideos')` (Pictures for Instagram photo posts), shows the
 tool's live progress, opens Explorer on the finished file and closes after 8 s; failures end in a
-message box. Output names are `<date> <channel> - <title> [<id>].mp4`. Manual runs accept `-Url`,
-`-MaxHeight` (Twitch/YouTube cap, default 720), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
+message box. Output names are `<date> <channel> - <title> [<id>] [<quality>].mp4` for Twitch/YouTube (`[1080p60]`,
+built from height and rounded fps, not from Twitch's `1080p60 (source)` label) and
+`<date> <channel> - <title> [<id>].mp4` for Instagram. Manual runs accept `-Url`,
+`-MaxHeight` (Twitch/YouTube resolution cap; default 0 = no cap, highest quality available), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
 YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
 
 | Site | Tools (scoop) | Selection | Speed |
 |---|---|---|---|
-| Twitch | `twitchdownloader-cli`, `ffmpeg` | best m3u8 variant ≤ 720p (`-q NAME`) | 24 threads: 10 → 32 Mbit/s, 24 → 176, 40+ slower; 72-min VOD in 56 s |
-| YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res:720,fps,vcodec:h264,acodec:m4a,ext:mp4"` (default would pick AV1, which the stock player cannot play) | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
+| Twitch | `twitchdownloader-cli`, `ffmpeg` | highest m3u8 variant by resolution then fps (`-q NAME`); `-MaxHeight N` caps it | 24 threads: 10 → 32 Mbit/s, 24 → 176, 40+ slower; 72-min VOD in 56 s |
+| YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res,fps,vcodec:h264,acodec:m4a,ext:mp4"` (`res:N` with `-MaxHeight`) — highest resolution wins, h264 only breaks ties at equal resolution so a VP9/AV1-only 1440p/4K is still taken; a 720p-and-below video gets h264, which the stock player can play | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
 | Instagram | `yt-dlp`, `gallery-dl`, `ffmpeg` | best quality (reels are VP9-only DASH, no h264 exists); photo posts/carousels fall to gallery-dl into **Pictures** as `<name> (n of N).<ext>` | `-N 8` |
+
+**Versions on disk.** "Already downloaded" means *at this quality*. Before downloading, every
+`.mp4` in the target folder whose name carries the same `[<id>]` is probed with ffprobe (height,
+fps, duration). A file that matches the requested quality and is at least 95 % of the expected
+length is the same version: it is renamed to the tagged spec name if needed (legacy untagged files,
+old titles) and the run stops as before. Anything else is kept: a different quality is renamed to
+its real tag (`... [id] [720p25].mp4`) and the requested quality downloads next to it; a partial
+file at the exact spec name is overwritten (yt-dlp gets `--force-overwrites`, because by default it
+skips an existing file and reports success); an unreadable file is ignored. `-Ending` runs disable
+the length check. Motivating case: the Rick Astley 4K remaster sat in Videos at 720p25 and every
+request for it was answered with "already downloaded".
 
 **Launchers.** The script recreates `Download Video.lnk` in `%APPDATA%\Microsoft\Windows\Start
 Menu\Programs` and in the Videos folder whenever either is missing, target `cmd.exe /c "<bat>"`
@@ -737,6 +750,17 @@ dead `.ts` parts. The script reads `BANDWIDTH=` from the picked `#EXT-X-STREAM-I
 up front when `bandwidth / 8 × length × 1.15` exceeds free space on the Videos drive or the temp
 drive, naming both numbers, and deletes every `<id>_<ticks>` folder before and after each run. `Z:`
 holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB).
+
+**Progress bar.** `Invoke-Streaming` folds the tools' progress into one bar redrawn in place
+(`Downloading [#####-----] 43.7% of 11.28MiB at 1.5MiB/s ETA 00:04`). The tools refresh with ``,
+but through PowerShell's pipe every refresh arrives as its own line, so the window used to scroll
+hundreds of `[download]` / `[STATUS]` lines. Recognised shapes were captured from the real tools
+under 5.1: TwitchDownloaderCLI `[STATUS] - Downloading 45% [2/4]` (some stages carry no `%`),
+yt-dlp `[download]  43.7% of 11.28MiB at ... ETA 00:25` and its final `100% of X in 00:00:19 at ...`,
+ffmpeg `frame=... time=...` during `-Ending` cuts. yt-dlp sometimes glues a message onto a progress
+line with no line break (`ETA 00:25[download] Got error: ...`), so every field stops at `[` and the
+remainder is printed as its own line. Non-progress lines print above the bar. When output is
+redirected (tests) the bar is a plain line emitted only when the whole percentage or stage changes.
 
 Gotchas that bit while building it:
 - Output names carry `[id]`, so every path check uses `-LiteralPath` — `Test-Path` treats brackets as
