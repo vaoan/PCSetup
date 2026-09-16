@@ -124,21 +124,40 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
     $ErrorActionPreference = 'Continue'
     $redirected = try { [Console]::IsOutputRedirected } catch { $true }
     $width      = try { [Math]::Max(60, [Console]::WindowWidth) } catch { 120 }
-    $barWidth   = 30
-    $st = @{ Shown = $false; LastPct = -1; LastLabel = '' }
+    $barWidth   = 20      # the full line ("... | ETA | time of total | fps speed | MB | elapsed") must fit a 120-column window
+    $spinner    = '|/-\'
+    $clock      = [Diagnostics.Stopwatch]::StartNew()
+    $title      = try { $Host.UI.RawUI.WindowTitle } catch { '' }
+    $st = @{ Shown = $false; LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0 }
 
     $clearBar = {
         if ($st.Shown) { Write-Host -NoNewline ("`r" + (' ' * ($width - 1)) + "`r"); $st.Shown = $false }
     }
+    $hms = { param([double]$Seconds) $t = [TimeSpan]::FromSeconds([Math]::Max(0, $Seconds)); '{0}:{1:00}:{2:00}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds }
+    # One status line, redrawn in place: "<label> [####------]  12.0% | <detail> | ETA 1h 05m | 12m 11s elapsed".
+    # $Pct < 0 draws a spinner instead of a bar, so a stage without a percentage still visibly moves.
+    # $Eta in seconds; -1 = estimate it from this stage's own pace (each label restarts the clock),
+    # -2 = the detail already carries one (yt-dlp), so print none.
     $render = {
-        param([string]$Label, [double]$Pct, [string]$Detail)
+        param([string]$Label, [double]$Pct, [string]$Detail, [double]$Eta = -1)
+        $now = $clock.Elapsed.TotalSeconds
+        if ($Label -ne $st.Stage) { $st.Stage = $Label; $st.StageStart = $now }
+        $stageElapsed = $now - $st.StageStart
         if ($Pct -ge 0) {
             $filled = [int][Math]::Round($barWidth * [Math]::Min(100.0, $Pct) / 100.0)
             $text = "$Label [" + ('#' * $filled) + ('-' * ($barWidth - $filled)) + '] ' + ('{0,5:0.0}%' -f $Pct)
+            if ($Eta -eq -1 -and $Pct -ge 1 -and $stageElapsed -ge 3) { $Eta = $stageElapsed * (100.0 - $Pct) / $Pct }
         } else {
-            $text = "$Label ..."
+            $st.Spin = ($st.Spin + 1) % $spinner.Length
+            $text = "$Label $($spinner[$st.Spin])"
         }
-        if ($Detail) { $text += " $Detail" }
+        # ETA first: the line is cut at the window width, and that is the part nobody wants cut.
+        # Durations drop the seconds once they reach an hour, so a 5-hour VOD's line still fits.
+        $dur = { param([double]$S) if ($S -ge 3600) { '{0}h {1:00}m' -f [int][Math]::Floor($S / 3600), [int][Math]::Floor(($S % 3600) / 60) } else { Format-Duration ([int]$S) } }
+        if ($Eta -ge 0) { $text += " | ETA $(& $dur $Eta)" }
+        if ($Detail) { $text += " | $Detail" }
+        $text += " | $(& $dur $now) elapsed"
+        try { $Host.UI.RawUI.WindowTitle = $(if ($Pct -ge 0) { '{0:0}% {1} - {2}' -f $Pct, $Label, $title } else { "$Label - $title" }) } catch {}
         if ($redirected) {
             $whole = if ($Pct -ge 0) { [int][Math]::Floor($Pct) } else { -1 }
             if ($whole -ne $st.LastPct -or $Label -ne $st.LastLabel) { Write-Host $text; $st.LastPct = $whole; $st.LastLabel = $Label }
@@ -167,18 +186,23 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
                 if ($Matches[4]) { $detail += " at $($Matches[4])" }
                 if ($Matches[5]) { $detail += " ETA $($Matches[5])" }
                 $rest   = $Matches[6]
-                & $render 'Downloading' $pct $detail
-            } elseif ($line -match '^frame=\s*\d+\s+fps=\s*([\d.]+).*?time=(\S+)(?:.*?speed=\s*(\S+))?') {
-                $fpsNow = $Matches[1]; $time = $Matches[2]; $speed = $Matches[3]
-                $pct = -1
-                if ($TotalSeconds -gt 0 -and $time -match '^(\d+):(\d+):([\d.]+)$') {
-                    $done = [int]$Matches[1] * 3600 + [int]$Matches[2] * 60 + [double]$Matches[3]
-                    $pct  = [Math]::Min(100.0, 100.0 * $done / $TotalSeconds)
+                & $render 'Downloading' $pct $detail $(if ($Matches[5]) { -2 } else { -1 })
+            } elseif ($line -match '^frame=\s*(\d+)\s+fps=\s*([\d.]+).*?size=\s*(\S+).*?time=(\S+)(?:.*?speed=\s*([\d.]+)x)?') {
+                $fpsNow = [double]$Matches[2]; $size = $Matches[3]; $time = $Matches[4]
+                $speed = if ($Matches[5]) { [double]$Matches[5] } else { 0.0 }
+                $done = -1.0
+                if ($time -match '^(\d+):(\d+):([\d.]+)$') { $done = [int]$Matches[1] * 3600 + [int]$Matches[2] * 60 + [double]$Matches[3] }
+                $pct = if ($TotalSeconds -gt 0 -and $done -ge 0) { [Math]::Min(100.0, 100.0 * $done / $TotalSeconds) } else { -1 }
+                $eta = if ($pct -ge 0 -and $speed -gt 0) { ($TotalSeconds - $done) / $speed } else { -1 }
+                $detail = if ($done -ge 0) { & $hms $done } else { "time $time" }
+                if ($TotalSeconds -gt 0) { $detail += "/$(& $hms $TotalSeconds)" }
+                if ($fpsNow -gt 0) { $detail += " | $([int]$fpsNow) fps" }
+                if ($speed -gt 0) { $detail += " $('{0:0.0}' -f $speed)x" }
+                if ($size -match '^([\d.]+)(KiB|MiB|GiB|kB|MB|GB)') {
+                    $mb = switch ($Matches[2]) { 'KiB' { [double]$Matches[1] / 1024 } 'MiB' { [double]$Matches[1] } 'GiB' { [double]$Matches[1] * 1024 } 'kB' { [double]$Matches[1] / 1000 } 'MB' { [double]$Matches[1] } 'GB' { [double]$Matches[1] * 1000 } }
+                    $detail += " | $('{0:N0}' -f $mb) MB out"
                 }
-                $detail = "time $time"
-                if ($fpsNow -and [double]$fpsNow -gt 0) { $detail += " at $fpsNow fps" }
-                if ($speed -and $speed -ne '0x') { $detail += " ($speed)" }
-                & $render $FfmpegLabel $pct $detail
+                & $render $FfmpegLabel $pct $detail $eta
             } else {
                 & $clearBar
                 Write-Host $line
@@ -189,7 +213,10 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
         if ($st.Shown) { Write-Host '' }
         return $code
     }
-    finally { $ErrorActionPreference = $prev }
+    finally {
+        $ErrorActionPreference = $prev
+        try { $Host.UI.RawUI.WindowTitle = $title } catch {}
+    }
 }
 
 function Show-Existing([string]$Path, [string]$Tag) {
@@ -466,6 +493,11 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
     $encArgs = if ($useGpu) { $script:Av1NvencArgs } else { $script:Av1SvtArgs }
     $encName = if ($useGpu) { 'NVENC AV1 (GPU)' } else { 'SVT-AV1 (CPU)' }
     Write-Ok "Encoder : $encName"
+    # Rough expectation up front, from the fps measured on this machine (see the table above), so
+    # a multi-hour encode does not look stuck before the first percent ticks over.
+    $frames  = [long]($before.Seconds * $before.Fps)
+    $typical = if ($useGpu) { 220 } else { 115 }
+    Write-Ok ("Work    : {0:N0} frames; at the usual ~{1} fps about {2}, then a verification pass" -f $frames, $typical, (Format-Duration ([int]($frames / $typical))))
     Write-Info 'Progress bar below. Closing this window keeps the original file.'
     Write-Host ''
 

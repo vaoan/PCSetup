@@ -794,14 +794,22 @@ of the source free and skips itself (warning) otherwise; the download's own spac
 about it. SVT-AV1 prints a 20-line config banner through its own logger regardless of `-loglevel`;
 `SVT_LOG=2` silences it. `-nostdin` keeps ffmpeg from eating keystrokes through the pipe.
 
-**Progress bar.** `Invoke-Streaming` folds the tools' progress into one bar redrawn in place
-(`Downloading [#####-----] 43.7% of 11.28MiB at 1.5MiB/s ETA 00:04`). The tools refresh with ``,
+**Progress bar.** `Invoke-Streaming` folds the tools' progress into one status line redrawn in place:
+`Encoding [####----------------]  12.0% | ETA 1h 05m | 0:40:27/5:37:06 | 208 fps 3.5x | 721 MB out | 12m 11s elapsed`.
+ETA comes right after the percentage because the line is cut at the window width and that is
+the part nobody wants cut; the bar is 20 wide and durations drop their seconds past an hour so a
+5-hour VOD's line still fits 120 columns. ffmpeg's ETA is `(total - done) / speed`; every other
+stage gets one from its own pace (`elapsed × (100 − pct) / pct`, once past 1 % and 3 s — a stage
+label change restarts that clock). A stage with no percentage shows a spinner (`Fetching Video Info
+[1/4] /`) so it still visibly moves, and the window title mirrors `12% Encoding - Download Video`
+for the taskbar. `Compress-Video` also prints the frame count and the expected time from the
+measured fps up front, so a multi-hour encode does not look stuck before the first percent. The tools refresh with ``,
 but through PowerShell's pipe every refresh arrives as its own line, so the window used to scroll
 hundreds of `[download]` / `[STATUS]` lines. Recognised shapes were captured from the real tools
 under 5.1: TwitchDownloaderCLI `[STATUS] - Downloading 45% [2/4]` (some stages carry no `%`),
 yt-dlp `[download]  43.7% of 11.28MiB at ... ETA 00:25` and its final `100% of X in 00:00:19 at ...`,
-ffmpeg `frame=... fps=... time=... speed=...` during `-Ending` cuts and the AV1 step (with
-`-TotalSeconds` the time becomes a percentage: `Encoding [####--] 69.3% time 00:00:41.60 at 224 fps (3.84x)`).
+ffmpeg `frame=... fps=... size=... time=... speed=...` during `-Ending` cuts and the AV1 step (with
+`-TotalSeconds` the time becomes a percentage and an ETA).
 yt-dlp sometimes glues a message onto a progress
 line with no line break (`ETA 00:25[download] Got error: ...`), so every field stops at `[` and the
 remainder is printed as its own line. Non-progress lines print above the bar. When output is
