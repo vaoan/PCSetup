@@ -7,7 +7,8 @@
 # Twitch/YouTube names end in a quality tag ([1080p60]); an earlier download of the same video at a
 # different quality is kept and the new quality lands next to it - only an identical version is skipped.
 #
-#   Twitch     TwitchDownloaderCLI + ffmpeg   highest quality available, 24 threads, disk-space check first
+#   Twitch     TwitchDownloaderCLI + ffmpeg   highest quality available, 24 threads, disk-space check first,
+#                                             then re-encoded to AV1 (about half the size, no visible loss - see "AV1 compression")
 #   YouTube    yt-dlp + deno + ffmpeg         highest quality available (h264/aac preferred at equal resolution), 16 fragment connections
 #   Instagram  yt-dlp + gallery-dl + ffmpeg   best quality; needs a one-time cookie export (see below)
 #
@@ -18,12 +19,18 @@
 # Optional parameters (for manual runs):
 #   -Url           use this link instead of the clipboard
 #   -MaxHeight     Twitch/YouTube resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
+#   -NoCompress    keep the Twitch download as the h264 file Twitch serves (skip the AV1 step)
+#   -Cpu           encode AV1 with SVT-AV1 on the CPU instead of the GPU: ~17% smaller files, about half the speed
+#   -CompressFile  re-encode an existing video file to AV1 in place (any h264 .mp4, e.g. an earlier download) and stop
 #   -Ending        test aid: only the first part - Twitch "20s", YouTube seconds like "30" (re-encodes)
 #   -NoMessageBox  failures go to the console only (tests)
 
 param(
     [string]$Url,
     [int]$MaxHeight = 0,
+    [switch]$NoCompress,
+    [switch]$Cpu,
+    [string]$CompressFile,
     [string]$Ending,
     [switch]$NoMessageBox
 )
@@ -32,6 +39,9 @@ param(
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $fwd = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -MaxHeight $MaxHeight"
     if ($Url)          { $fwd += " -Url `"$Url`"" }
+    if ($NoCompress)   { $fwd += " -NoCompress" }
+    if ($Cpu)          { $fwd += " -Cpu" }
+    if ($CompressFile) { $fwd += " -CompressFile `"$CompressFile`"" }
     if ($Ending)       { $fwd += " -Ending `"$Ending`"" }
     if ($NoMessageBox) { $fwd += " -NoMessageBox" }
     Start-Process PowerShell -ArgumentList $fwd -Verb RunAs
@@ -107,8 +117,9 @@ function Get-NativeOutput([scriptblock]$Command) {
 #   TwitchDownloaderCLI  [STATUS] - Downloading 45% [2/4]        (stages 1/4..4/4, some without a %)
 #   yt-dlp               [download]  43.7% of   11.28MiB at  257.95KiB/s ETA 00:25
 #                        ...occasionally with a message glued on: "ETA 00:25[download] Got error: ..."
-#   ffmpeg (-Ending)     frame=  135 fps= 65 q=31.0 size=  256KiB time=00:00:02.46 bitrate=...
-function Invoke-Streaming([scriptblock]$Command) {
+#   ffmpeg               frame=  135 fps= 65 q=31.0 size=  256KiB time=00:00:02.46 bitrate=... speed=1.08x
+#                        (-Ending cuts and the AV1 step; with -TotalSeconds the time becomes a percentage)
+function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $redirected = try { [Console]::IsOutputRedirected } catch { $true }
@@ -157,8 +168,17 @@ function Invoke-Streaming([scriptblock]$Command) {
                 if ($Matches[5]) { $detail += " ETA $($Matches[5])" }
                 $rest   = $Matches[6]
                 & $render 'Downloading' $pct $detail
-            } elseif ($line -match '^frame=.*?time=(\S+)') {
-                & $render 'Re-encoding' -1 "time $($Matches[1])"
+            } elseif ($line -match '^frame=\s*\d+\s+fps=\s*([\d.]+).*?time=(\S+)(?:.*?speed=\s*(\S+))?') {
+                $fpsNow = $Matches[1]; $time = $Matches[2]; $speed = $Matches[3]
+                $pct = -1
+                if ($TotalSeconds -gt 0 -and $time -match '^(\d+):(\d+):([\d.]+)$') {
+                    $done = [int]$Matches[1] * 3600 + [int]$Matches[2] * 60 + [double]$Matches[3]
+                    $pct  = [Math]::Min(100.0, 100.0 * $done / $TotalSeconds)
+                }
+                $detail = "time $time"
+                if ($fpsNow -and [double]$fpsNow -gt 0) { $detail += " at $fpsNow fps" }
+                if ($speed -and $speed -ne '0x') { $detail += " ($speed)" }
+                & $render $FfmpegLabel $pct $detail
             } else {
                 & $clearBar
                 Write-Host $line
@@ -200,28 +220,33 @@ function Get-FfprobePath([string]$Ffmpeg) {
     return $null
 }
 
-# Height, rounded fps and duration of a video file, or $null when ffprobe cannot read it.
+# Codec, height, rounded fps and duration of a video file, or $null when ffprobe cannot read it.
+# ffprobe prints the stream fields in its own fixed order (codec_name before height before
+# r_frame_rate), whatever order they are requested in: "h264,1080,60/1".
 function Get-VideoSpec([string]$Path, [string]$Ffprobe) {
     if (-not $Ffprobe) { return $null }
-    $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams v:0 -show_entries 'stream=height,r_frame_rate:format=duration' -of csv=p=0 $Path }
-    $height = 0; $fps = 0.0; $seconds = 0.0
+    $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams v:0 -show_entries 'stream=codec_name,height,r_frame_rate:format=duration' -of csv=p=0 $Path }
+    $codec = ''; $height = 0; $fps = 0.0; $seconds = 0.0
     foreach ($line in $lines) {
-        if ($line -match '^(\d+),(\d+)/(\d+)\s*$') {
-            $height = [int]$Matches[1]
-            if ([int]$Matches[3] -ne 0) { $fps = [double]$Matches[2] / [double]$Matches[3] }
+        if ($line -match '^([\w-]*),(\d+),(\d+)/(\d+)\s*$') {
+            $codec  = $Matches[1]
+            $height = [int]$Matches[2]
+            if ([int]$Matches[4] -ne 0) { $fps = [double]$Matches[3] / [double]$Matches[4] }
         } elseif ($line -match '^([\d.]+)\s*$') {
             $seconds = [double]$Matches[1]
         }
     }
     if ($height -le 0) { return $null }
-    return [pscustomobject]@{ Height = $height; Fps = $fps; Tag = (Format-QualityTag $height $fps); Seconds = $seconds }
+    return [pscustomobject]@{ Codec = $codec; Height = $height; Fps = $fps; Tag = (Format-QualityTag $height $fps); Seconds = $seconds }
 }
 
 # Looks at every .mp4 in $Dir that carries [$Id] in its name. Exits through Show-Existing when the
 # requested version is already there (renaming a legacy untagged file to the tagged name first);
 # otherwise renames legacy files to their real quality and returns so the download proceeds.
-# $ExpectedSeconds = 0 disables the length check (used for -Ending test runs).
-function Resolve-ExistingVersions([string]$Dir, [string]$Id, [string]$BaseName, [string]$Tag, [int]$ExpectedSeconds, [string]$Ffprobe) {
+# $ExpectedSeconds = 0 disables the length check (used for -Ending test runs). $BeforeShowExisting,
+# when given, runs with the path of the already-downloaded file before the folder is opened - Twitch
+# uses it to AV1-compress a file that was downloaded before the compression step existed.
+function Resolve-ExistingVersions([string]$Dir, [string]$Id, [string]$BaseName, [string]$Tag, [int]$ExpectedSeconds, [string]$Ffprobe, [scriptblock]$BeforeShowExisting) {
     $specPath = Join-Path $Dir "$BaseName [$Tag].mp4"
     $files = @(Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue |
                Where-Object { $_.Extension -eq '.mp4' -and $_.Name.Contains("[$Id]") })
@@ -247,6 +272,7 @@ function Resolve-ExistingVersions([string]$Dir, [string]$Id, [string]$BaseName, 
                 try { Move-Item -LiteralPath $f.FullName -Destination $target -ErrorAction Stop; Write-Ok "Renamed : $(Split-Path $target -Leaf)" }
                 catch { Write-Warn "Could not rename to the tagged name: $($_.Exception.Message)"; $target = $f.FullName }
             }
+            if ($BeforeShowExisting) { & $BeforeShowExisting $target }
             Show-Existing $target $Tag
         }
 
@@ -383,6 +409,109 @@ function Ensure-Shortcuts {
     } catch { Write-Warn "Shortcut check skipped: $($_.Exception.Message)" }
 }
 
+# ============================================================================ AV1 compression
+# Twitch serves h264 at ~6 Mbit/s for 1080p60, which is generous: AV1 at the settings below keeps
+# VMAF above 96 (95+ is "no visible difference") at about half the size. Measured on 60 s of a
+# 1080p60 VOD (46 MB) with ffmpeg 9.0.1, Ryzen 9 9950X3D, RTX 5080, driver 616.92:
+#   NVENC p7 hq cq36 + spatial/temporal AQ + lookahead 32     58%   ~225 fps   VMAF 96.7   <- default (GPU, PC stays usable)
+#   SVT-AV1 preset 6 crf 35, 10-bit, tune=0                   48%   ~116 fps   VMAF 96.7   <- -Cpu (smallest, all cores busy)
+#   NVENC p7 hq cq36 without AQ                                55%   ~257 fps   VMAF 96.4
+#   NVENC p7 uhq cq36                                          65%   ~105 fps   VMAF 97.1   (slower than SVT-AV1 and bigger)
+#   SVT-AV1 preset 8 crf 35                                    52%   ~164 fps   VMAF 96.5
+# A 6 h 20 m VOD (15.6 GB) therefore takes ~1.7 h on the GPU or ~3.3 h on the CPU. Not lossless:
+# it is a second lossy generation, chosen so the loss is below what VMAF considers visible.
+# av1_nvenc needs an RTX 40/50 card and a driver at least as new as the nvenc API ffmpeg was
+# built against (596.21 failed with ffmpeg 9.0.1, 616.92 works); anything else falls back to the
+# CPU. Windows plays AV1 .mp4 in the stock player once the free "AV1 Video Extension" is installed.
+$script:Av1NvencArgs = @('-c:v', 'av1_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '36', '-b:v', '0',
+                         '-multipass', 'fullres', '-spatial-aq', '1', '-temporal-aq', '1', '-rc-lookahead', '32', '-pix_fmt', 'p010le')
+$script:Av1SvtArgs   = @('-c:v', 'libsvtav1', '-preset', '6', '-crf', '35', '-pix_fmt', 'yuv420p10le', '-svtav1-params', 'tune=0')
+
+# 10 synthetic frames through the GPU encoder (about a second). Fails on machines without an
+# NVIDIA card or with a driver too old for this ffmpeg build.
+function Test-Av1Nvenc([string]$Ffmpeg) {
+    $null = Get-NativeOutput { & $Ffmpeg -hide_banner -loglevel error -nostdin -f lavfi -i 'color=size=256x256:rate=30' -frames:v 10 @script:Av1NvencArgs -f null - }
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Re-encodes $Path to AV1 in place and returns a one-line summary, or $null when nothing changed.
+# Check -> act -> verify -> swap: the encode goes to "<file>.av1-tmp" next to the original (not
+# .mp4, so a crash leaves nothing the version scan could mistake for a download), is probed for
+# codec, resolution, frame rate, length and size, and only then replaces the original - via a
+# rename of the original first, so there is never a moment with no good file. Every failure is a
+# warning that keeps the h264 file: the download itself succeeded and must not be reported as failed.
+function Compress-Video([string]$Path, [string]$Ffmpeg) {
+    Write-Step 'Compressing to AV1'
+    if ($NoCompress) { Write-Info 'Skipped (-NoCompress): keeping the h264 file.'; return $null }
+    $ffprobe = Get-FfprobePath $Ffmpeg
+    if (-not $ffprobe) { Write-Warn 'ffprobe not found - cannot verify an encode, keeping the file as it is.'; return $null }
+    $before = Get-VideoSpec $Path $ffprobe
+    if (-not $before) { Write-Warn 'ffprobe cannot read the file - keeping it as it is.'; return $null }
+    if ($before.Codec -eq 'av1') { Write-Ok 'Already AV1 - nothing to do.'; return 'already AV1, nothing to do' }
+    $oldBytes = (Get-Item -LiteralPath $Path).Length
+    $oldMb    = [Math]::Round($oldBytes / 1MB)
+    Write-Ok "Source  : $($before.Codec) $($before.Tag), $(Format-Duration ([int]$before.Seconds)), $oldMb MB"
+
+    # The encode sits next to the original until it is verified, so the drive needs room for both.
+    $root   = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $Path).ProviderPath)
+    $free   = (New-Object IO.DriveInfo $root).AvailableFreeSpace
+    $needMb = [Math]::Round($oldBytes * 0.8 / 1MB)
+    if ($free -lt $oldBytes * 0.8) {
+        Write-Warn "Not enough free space on $root to compress: the encode needs up to ~$needMb MB next to the original, $([Math]::Round($free / 1MB)) MB free. Keeping the h264 file; run again with -CompressFile after freeing space."
+        return $null
+    }
+
+    $useGpu = (-not $Cpu) -and (Test-Av1Nvenc $Ffmpeg)
+    if (-not $useGpu -and -not $Cpu) { Write-Info 'No working NVENC AV1 encoder (needs an RTX 40/50 GPU and a current driver) - encoding on the CPU instead.' }
+    $encArgs = if ($useGpu) { $script:Av1NvencArgs } else { $script:Av1SvtArgs }
+    $encName = if ($useGpu) { 'NVENC AV1 (GPU)' } else { 'SVT-AV1 (CPU)' }
+    Write-Ok "Encoder : $encName"
+    Write-Info 'Progress bar below. Closing this window keeps the original file.'
+    Write-Host ''
+
+    $temp = "$Path.av1-tmp"
+    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    $env:SVT_LOG = '2'    # SVT-AV1 prints a 20-line config banner through its own logger, ignoring -loglevel; 2 = warnings only
+    $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y', '-i', $Path) + $encArgs + @('-g', '300', '-c:a', 'copy', '-f', 'mp4', $temp)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $exit = Invoke-Streaming -FfmpegLabel 'Encoding' -TotalSeconds $before.Seconds { & $Ffmpeg @ffArgs }
+    $sw.Stop()
+
+    $after    = if (Test-Path -LiteralPath $temp) { Get-VideoSpec $temp $ffprobe } else { $null }
+    $newBytes = if (Test-Path -LiteralPath $temp) { (Get-Item -LiteralPath $temp).Length } else { 0 }
+    $newMb    = [Math]::Round($newBytes / 1MB)
+    $problem  = $null
+    if ($exit -ne 0)                                  { $problem = "ffmpeg exited with code $exit" }
+    elseif (-not $after)                              { $problem = 'ffprobe cannot read the encoded file' }
+    elseif ($after.Codec -ne 'av1')                   { $problem = "the encoded file is $($after.Codec), not av1" }
+    elseif ($after.Tag -ne $before.Tag)               { $problem = "the encoded file is $($after.Tag), the source is $($before.Tag)" }
+    elseif ($after.Seconds -lt $before.Seconds * 0.99) { $problem = "the encoded file is $(Format-Duration ([int]$after.Seconds)) long, the source is $(Format-Duration ([int]$before.Seconds))" }
+    elseif ($newBytes -ge $oldBytes)                  { $problem = "the encoded file is not smaller ($newMb MB vs $oldMb MB)" }
+    if ($problem) {
+        Write-Warn "Compression failed: $problem - keeping the original h264 file."
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+
+    $old = "$Path.h264-old"
+    try {
+        Move-Item -LiteralPath $Path -Destination $old -Force -ErrorAction Stop
+        Move-Item -LiteralPath $temp -Destination $Path -ErrorAction Stop
+    } catch {
+        Write-Warn "Could not replace the original: $($_.Exception.Message)"
+        if (-not (Test-Path -LiteralPath $Path) -and (Test-Path -LiteralPath $old)) { Move-Item -LiteralPath $old -Destination $Path -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }
+    catch { Write-Warn "The AV1 file is in place but the h264 original could not be deleted - remove it by hand: $old" }
+
+    $pct     = [Math]::Round(100.0 * $newBytes / $oldBytes)
+    $summary = "AV1 $newMb MB from $oldMb MB h264 ($pct%) in $(Format-Duration ([int]$sw.Elapsed.TotalSeconds)) with $encName"
+    Write-Ok "Result  : $summary"
+    return $summary
+}
+
 # ============================================================================ site: Twitch
 function Invoke-Twitch([string]$VodId) {
     Write-Step 'Checking tools'
@@ -446,7 +575,10 @@ function Invoke-Twitch([string]$VodId) {
     Write-Ok "Folder  : $videosDir"
     Write-Ok "File    : $fileName"
     $expected = if ($Ending) { 0 } else { $length }
-    Resolve-ExistingVersions -Dir $videosDir -Id $VodId -BaseName $baseName -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg)
+    # An earlier download of this exact quality that predates the AV1 step is compressed before
+    # its folder is opened, so re-running the link on an old h264 file is the way to shrink it.
+    Resolve-ExistingVersions -Dir $videosDir -Id $VodId -BaseName $baseName -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg) `
+        -BeforeShowExisting { param($existing) $null = Compress-Video $existing $ffmpeg }
 
     $tempDir = Join-Path $env:TEMP 'TwitchDownloader'
     New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -481,6 +613,13 @@ function Invoke-Twitch([string]$VodId) {
             }
             Write-Ok "Free on ${root}: $freeGb GB ($($check.What))"
         }
+        # The AV1 step afterwards holds the h264 file and its encode side by side until the encode
+        # is verified. Not a reason to refuse the download - the step skips itself if space is short.
+        if (-not $NoCompress) {
+            $videosRoot = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $videosDir).ProviderPath)
+            $videosFree = (New-Object IO.DriveInfo $videosRoot).AvailableFreeSpace
+            if ($videosFree -lt $needBytes * 1.8) { Write-Warn "AV1 compression afterwards needs ~$([Math]::Round($needBytes * 0.8 / 1GB, 1)) GB more on $videosRoot and will be skipped if that is not free by then." }
+        }
     }
 
     Write-Step "Downloading $($pick.Name) with 24 parallel threads"
@@ -499,8 +638,11 @@ function Invoke-Twitch([string]$VodId) {
         Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`nFree space on the Videos drive now: $freeNow GB`n`nScroll up in the window for the CLI's error."
     }
     if ($exit -ne 0) { Write-Warn "TwitchDownloaderCLI exited with code $exit but the file exists - check it plays." }
-    $sizeMb = [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB)
-    Finish $outPath ("{0} MB in {1} at {2}" -f $sizeMb, (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $pick.Name)
+    $downloaded = "{0} MB downloaded in {1} at {2}" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB), (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $pick.Name
+
+    $compressed = Compress-Video $outPath $ffmpeg
+    $summary = if ($compressed) { "$downloaded; $compressed" } else { $downloaded }
+    Finish $outPath $summary
 }
 
 # ============================================================================ site: YouTube
@@ -724,6 +866,26 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
 }
 
 # ============================================================================ main
+if (-not $CompressFile -and -not $Url) {
+    # A file path in the clipboard (Explorer's "Copy as path" puts it there in quotes) means
+    # "compress this", so compress-video.bat and download-video.bat both do the whole job.
+    try { $clip = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $clip = '' }
+    $clip = if ($clip) { $clip.Trim().Trim('"') } else { '' }
+    if ($clip -and $clip -notmatch '^[a-z]+://' -and (Test-Path -LiteralPath $clip -PathType Leaf)) { $CompressFile = $clip }
+}
+if ($CompressFile) {
+    # Manual mode: shrink an existing file (an earlier download, or anything h264) and stop.
+    Write-Step 'Compressing an existing file'
+    if (-not (Test-Path -LiteralPath $CompressFile -PathType Leaf)) { Fail "File not found: $CompressFile" }
+    $CompressFile = (Resolve-Path -LiteralPath $CompressFile).ProviderPath
+    Write-Ok "File    : $CompressFile"
+    Ensure-Scoop
+    $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
+    $result = Compress-Video $CompressFile $ffmpeg
+    if (-not $result) { Fail "The file was not compressed - see the reason above.`n`n$CompressFile" }
+    Finish $CompressFile $result
+}
+
 Write-Step 'Reading link from clipboard'
 if (-not $Url) {
     try { $Url = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $Url = '' }

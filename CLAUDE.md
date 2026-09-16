@@ -705,7 +705,9 @@ tool's live progress, opens Explorer on the finished file and closes after 8 s; 
 message box. Output names are `<date> <channel> - <title> [<id>] [<quality>].mp4` for Twitch/YouTube (`[1080p60]`,
 built from height and rounded fps, not from Twitch's `1080p60 (source)` label) and
 `<date> <channel> - <title> [<id>].mp4` for Instagram. Manual runs accept `-Url`,
-`-MaxHeight` (Twitch/YouTube resolution cap; default 0 = no cap, highest quality available), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
+`-MaxHeight` (Twitch/YouTube resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
+(keep the Twitch h264), `-Cpu` (AV1 on the CPU with SVT-AV1 instead of NVENC), `-CompressFile <path>`
+(AV1-compress an existing file in place and stop), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
 YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
 
 | Site | Tools (scoop) | Selection | Speed |
@@ -751,13 +753,56 @@ up front when `bandwidth / 8 × length × 1.15` exceeds free space on the Videos
 drive, naming both numbers, and deletes every `<id>_<ticks>` folder before and after each run. `Z:`
 holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB).
 
+**AV1 compression (Twitch).** Twitch serves 1080p60 as h264 at ~6 Mbit/s, so every Twitch download
+is re-encoded to 10-bit AV1 afterwards (`Compress-Video`), same name, same `[1080p60]` tag, audio
+copied. Measured on 60 s of a VOD with ffmpeg 9.0.1 (gyan full build: libsvtav1, av1_nvenc, libvmaf),
+Ryzen 9 9950X3D + RTX 5080, VMAF `vmaf_v0.6.1` against the h264 source (95+ = no visible difference):
+
+| Encode | Size | Speed | VMAF |
+|---|---|---|---|
+| NVENC `p7 -tune hq -rc vbr -cq 36 -b:v 0 -multipass fullres -spatial-aq 1 -temporal-aq 1 -rc-lookahead 32 -pix_fmt p010le` | 58 % | ~225 fps | 96.7 |
+| SVT-AV1 `-preset 6 -crf 35 -pix_fmt yuv420p10le -svtav1-params tune=0` | 48 % | ~116 fps | 96.7 |
+| NVENC same without AQ | 55 % | ~257 fps | 96.4 |
+| NVENC `-tune uhq` cq 36 | 65 % | ~105 fps | 97.1 |
+| SVT-AV1 preset 8 crf 35 | 52 % | ~164 fps | 96.5 |
+| SVT-AV1 preset 6 crf 30 / 40 | 70 % / 35 % | | 97.2 / 96.1 |
+
+The GPU row is the default (the PC stays usable and a 6 h 20 m, 15.6 GB VOD takes ~1.7 h instead of
+~3.3 h); `-Cpu` picks the SVT-AV1 row for files ~17 % smaller at the same score. Both are a second
+lossy generation chosen to stay above the visibility threshold, not lossless — say so if asked.
+`av1_nvenc` is probed with 10 synthetic frames first and falls back to the CPU when it fails: **it
+needs a driver at least as new as the nvenc API the ffmpeg build targets** (596.21 failed with
+ffmpeg 9.0.1's API 13.1, 616.92 works). Windows plays the result in the stock player because
+`Microsoft.AV1VideoExtension` is installed.
+
+Check → act → verify → swap: the encode goes to `<file>.av1-tmp` (not `.mp4`, so a crash leaves
+nothing the version scan mistakes for a download), is probed for codec `av1`, the same
+height/fps tag, ≥ 99 % of the source length and a smaller size, and only then replaces the original
+— original renamed to `.h264-old` first, encode renamed in, old deleted, so there is never a moment
+with no good file. Any failure is a **warning that keeps the h264 file**, never a failed download.
+Verified by breaking it: a file truncated to 40 % encoded to 24 s of 60 and was rejected on length
+with the original intact. The step also runs when re-running a link on an earlier h264 download
+(`Resolve-ExistingVersions -BeforeShowExisting`), so an old file is shrunk instead of just "already
+downloaded"; `-CompressFile` does the same for any h264 file by hand, e.g. a VOD downloaded before
+this existed. **`optional/compress-video.bat`** is the launcher for that: drop a video onto it, run
+it with the path as the argument, or copy the path (Explorer: Shift+right-click → *Copy as path*)
+and double-click it — `download-video.ps1` treats a file path in the clipboard (quotes stripped,
+must exist, not a URL) as "compress this", so `download-video.bat` does the same. Its elevation
+block forwards the dropped path through `-ArgumentList '\"%~1\"'`, verified with a bracketed path
+containing spaces. Space: the encode sits next to the original until verified, so the step needs ~80 %
+of the source free and skips itself (warning) otherwise; the download's own space check only warns
+about it. SVT-AV1 prints a 20-line config banner through its own logger regardless of `-loglevel`;
+`SVT_LOG=2` silences it. `-nostdin` keeps ffmpeg from eating keystrokes through the pipe.
+
 **Progress bar.** `Invoke-Streaming` folds the tools' progress into one bar redrawn in place
 (`Downloading [#####-----] 43.7% of 11.28MiB at 1.5MiB/s ETA 00:04`). The tools refresh with ``,
 but through PowerShell's pipe every refresh arrives as its own line, so the window used to scroll
 hundreds of `[download]` / `[STATUS]` lines. Recognised shapes were captured from the real tools
 under 5.1: TwitchDownloaderCLI `[STATUS] - Downloading 45% [2/4]` (some stages carry no `%`),
 yt-dlp `[download]  43.7% of 11.28MiB at ... ETA 00:25` and its final `100% of X in 00:00:19 at ...`,
-ffmpeg `frame=... time=...` during `-Ending` cuts. yt-dlp sometimes glues a message onto a progress
+ffmpeg `frame=... fps=... time=... speed=...` during `-Ending` cuts and the AV1 step (with
+`-TotalSeconds` the time becomes a percentage: `Encoding [####--] 69.3% time 00:00:41.60 at 224 fps (3.84x)`).
+yt-dlp sometimes glues a message onto a progress
 line with no line break (`ETA 00:25[download] Got error: ...`), so every field stops at `[` and the
 remainder is printed as its own line. Non-progress lines print above the bar. When output is
 redirected (tests) the bar is a plain line emitted only when the whole percentage or stage changes.
