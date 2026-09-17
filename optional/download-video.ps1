@@ -119,7 +119,7 @@ function Get-NativeOutput([scriptblock]$Command) {
 #                        ...occasionally with a message glued on: "ETA 00:25[download] Got error: ..."
 #   ffmpeg               frame=  135 fps= 65 q=31.0 size=  256KiB time=00:00:02.46 bitrate=... speed=1.08x
 #                        (-Ending cuts and the AV1 step; with -TotalSeconds the time becomes a percentage)
-function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0) {
+function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0, [string]$StartLabel = 'Starting') {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $redirected = try { [Console]::IsOutputRedirected } catch { $true }
@@ -128,13 +128,51 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
     $spinner    = '|/-\'
     $clock      = [Diagnostics.Stopwatch]::StartNew()
     $title      = try { $Host.UI.RawUI.WindowTitle } catch { '' }
-    $st = @{ Shown = $false; LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0 }
+    # Two lines are owned while a tool runs: the status line, and under it the tool's own latest
+    # output line ("techy" line: timestamp, tool name, raw text), both redrawn in place with the
+    # cursor parked on the second. Nothing scrolls while it works; only error-looking lines are
+    # printed above the pair so they are not lost when the next raw line replaces them.
+    $st = @{ Shown = $false; Row = -1; Cursor = $true; LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0; Bar = ''; Raw = '' }
 
+    $writeAt = {
+        param([int]$Row, [string]$Text, [ConsoleColor]$Color)
+        if ($Text.Length -gt $width - 1) { $Text = $Text.Substring(0, $width - 1) }
+        [Console]::SetCursorPosition(0, $Row)
+        Write-Host -NoNewline $Text.PadRight($width - 1) -ForegroundColor $Color
+    }
+    $draw = {
+        # Redraw both owned lines; reserve them first time (two newlines, so the buffer scrolls
+        # here rather than while writing at fixed positions). Hosts whose cursor cannot be moved
+        # fall back to a single "\r" line, the previous behaviour.
+        try {
+            if ($st.Cursor) {
+                if (-not $st.Shown) {
+                    if ([Console]::CursorLeft -gt 0) { Write-Host '' }
+                    Write-Host ''; Write-Host ''
+                    $st.Row = [Console]::CursorTop - 2
+                    $st.Shown = $true
+                }
+                & $writeAt $st.Row $st.Bar Cyan
+                & $writeAt ($st.Row + 1) $st.Raw DarkGray
+                return
+            }
+        } catch { $st.Cursor = $false }
+        $text = $st.Bar
+        if ($text.Length -gt $width - 1) { $text = $text.Substring(0, $width - 1) }
+        Write-Host -NoNewline ("`r" + $text.PadRight($width - 1)) -ForegroundColor Cyan
+        $st.Shown = $true
+    }
     $clearBar = {
-        if ($st.Shown) { Write-Host -NoNewline ("`r" + (' ' * ($width - 1)) + "`r"); $st.Shown = $false }
+        if (-not $st.Shown) { return }
+        if ($st.Cursor) {
+            try { & $writeAt $st.Row '' Gray; & $writeAt ($st.Row + 1) '' Gray; [Console]::SetCursorPosition(0, $st.Row) } catch {}
+        } else {
+            Write-Host -NoNewline ("`r" + (' ' * ($width - 1)) + "`r")
+        }
+        $st.Shown = $false
     }
     $hms = { param([double]$Seconds) $t = [TimeSpan]::FromSeconds([Math]::Max(0, $Seconds)); '{0}:{1:00}:{2:00}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds }
-    # One status line, redrawn in place: "<label> [####------]  12.0% | <detail> | ETA 1h 05m | 12m 11s elapsed".
+    # Status line: "<label> [####------]  12.0% | ETA 1h 05m | <detail> | 12m 11s elapsed".
     # $Pct < 0 draws a spinner instead of a bar, so a stage without a percentage still visibly moves.
     # $Eta in seconds; -1 = estimate it from this stage's own pace (each label restarts the clock),
     # -2 = the detail already carries one (yt-dlp), so print none.
@@ -162,10 +200,17 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
             $whole = if ($Pct -ge 0) { [int][Math]::Floor($Pct) } else { -1 }
             if ($whole -ne $st.LastPct -or $Label -ne $st.LastLabel) { Write-Host $text; $st.LastPct = $whole; $st.LastLabel = $Label }
         } else {
-            if ($text.Length -gt $width - 1) { $text = $text.Substring(0, $width - 1) }
-            Write-Host -NoNewline ("`r" + $text.PadRight($width - 1)) -ForegroundColor Cyan
-            $st.Shown = $true
+            $st.Bar = $text
+            & $draw
         }
+    }
+    # The techy line: what the tool itself just said, verbatim apart from squeezed whitespace.
+    $raw = {
+        param([string]$Line)
+        if ($redirected) { return }
+        $st.Raw = '{0} {1} | {2}' -f (Get-Date -Format 'HH:mm:ss'), $Tool, ($Line -replace '\s+', ' ').Trim()
+        if (-not $st.Bar) { $st.Spin = ($st.Spin + 1) % $spinner.Length; $st.Bar = "$StartLabel $($spinner[$st.Spin]) | $(Format-Duration ([int]$clock.Elapsed.TotalSeconds)) elapsed" }
+        & $draw
     }
 
     try {
@@ -177,6 +222,7 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
                 $label = "$($Matches[1]) [$($Matches[3])/$($Matches[4])]"
                 $pct   = if ($Matches[2]) { [double]$Matches[2] } else { -1 }
                 $rest  = $Matches[5]
+                & $raw $line.Substring(0, $line.Length - $rest.Length)
                 & $render $label $pct ''
             } elseif ($line -match '^\[download\]\s+([\d.]+)% of\s+(~?\s*[\d.]+\w+)(?:\s+in\s+([\d:]+))?(?:\s+at\s+([^\s\[]+))?(?:\s+ETA\s+([^\s\[]+))?(.*)$') {
                 # Fields stop at "[" because a message is sometimes glued on with no line break.
@@ -186,7 +232,9 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
                 if ($Matches[4]) { $detail += " at $($Matches[4])" }
                 if ($Matches[5]) { $detail += " ETA $($Matches[5])" }
                 $rest   = $Matches[6]
-                & $render 'Downloading' $pct $detail $(if ($Matches[5]) { -2 } else { -1 })
+                $hasEta = [bool]$Matches[5]
+                & $raw $line.Substring(0, $line.Length - $rest.Length)
+                & $render 'Downloading' $pct $detail $(if ($hasEta) { -2 } else { -1 })
             } elseif ($line -match '^frame=\s*(\d+)\s+fps=\s*([\d.]+).*?size=\s*(\S+).*?time=(\S+)(?:.*?speed=\s*([\d.]+)x)?') {
                 $fpsNow = [double]$Matches[2]; $size = $Matches[3]; $time = $Matches[4]
                 $speed = if ($Matches[5]) { [double]$Matches[5] } else { 0.0 }
@@ -202,15 +250,24 @@ function Invoke-Streaming([scriptblock]$Command, [string]$FfmpegLabel = 'Re-enco
                     $mb = switch ($Matches[2]) { 'KiB' { [double]$Matches[1] / 1024 } 'MiB' { [double]$Matches[1] } 'GiB' { [double]$Matches[1] * 1024 } 'kB' { [double]$Matches[1] / 1000 } 'MB' { [double]$Matches[1] } 'GB' { [double]$Matches[1] * 1000 } }
                     $detail += " | $('{0:N0}' -f $mb) MB out"
                 }
+                & $raw $line
                 & $render $FfmpegLabel $pct $detail $eta
-            } else {
+            } elseif ($line -match '(?i)error|fail|warn|denied|cannot|could not|not found|invalid|unable|refused|timed out') {
+                # Worth keeping: print it above the two owned lines, which redraw on the next update.
                 & $clearBar
                 Write-Host $line
+            } elseif ($redirected) {
+                Write-Host $line
+            } else {
+                & $raw $line
             }
             if ($rest.Trim()) { & $clearBar; Write-Host $rest.Trim() }
         }
         $code = $LASTEXITCODE
-        if ($st.Shown) { Write-Host '' }
+        if ($st.Shown) {
+            if ($st.Cursor) { try { [Console]::SetCursorPosition(0, $st.Row + 1) } catch {} }
+            Write-Host ''
+        }
         return $code
     }
     finally {
@@ -506,7 +563,7 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
     $env:SVT_LOG = '2'    # SVT-AV1 prints a 20-line config banner through its own logger, ignoring -loglevel; 2 = warnings only
     $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y', '-i', $Path) + $encArgs + @('-g', '300', '-c:a', 'copy', '-f', 'mp4', $temp)
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $exit = Invoke-Streaming -FfmpegLabel 'Encoding' -TotalSeconds $before.Seconds { & $Ffmpeg @ffArgs }
+    $exit = Invoke-Streaming -Tool 'ffmpeg' -FfmpegLabel 'Encoding' -TotalSeconds $before.Seconds { & $Ffmpeg @ffArgs }
     $sw.Stop()
 
     $after    = if (Test-Path -LiteralPath $temp) { Get-VideoSpec $temp $ffprobe } else { $null }
@@ -661,7 +718,7 @@ function Invoke-Twitch([string]$VodId) {
                  '--ffmpeg-path', $ffmpeg, '--temp-path', $tempDir, '--collision', 'Overwrite', '--banner', 'false')
     if ($Ending) { $cliArgs += @('-e', $Ending) }
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $exit = Invoke-Streaming { & $cli @cliArgs }
+    $exit = Invoke-Streaming -Tool 'TwitchDownloaderCLI' { & $cli @cliArgs }
     $sw.Stop()
     & $clearTemp
 
@@ -746,7 +803,7 @@ function Invoke-YouTube([string]$VideoId) {
                                         '-o', (Join-Path $videosDir "$baseName.%(ext)s"))
     if ($Ending) { $dlArgs += @('--download-sections', "*0-$Ending", '--force-keyframes-at-cuts') }
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $exit = Invoke-Streaming { & $ytdlp @dlArgs $cleanUrl }
+    $exit = Invoke-Streaming -Tool 'yt-dlp' { & $ytdlp @dlArgs $cleanUrl }
     $sw.Stop()
 
     if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 200KB) {
@@ -832,7 +889,7 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
         Write-Host ''
         $dlArgs = $common + $used.Args + @('--merge-output-format', 'mp4', '-N', '8', '--no-mtime', '--progress', '-o', (Join-Path $videosDir "$baseName.%(ext)s"))
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $exit = Invoke-Streaming { & $ytdlp @dlArgs $cleanUrl }
+        $exit = Invoke-Streaming -Tool 'yt-dlp' { & $ytdlp @dlArgs $cleanUrl }
         $sw.Stop()
         if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 50KB) {
             Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`n`nScroll up in the window for yt-dlp's error."

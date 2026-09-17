@@ -803,7 +803,17 @@ stage gets one from its own pace (`elapsed × (100 − pct) / pct`, once past 1 
 label change restarts that clock). A stage with no percentage shows a spinner (`Fetching Video Info
 [1/4] /`) so it still visibly moves, and the window title mirrors `12% Encoding - Download Video`
 for the taskbar. `Compress-Video` also prints the frame count and the expected time from the
-measured fps up front, so a multi-hour encode does not look stuck before the first percent. The tools refresh with ``,
+measured fps up front, so a multi-hour encode does not look stuck before the first percent.
+Under the status line sits a second owned line, the tool's own latest output verbatim
+(`19:09:14 ffmpeg | frame= 3600 fps=153 q=79.0 Lsize= 26245KiB time=00:01:00.01 ...`, in dark
+gray, whitespace squeezed). Both are redrawn in place with `[Console]::SetCursorPosition` — the
+pair is reserved with two newlines the first time so any scrolling happens then, not while
+writing at fixed rows — and nothing the tool prints scrolls the window any more: every
+non-progress line replaces the techy line, except lines that look like errors
+(`error|fail|warn|denied|cannot|...`), which are printed above the pair so the next raw line
+cannot erase them. A host whose cursor cannot be moved falls back to the old single `\r` line.
+Verified in a real console through a harness that runs the script and then dumps
+`GetBufferContents`: exactly two lines, bar then raw, followed by the result. The tools refresh with ``,
 but through PowerShell's pipe every refresh arrives as its own line, so the window used to scroll
 hundreds of `[download]` / `[STATUS]` lines. Recognised shapes were captured from the real tools
 under 5.1: TwitchDownloaderCLI `[STATUS] - Downloading 45% [2/4]` (some stages carry no `%`),
