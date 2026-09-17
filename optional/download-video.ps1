@@ -24,6 +24,11 @@
 #   -CompressFile  re-encode an existing video file to AV1 in place (any h264 .mp4, e.g. an earlier download) and stop
 #   -Ending        test aid: only the first part - Twitch "20s", YouTube seconds like "30" (re-encodes)
 #   -NoMessageBox  failures go to the console only (tests)
+#   -Inline        do the work in this window instead of a background job (tests; the old behaviour)
+#
+# The work itself runs in a hidden, detached, below-normal-priority worker process (this script
+# with -Worker) so it never chugs the PC and survives the window being closed; the window is only
+# a viewer. Run the launcher again while a job runs and it re-attaches to it. One job at a time.
 
 param(
     [string]$Url,
@@ -32,7 +37,9 @@ param(
     [switch]$Cpu,
     [string]$CompressFile,
     [string]$Ending,
-    [switch]$NoMessageBox
+    [switch]$NoMessageBox,
+    [switch]$Inline,
+    [switch]$Worker
 )
 
 # Auto-elevate to Administrator (forwarding any parameters)
@@ -44,6 +51,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     if ($CompressFile) { $fwd += " -CompressFile `"$CompressFile`"" }
     if ($Ending)       { $fwd += " -Ending `"$Ending`"" }
     if ($NoMessageBox) { $fwd += " -NoMessageBox" }
+    if ($Inline)       { $fwd += " -Inline" }
+    if ($Worker)       { $fwd += " -Worker" }
     Start-Process PowerShell -ArgumentList $fwd -Verb RunAs
     exit
 }
@@ -53,13 +62,23 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $Host.UI.RawUI.WindowTitle = 'Download Video'
 
 # ============================================================================ shared helpers
-function Write-Step([string]$Text) { Write-Host "`n== $Text" -ForegroundColor Cyan }
-function Write-Ok([string]$Text)   { Write-Host "   $Text" -ForegroundColor Green }
-function Write-Info([string]$Text) { Write-Host "   $Text" -ForegroundColor Gray }
-function Write-Warn([string]$Text) { Write-Host "   $Text" -ForegroundColor Yellow }
+# Every line goes through Out-Line. In the background worker the console is a log file that the
+# viewer tails, so the colour travels as a one-letter marker ("K|text") the viewer turns back into
+# colour; in a real console it is just coloured text.
+function Out-Line([string]$Mark, [string]$Text, [ConsoleColor]$Color) {
+    if ($Worker) { Write-Host "$Mark|$Text" } else { Write-Host $Text -ForegroundColor $Color }
+}
+function Write-Step([string]$Text) { Write-Host ''; Out-Line 'S' "== $Text" Cyan }
+# Cancelling differs by where the work runs: X in the viewer for a background job, closing the
+# window for an -Inline run.
+function Get-CancelHint { if ($Worker) { 'Press X in this window to cancel' } else { 'Closing this window cancels' } }
+function Write-Ok([string]$Text)   { Out-Line 'K' "   $Text" Green }
+function Write-Info([string]$Text) { Out-Line 'I' "   $Text" Gray }
+function Write-Warn([string]$Text) { Out-Line 'W' "   $Text" Yellow }
 
 function Fail([string]$Message) {
-    Write-Host "`nFAILED: $Message" -ForegroundColor Red
+    Write-Host ''
+    foreach ($l in ("FAILED: $Message" -split "`r?`n")) { Out-Line 'F' $l Red }
     if ($NoMessageBox) { exit 1 }
     try {
         Add-Type -AssemblyName System.Windows.Forms
@@ -119,31 +138,24 @@ function Get-NativeOutput([scriptblock]$Command) {
 #                        ...occasionally with a message glued on: "ETA 00:25[download] Got error: ..."
 #   ffmpeg               frame=  135 fps= 65 q=31.0 size=  256KiB time=00:00:02.46 bitrate=... speed=1.08x
 #                        (-Ending cuts and the AV1 step; with -TotalSeconds the time becomes a percentage)
-function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0, [string]$StartLabel = 'Starting') {
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
-    $width      = try { [Math]::Max(60, [Console]::WindowWidth) } catch { 120 }
-    $barWidth   = 20      # the full line ("... | ETA | time of total | fps speed | MB | elapsed") must fit a 120-column window
-    $spinner    = '|/-\'
-    $clock      = [Diagnostics.Stopwatch]::StartNew()
-    $title      = try { $Host.UI.RawUI.WindowTitle } catch { '' }
-    # Two lines are owned while a tool runs: the status line, and under it the tool's own latest
-    # output line ("techy" line: timestamp, tool name, raw text), both redrawn in place with the
-    # cursor parked on the second. Nothing scrolls while it works; only error-looking lines are
-    # printed above the pair so they are not lost when the next raw line replaces them.
-    $st = @{ Shown = $false; Row = -1; Cursor = $true; LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0; Bar = ''; Raw = '' }
-
+# Two console lines owned by a running job - the status bar and, under it, the tool's latest raw
+# output line - redrawn in place with SetCursorPosition. They are reserved with two newlines the
+# first time so any scrolling happens then, never while writing at fixed rows. Hosts whose cursor
+# cannot be moved fall back to a single "\r" line. Used by Invoke-Streaming in a real console and
+# by the job viewer, which gets the two strings from the worker's status file.
+function New-StatusPair {
+    $width = try { [Math]::Max(60, [Console]::WindowWidth) } catch { 120 }
+    $st = @{ Shown = $false; Row = -1; Cursor = $true; Width = $width; Bar = ''; Raw = '' }
     $writeAt = {
         param([int]$Row, [string]$Text, [ConsoleColor]$Color)
-        if ($Text.Length -gt $width - 1) { $Text = $Text.Substring(0, $width - 1) }
+        if ($Text.Length -gt $st.Width - 1) { $Text = $Text.Substring(0, $st.Width - 1) }
         [Console]::SetCursorPosition(0, $Row)
-        Write-Host -NoNewline $Text.PadRight($width - 1) -ForegroundColor $Color
-    }
-    $draw = {
-        # Redraw both owned lines; reserve them first time (two newlines, so the buffer scrolls
-        # here rather than while writing at fixed positions). Hosts whose cursor cannot be moved
-        # fall back to a single "\r" line, the previous behaviour.
+        Write-Host -NoNewline $Text.PadRight($st.Width - 1) -ForegroundColor $Color
+    }.GetNewClosure()
+    $pair = @{}
+    $pair.Draw = {
+        param([string]$Bar, [string]$Raw)
+        $st.Bar = $Bar; $st.Raw = $Raw
         try {
             if ($st.Cursor) {
                 if (-not $st.Shown) {
@@ -158,19 +170,54 @@ function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string
             }
         } catch { $st.Cursor = $false }
         $text = $st.Bar
-        if ($text.Length -gt $width - 1) { $text = $text.Substring(0, $width - 1) }
-        Write-Host -NoNewline ("`r" + $text.PadRight($width - 1)) -ForegroundColor Cyan
+        if ($text.Length -gt $st.Width - 1) { $text = $text.Substring(0, $st.Width - 1) }
+        Write-Host -NoNewline ("`r" + $text.PadRight($st.Width - 1)) -ForegroundColor Cyan
         $st.Shown = $true
-    }
-    $clearBar = {
+    }.GetNewClosure()
+    $pair.Clear = {
         if (-not $st.Shown) { return }
         if ($st.Cursor) {
             try { & $writeAt $st.Row '' Gray; & $writeAt ($st.Row + 1) '' Gray; [Console]::SetCursorPosition(0, $st.Row) } catch {}
         } else {
-            Write-Host -NoNewline ("`r" + (' ' * ($width - 1)) + "`r")
+            Write-Host -NoNewline ("`r" + (' ' * ($st.Width - 1)) + "`r")
         }
         $st.Shown = $false
+    }.GetNewClosure()
+    $pair.Redraw = { if ($st.Bar) { & $pair.Draw $st.Bar $st.Raw } }.GetNewClosure()
+    $pair.End = {
+        if (-not $st.Shown) { return }
+        if ($st.Cursor) { try { [Console]::SetCursorPosition(0, $st.Row + 1) } catch {} }
+        Write-Host ''
+        $st.Shown = $false; $st.Bar = ''; $st.Raw = ''
+    }.GetNewClosure()
+    return $pair
+}
+
+function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0, [string]$StartLabel = 'Starting') {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    # Three output modes: a real console owns the two status lines; the background worker writes
+    # them to the status file for the viewer (its own stdout is the log); plain redirected output
+    # (tests, logs) prints one line per whole percent and no raw lines.
+    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
+    $mode       = if ($Worker) { 'worker' } elseif ($redirected) { 'plain' } else { 'console' }
+    $barWidth   = 20      # the full line ("... | ETA | time of total | fps speed | MB | elapsed") must fit a 120-column window
+    $spinner    = '|/-\'
+    $clock      = [Diagnostics.Stopwatch]::StartNew()
+    $title      = try { $Host.UI.RawUI.WindowTitle } catch { '' }
+    $pair       = if ($mode -eq 'console') { New-StatusPair } else { $null }
+    $st = @{ LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0; Bar = ''; Raw = ''; Title = ''; StatusAt = -1.0 }
+
+    $show = {
+        # Push the current pair out: draw it (console), or write the status file (worker, at most
+        # ~5 times a second so a fast tool does not spend its time on file writes).
+        if ($mode -eq 'console') { & $pair.Draw $st.Bar $st.Raw; return }
+        if ($mode -eq 'worker') {
+            $now = $clock.Elapsed.TotalSeconds
+            if ($now - $st.StatusAt -ge 0.2) { Write-JobStatus $st.Bar $st.Raw $st.Title; $st.StatusAt = $now }
+        }
     }
+    $clearPair = { if ($mode -eq 'console') { & $pair.Clear } }
     $hms = { param([double]$Seconds) $t = [TimeSpan]::FromSeconds([Math]::Max(0, $Seconds)); '{0}:{1:00}:{2:00}' -f [int][Math]::Floor($t.TotalHours), $t.Minutes, $t.Seconds }
     # Status line: "<label> [####------]  12.0% | ETA 1h 05m | <detail> | 12m 11s elapsed".
     # $Pct < 0 draws a spinner instead of a bar, so a stage without a percentage still visibly moves.
@@ -195,22 +242,23 @@ function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string
         if ($Eta -ge 0) { $text += " | ETA $(& $dur $Eta)" }
         if ($Detail) { $text += " | $Detail" }
         $text += " | $(& $dur $now) elapsed"
-        try { $Host.UI.RawUI.WindowTitle = $(if ($Pct -ge 0) { '{0:0}% {1} - {2}' -f $Pct, $Label, $title } else { "$Label - $title" }) } catch {}
-        if ($redirected) {
+        $st.Title = if ($Pct -ge 0) { '{0:0}% {1} - Download Video' -f $Pct, $Label } else { "$Label - Download Video" }
+        if ($mode -eq 'console') { try { $Host.UI.RawUI.WindowTitle = $st.Title } catch {} }
+        if ($mode -eq 'plain') {
             $whole = if ($Pct -ge 0) { [int][Math]::Floor($Pct) } else { -1 }
             if ($whole -ne $st.LastPct -or $Label -ne $st.LastLabel) { Write-Host $text; $st.LastPct = $whole; $st.LastLabel = $Label }
         } else {
             $st.Bar = $text
-            & $draw
+            & $show
         }
     }
     # The techy line: what the tool itself just said, verbatim apart from squeezed whitespace.
     $raw = {
         param([string]$Line)
-        if ($redirected) { return }
+        if ($mode -eq 'plain') { return }
         $st.Raw = '{0} {1} | {2}' -f (Get-Date -Format 'HH:mm:ss'), $Tool, ($Line -replace '\s+', ' ').Trim()
         if (-not $st.Bar) { $st.Spin = ($st.Spin + 1) % $spinner.Length; $st.Bar = "$StartLabel $($spinner[$st.Spin]) | $(Format-Duration ([int]$clock.Elapsed.TotalSeconds)) elapsed" }
-        & $draw
+        & $show
     }
 
     try {
@@ -254,20 +302,18 @@ function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string
                 & $render $FfmpegLabel $pct $detail $eta
             } elseif ($line -match '(?i)error|fail|warn|denied|cannot|could not|not found|invalid|unable|refused|timed out') {
                 # Worth keeping: print it above the two owned lines, which redraw on the next update.
-                & $clearBar
+                & $clearPair
                 Write-Host $line
-            } elseif ($redirected) {
+            } elseif ($mode -eq 'plain') {
                 Write-Host $line
             } else {
                 & $raw $line
             }
-            if ($rest.Trim()) { & $clearBar; Write-Host $rest.Trim() }
+            if ($rest.Trim()) { & $clearPair; Write-Host $rest.Trim() }
         }
         $code = $LASTEXITCODE
-        if ($st.Shown) {
-            if ($st.Cursor) { try { [Console]::SetCursorPosition(0, $st.Row + 1) } catch {} }
-            Write-Host ''
-        }
+        if ($mode -eq 'console') { & $pair.End }
+        if ($mode -eq 'worker') { Write-JobStatus $st.Bar $st.Raw $st.Title 'end' }    # final pair, unthrottled; the viewer keeps it and moves below
         return $code
     }
     finally {
@@ -281,7 +327,7 @@ function Show-Existing([string]$Path, [string]$Tag) {
     $at = if ($Tag) { " at $Tag" } else { '' }
     Write-Warn "Already downloaded$at ($sizeMb MB) - opening its folder instead."
     Start-Process explorer.exe -ArgumentList "/select,`"$Path`""
-    Start-Sleep -Seconds 4
+    if (-not $Worker) { Start-Sleep -Seconds 4 }    # the viewer does its own countdown
     exit 0
 }
 
@@ -382,10 +428,11 @@ function Resolve-ExistingVersions([string]$Dir, [string]$Id, [string]$BaseName, 
 
 function Finish([string]$Path, [string]$Summary) {
     Write-Host ''
-    Write-Host "DONE  $(Split-Path $Path -Leaf)" -ForegroundColor Green
-    if ($Summary) { Write-Host "      $Summary" -ForegroundColor Green }
-    Write-Host "      $Path" -ForegroundColor Green
+    Out-Line 'D' "DONE  $(Split-Path $Path -Leaf)" Green
+    if ($Summary) { Out-Line 'D' "      $Summary" Green }
+    Out-Line 'D' "      $Path" Green
     Start-Process explorer.exe -ArgumentList "/select,`"$Path`""
+    if ($Worker) { exit 0 }    # the viewer does the countdown
     for ($s = 8; $s -gt 0; $s--) {
         Write-Host -NoNewline "`r      Closing in $s s... "
         Start-Sleep -Seconds 1
@@ -555,7 +602,7 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
     $frames  = [long]($before.Seconds * $before.Fps)
     $typical = if ($useGpu) { 220 } else { 115 }
     Write-Ok ("Work    : {0:N0} frames; at the usual ~{1} fps about {2}, then a verification pass" -f $frames, $typical, (Format-Duration ([int]($frames / $typical))))
-    Write-Info 'Progress bar below. Closing this window keeps the original file.'
+    Write-Info "Progress below. $(Get-CancelHint) - the original file is kept either way."
     Write-Host ''
 
     $temp = "$Path.av1-tmp"
@@ -712,7 +759,7 @@ function Invoke-Twitch([string]$VodId) {
     }
 
     Write-Step "Downloading $($pick.Name) with 24 parallel threads"
-    Write-Info 'Progress bar below. Closing this window cancels the download.'
+    Write-Info "Progress below. $(Get-CancelHint)."
     Write-Host ''
     $cliArgs = @('videodownload', '--id', $VodId, '-o', $outPath, '-q', $pick.Name, '--threads', '24',
                  '--ffmpeg-path', $ffmpeg, '--temp-path', $tempDir, '--collision', 'Overwrite', '--banner', 'false')
@@ -794,7 +841,7 @@ function Invoke-YouTube([string]$VideoId) {
     Resolve-ExistingVersions -Dir $videosDir -Id $VideoId -BaseName $idBase -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg)
 
     Write-Step 'Downloading with 16 parallel fragment connections'
-    Write-Info 'Progress bar below. Closing this window cancels the download.'
+    Write-Info "Progress below. $(Get-CancelHint)."
     Write-Host ''
     # yt-dlp needs %(ext)s in the template; with --merge-output-format mp4 the result is always .mp4.
     # --force-overwrites: a file already at this exact name was judged incomplete or mis-tagged above,
@@ -954,48 +1001,224 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
     Finish $finalPaths[0] "$($files.Count) file(s) in $picturesDir"
 }
 
+# ============================================================================ background job
+# The work runs in a hidden, detached worker - this same script with -Worker - at below-normal
+# priority (ffmpeg and the downloaders inherit it), so it never chugs the PC and does not care
+# whether a window is open. Its stdout is the job log; its progress pair goes to a small status
+# file. The visible window is only a viewer that tails the log and redraws the pair, and the
+# launcher re-attaches to a running job instead of starting another: one job at a time.
+$script:JobDir    = Join-Path $env:LOCALAPPDATA 'PCSetup\download-video'
+$script:JobFile   = Join-Path $script:JobDir 'job.json'
+$script:JobLog    = Join-Path $script:JobDir 'job.log'
+$script:JobErr    = Join-Path $script:JobDir 'job.err'
+$script:JobStatus = Join-Path $script:JobDir 'job.status'
+
+# The job whose worker process is still alive, or $null. A stale job.json (PC rebooted, worker
+# killed) is recognised by the PID being gone or belonging to a different, newer process.
+function Get-RunningJob {
+    if (-not (Test-Path -LiteralPath $script:JobFile)) { return $null }
+    try { $job = Get-Content -LiteralPath $script:JobFile -Raw | ConvertFrom-Json } catch { return $null }
+    $proc = Get-Process -Id ([int]$job.Pid) -ErrorAction SilentlyContinue
+    if (-not $proc) { return $null }
+    try { if ($proc.StartTime.Ticks -ne [long]$job.ProcStart) { return $null } } catch {}
+    return $job
+}
+
+# Worker side: the two status lines for the viewer, written atomically (temp file + rename).
+function Write-JobStatus([string]$Bar, [string]$Raw, [string]$Title, [string]$State = '') {
+    $tmp = "$script:JobStatus.tmp"
+    try {
+        [IO.File]::WriteAllText($tmp, "$Bar`n$Raw`n$Title`n$State", (New-Object Text.UTF8Encoding $false))
+        Move-Item -LiteralPath $tmp -Destination $script:JobStatus -Force
+    } catch {}
+}
+
+function Start-BackgroundJob([string]$Description) {
+    New-Item -ItemType Directory -Force -Path $script:JobDir | Out-Null
+    foreach ($f in @($script:JobLog, $script:JobErr, $script:JobStatus)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+    $wargs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Worker', '-MaxHeight', $MaxHeight)
+    if ($Url)          { $wargs += @('-Url', "`"$Url`"") }
+    if ($CompressFile) { $wargs += @('-CompressFile', "`"$CompressFile`"") }
+    if ($Ending)       { $wargs += @('-Ending', "`"$Ending`"") }
+    if ($NoCompress)   { $wargs += '-NoCompress' }
+    if ($Cpu)          { $wargs += '-Cpu' }
+    if ($NoMessageBox) { $wargs += '-NoMessageBox' }
+    $p = Start-Process powershell -ArgumentList $wargs -WindowStyle Hidden -RedirectStandardOutput $script:JobLog -RedirectStandardError $script:JobErr -PassThru
+    try { $p.PriorityClass = 'BelowNormal' } catch {}
+    $ticks = try { $p.StartTime.Ticks } catch { 0 }
+    $job = [pscustomobject]@{ Pid = $p.Id; ProcStart = $ticks; Started = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Description = $Description }
+    [IO.File]::WriteAllText($script:JobFile, ($job | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+    return $job
+}
+
+# Worker side, on every exit path: the viewer notices the PID vanish, this just tidies up.
+function Complete-WorkerJob {
+    Write-JobStatus '' '' ''
+    Remove-Item -LiteralPath $script:JobFile -Force -ErrorAction SilentlyContinue
+}
+
+# Viewer: print the worker's log lines as they arrive (markers back to colours), keep the status
+# pair redrawn from the status file, watch for X to cancel, and finish the way the old inline run
+# did - result lines, Explorer already opened by the worker, 8 s countdown, the worker's exit code.
+function Watch-BackgroundJob($Job) {
+    Write-Step 'Background job'
+    Write-Ok   "Working on: $($Job.Description)"
+    Write-Info "Since $($Job.Started), worker PID $($Job.Pid), below-normal priority"
+    Write-Warn 'Close this window any time - the work carries on. Run Download Video again to watch it. Press X here to cancel it.'
+    $pair = New-StatusPair
+    $utf8 = New-Object Text.UTF8Encoding $false
+    $decoder = $utf8.GetDecoder()
+    $buf = New-Object byte[] 65536
+    $chars = New-Object char[] 131072
+    $fs = $null; $pending = ''; $exitCode = 0; $finished = $false
+    $st = @{ LastStatus = '' }
+    $colors = @{ S = 'Cyan'; K = 'Green'; I = 'Gray'; W = 'Yellow'; F = 'Red'; D = 'Green' }
+    $cancel = {
+        & $pair.Clear
+        Write-Warn "Cancelling: stopping worker $($Job.Pid) and everything it started..."
+        & taskkill.exe /PID $Job.Pid /T /F 2>&1 | Out-Null
+        Remove-Item -LiteralPath $script:JobFile -Force -ErrorAction SilentlyContinue
+        Write-Warn 'Cancelled. A half-written file may remain; the next run cleans it up.'
+        exit 1
+    }
+    # Status file -> pair. A finished stage ("end" flag) is drawn one last time and fixed in place,
+    # so the lines that follow it in the log print underneath rather than above it.
+    $applyStatus = {
+        $status = try { [IO.File]::ReadAllText($script:JobStatus, $utf8) } catch { $st.LastStatus }
+        if ($status -eq $st.LastStatus) { return }
+        $st.LastStatus = $status
+        $parts = $status -split "`n"
+        if ($parts[0]) {
+            & $pair.Draw $parts[0] $(if ($parts.Count -gt 1) { $parts[1] } else { '' })
+            if ($parts.Count -gt 2 -and $parts[2]) { try { $Host.UI.RawUI.WindowTitle = $parts[2] } catch {} }
+            if ($parts.Count -gt 3 -and $parts[3] -eq 'end') { & $pair.End }
+        } else {
+            & $pair.End
+        }
+    }
+    while ($true) {
+        $alive = [bool](Get-Process -Id ([int]$Job.Pid) -ErrorAction SilentlyContinue)
+        & $applyStatus
+        if (-not $fs -and (Test-Path -LiteralPath $script:JobLog)) {
+            try { $fs = New-Object IO.FileStream($script:JobLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite) } catch { $fs = $null }
+        }
+        if ($fs) {
+            while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
+                $c = $decoder.GetChars($buf, 0, $n, $chars, 0)
+                $pending += New-Object string ($chars, 0, $c)
+            }
+            $printed = $false
+            # Log lines are written after the status they belong to, so look once more before
+            # printing them: an "end" that landed in between must be applied first.
+            if ($pending.IndexOf("`n") -ge 0) { & $applyStatus }
+            while (($i = $pending.IndexOf("`n")) -ge 0) {
+                $line = $pending.Substring(0, $i).TrimEnd("`r"); $pending = $pending.Substring($i + 1)
+                if (-not $printed) { & $pair.Clear; $printed = $true }
+                if ($line -match '^([SKIWFD])\|(.*)$') {
+                    if ($Matches[1] -eq 'F') { $exitCode = 1; $finished = $true }
+                    if ($Matches[1] -eq 'D') { $finished = $true }
+                    Write-Host $Matches[2] -ForegroundColor $colors[$Matches[1]]
+                } else {
+                    Write-Host $line
+                }
+            }
+            if ($printed) { & $pair.Redraw }
+        }
+        if (-not $alive) { break }
+        try { if ([Console]::KeyAvailable) { $k = [Console]::ReadKey($true); if ($k.Key -eq 'X') { & $cancel } } } catch {}
+        Start-Sleep -Milliseconds 150
+    }
+    & $pair.End
+    if ($fs) { $fs.Close() }
+    if ($pending.Trim()) { Write-Host $pending }
+    $err = try { [IO.File]::ReadAllText($script:JobErr, $utf8) } catch { '' }
+    if ($err.Trim()) {
+        # Only PowerShell itself writes here: a crash of the worker, not a tool failure.
+        $exitCode = 1
+        Write-Host ''
+        Write-Host 'The background worker stopped with an error:' -ForegroundColor Red
+        Write-Host $err.Trim() -ForegroundColor Red
+    }
+    if (-not $finished -and -not $err.Trim()) {
+        # Neither DONE nor FAILED reached the log: the worker was killed (cancelled from another
+        # viewer, Task Manager, a reboot). Say so instead of closing as if it had succeeded.
+        $exitCode = 1
+        Write-Host ''
+        Write-Warn 'The background job stopped before finishing (cancelled or killed). Nothing was completed.'
+    }
+    try { $Host.UI.RawUI.WindowTitle = 'Download Video' } catch {}
+    for ($s = 8; $s -gt 0; $s--) {
+        Write-Host -NoNewline "`r      Closing in $s s... "
+        Start-Sleep -Seconds 1
+    }
+    exit $exitCode
+}
+
 # ============================================================================ main
+if ($Worker) {
+    try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
+}
 if (-not $CompressFile -and -not $Url) {
     # A file path in the clipboard (Explorer's "Copy as path" puts it there in quotes) means
     # "compress this", so compress-video.bat and download-video.bat both do the whole job.
     try { $clip = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $clip = '' }
     $clip = if ($clip) { $clip.Trim().Trim('"') } else { '' }
     if ($clip -and $clip -notmatch '^[a-z]+://' -and (Test-Path -LiteralPath $clip -PathType Leaf)) { $CompressFile = $clip }
-}
-if ($CompressFile) {
-    # Manual mode: shrink an existing file (an earlier download, or anything h264) and stop.
-    Write-Step 'Compressing an existing file'
-    if (-not (Test-Path -LiteralPath $CompressFile -PathType Leaf)) { Fail "File not found: $CompressFile" }
-    $CompressFile = (Resolve-Path -LiteralPath $CompressFile).ProviderPath
-    Write-Ok "File    : $CompressFile"
-    Ensure-Scoop
-    $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
-    $result = Compress-Video $CompressFile $ffmpeg
-    if (-not $result) { Fail "The file was not compressed - see the reason above.`n`n$CompressFile" }
-    Finish $CompressFile $result
+    elseif ($clip) { $Url = $clip }
 }
 
-Write-Step 'Reading link from clipboard'
-if (-not $Url) {
-    try { $Url = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $Url = '' }
-    if ($Url) { $Url = $Url.Trim() }
+if (-not $Inline -and -not $Worker) {
+    # Launcher / viewer. A running job wins over whatever was just asked for.
+    $running = Get-RunningJob
+    if ($running) {
+        if ($Url -or $CompressFile) {
+            Write-Step 'A job is already running'
+            Write-Warn "One at a time: the link/file you just gave was NOT started. Run it again after this one finishes."
+        }
+        Watch-BackgroundJob $running
+    }
+    if (-not $Url -and -not $CompressFile) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video or Instagram reel/post link (or a video file path) and run this again.' }
+    $desc = if ($CompressFile) { "compress $(Split-Path $CompressFile -Leaf)" } else { $Url }
+    Write-Step 'Starting'
+    Write-Ok "Job     : $desc"
+    Watch-BackgroundJob (Start-BackgroundJob $desc)
 }
-if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video or Instagram reel/post link and run this again.' }
 
-if ($Url -match '(?i)twitch\.tv/(?:videos|[^/\s]+/v(?:ideo)?)/(\d+)') {
-    Write-Ok "Twitch VOD $($Matches[1])"
-    Invoke-Twitch $Matches[1]
+try {
+    if ($CompressFile) {
+        # Shrink an existing file (an earlier download, or anything h264) and stop.
+        Write-Step 'Compressing an existing file'
+        if (-not (Test-Path -LiteralPath $CompressFile -PathType Leaf)) { Fail "File not found: $CompressFile" }
+        $CompressFile = (Resolve-Path -LiteralPath $CompressFile).ProviderPath
+        Write-Ok "File    : $CompressFile"
+        Ensure-Scoop
+        $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
+        $result = Compress-Video $CompressFile $ffmpeg
+        if (-not $result) { Fail "The file was not compressed - see the reason above.`n`n$CompressFile" }
+        Finish $CompressFile $result
+    }
+
+    Write-Step 'Reading link'
+    if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video or Instagram reel/post link and run this again.' }
+
+    if ($Url -match '(?i)twitch\.tv/(?:videos|[^/\s]+/v(?:ideo)?)/(\d+)') {
+        Write-Ok "Twitch VOD $($Matches[1])"
+        Invoke-Twitch $Matches[1]
+    }
+    elseif ($Url -match '(?i)(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})') {
+        Write-Ok "YouTube video $($Matches[1])"
+        Invoke-YouTube $Matches[1]
+    }
+    elseif ($Url -match '(?i)instagram\.com/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]{5,})') {
+        $kind = if ($Matches[1] -ieq 'p') { 'p' } else { 'reel' }
+        Write-Ok "Instagram $kind $($Matches[2])"
+        Invoke-Instagram $Matches[2] $kind
+    }
+    else {
+        $preview = if ($Url.Length -gt 80) { $Url.Substring(0, 80) + '...' } else { $Url }
+        Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)"
+    }
 }
-elseif ($Url -match '(?i)(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})') {
-    Write-Ok "YouTube video $($Matches[1])"
-    Invoke-YouTube $Matches[1]
-}
-elseif ($Url -match '(?i)instagram\.com/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]{5,})') {
-    $kind = if ($Matches[1] -ieq 'p') { 'p' } else { 'reel' }
-    Write-Ok "Instagram $kind $($Matches[2])"
-    Invoke-Instagram $Matches[2] $kind
-}
-else {
-    $preview = if ($Url.Length -gt 80) { $Url.Substring(0, 80) + '...' } else { $Url }
-    Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)"
+finally {
+    if ($Worker) { Complete-WorkerJob }
 }

@@ -716,6 +716,39 @@ YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so te
 | YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res,fps,vcodec:h264,acodec:m4a,ext:mp4"` (`res:N` with `-MaxHeight`) — highest resolution wins, h264 only breaks ties at equal resolution so a VP9/AV1-only 1440p/4K is still taken; a 720p-and-below video gets h264, which the stock player can play | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
 | Instagram | `yt-dlp`, `gallery-dl`, `ffmpeg` | best quality (reels are VP9-only DASH, no h264 exists); photo posts/carousels fall to gallery-dl into **Pictures** as `<name> (n of N).<ext>` | `-N 8` |
 
+**Background job.** The work never runs in the window you see. The launcher starts a hidden,
+detached copy of the script (`-Worker`) at **below-normal priority** — ffmpeg and the downloaders
+inherit it, so a 90-minute encode does not chug the PC — with its stdout redirected to
+`%LOCALAPPDATA%\PCSetup\download-video\job.log`, a `job.json` (PID, process start ticks,
+description) and a `job.status` file the worker rewrites atomically (temp + rename, ≤ 5×/s) with
+the status pair; the visible window is only a **viewer** that tails the log and redraws the pair.
+Closing the window changes nothing; run the launcher again and it **re-attaches** to the running
+job. **One job at a time:** a second launch while one runs shows the running one and says the new
+link was *not* started. `X` in the viewer cancels (`taskkill /T /F` on the worker; the original
+file is untouched, the next run deletes the `.av1-tmp`). `-Inline` is the old in-window behaviour,
+used by the tests. Colour survives the log through one-letter markers (`K|text` → green, `S|`
+cyan, `I|` gray, `W|` yellow, `F|` red, `D|` green) that the viewer strips; `Fail`/`Finish` mark
+their lines so the viewer's exit code follows the worker's, and a worker that vanishes without a
+`D|`/`F|` line (killed, reboot) is reported as "stopped before finishing", exit 1, rather than
+closing as if it had succeeded. `job.err` catches PowerShell's own errors (a crash of the worker,
+never a tool failure) and is printed in red at the end. A stale `job.json` is recognised by the
+PID being gone *or* belonging to a newer process (start ticks differ).
+
+> **Log lines are printed after the status they belong to, on purpose.** The worker writes a
+> stage's final status (flagged `end`, unthrottled) and only then the result lines; the viewer
+> applies the status before it prints new log lines and once more if lines arrived, so the
+> finished 100 % pair is fixed in place and the result prints *under* it. Without that the first
+> re-attach test showed DONE above a 97 % bar — the throttled final update and the log had raced.
+
+> **Verified by driving real windows**, not by reading redirected output: a harness runs the
+> launcher in a fresh console and dumps `GetBufferContents` afterwards. Covered: a compress job
+> end to end, a Twitch download + encode, closing the viewer at 7 s and re-attaching with a
+> different link (worker survived at `BelowNormal`, "NOT started" shown, result rendered under
+> the final pair), and a tree kill mid-encode (ffmpeg gone, "stopped before finishing", exit 1,
+> original intact). The cancel copy is mode-aware (`Get-CancelHint`): "Press X in this window"
+> for a job, "Closing this window cancels" inline — "closing keeps the original" was wrong once
+> nothing ran in the window any more.
+
 **Versions on disk.** "Already downloaded" means *at this quality*. Before downloading, every
 `.mp4` in the target folder whose name carries the same `[<id>]` is probed with ffprobe (height,
 fps, duration). A file that matches the requested quality and is at least 95 % of the expected
