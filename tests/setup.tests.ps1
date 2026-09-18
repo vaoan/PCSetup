@@ -254,9 +254,87 @@ Describe "4-fix-execution-policy" {
 # 5 — move-profile-folders (skipped in CI)
 # ─────────────────────────────────────────────
 Describe "5-move-profile-folders" {
+    BeforeAll {
+        $script:moveBat   = Join-Path $PSScriptRoot '..\5-move-profile-folders.bat'
+        $script:generated = Join-Path $env:TEMP 'temp-move-profile.ps1'
+
+        # Runs a COPY of the script from a temp folder with its own profile-folders.config, under
+        # PCSETUP_GENERATE_ONLY so nothing is relocated on the test machine. PCSETUP_CI is cleared
+        # for the child: its CI guard exits before the drive check and would mask what is under test.
+        function Invoke-MoveProfileGenerateOnly {
+            param([Parameter(Mandatory)][string]$TargetDrive)
+            $dir = Join-Path $env:TEMP ('pcsetup-move-profile-test-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            $bat = Join-Path $dir '5-move-profile-folders.bat'
+            Copy-Item -LiteralPath $script:moveBat -Destination $bat
+            Set-Content -LiteralPath (Join-Path $dir 'profile-folders.config') -Encoding ASCII -Value @(
+                "TARGET_DRIVE=$TargetDrive", 'TARGET_PROFILE_FOLDER=PCSetupTest', 'MOVE_FILES=0')
+            Remove-Item -LiteralPath $script:generated -Force -ErrorAction SilentlyContinue
+            $savedCI = $env:PCSETUP_CI
+            $env:PCSETUP_GENERATE_ONLY = '1'
+            $env:PCSETUP_CI = $null
+            try {
+                $output = & cmd.exe /c "`"$bat`"" 2>&1 | Out-String
+                $exit = $LASTEXITCODE
+            }
+            finally {
+                $env:PCSETUP_GENERATE_ONLY = $null
+                $env:PCSETUP_CI = $savedCI
+                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            [pscustomobject]@{
+                Output    = $output
+                ExitCode  = $exit
+                Generated = (Test-Path -LiteralPath $script:generated)
+            }
+        }
+
+        # A drive letter nothing on this machine answers to. DriveInfo lists mapped and
+        # removable drives too, which Get-PSDrive can miss.
+        $used = @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() })
+        $script:absentDrive = [string]([char[]]'DEFGHIJKLMNOPQRSTUVWXY' |
+            Where-Object { $used -notcontains [string]$_ -and -not (Test-Path -LiteralPath "$($_):\") } |
+            Select-Object -First 1)
+    }
+
     It "Desktop relocated to Z drive" -Skip:($IsCI) {
         $desktop = [Environment]::GetFolderPath('Desktop')
         $desktop | Should -Match '^Z:\\'
+    }
+
+    It "skips with exit 0 and touches nothing when the target drive is absent" {
+        $script:absentDrive | Should -Not -BeNullOrEmpty
+        $r = Invoke-MoveProfileGenerateOnly -TargetDrive "$($script:absentDrive):"
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Match 'SKIP'
+        $r.Output | Should -Match ([regex]::Escape("$($script:absentDrive):"))
+        $r.Generated | Should -BeFalse -Because 'an absent drive must stop the script before the relocation script is even written'
+    }
+
+    It "generates a parseable relocation script when the target drive exists" {
+        $r = Invoke-MoveProfileGenerateOnly -TargetDrive $env:SystemDrive
+        $r.ExitCode | Should -Be 0
+        $r.Output | Should -Not -Match 'SKIP'
+        $r.Generated | Should -BeTrue
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($script:generated, [ref]$tokens, [ref]$errors) | Out-Null
+        $errors | Should -BeNullOrEmpty
+    }
+
+    It "aborts before the registry step when a target folder could not be created" {
+        # The failure this guards: with the drive present but unwritable, every folder creation
+        # failed and the registry was STILL repointed at the missing paths before exiting 1.
+        $r = Invoke-MoveProfileGenerateOnly -TargetDrive $env:SystemDrive
+        $r.Generated | Should -BeTrue
+        $text = Get-Content -LiteralPath $script:generated -Raw
+        $create = $text.IndexOf('Creating target folders')
+        $reg    = $text.IndexOf('Updating registry')
+        $guard  = $text.IndexOf('registry left untouched')
+        $create | Should -BeGreaterThan -1
+        $reg    | Should -BeGreaterThan $create
+        $guard  | Should -BeGreaterThan $create -Because 'the guard must come after the folder creation loop'
+        $guard  | Should -BeLessThan $reg -Because 'the guard must run before the registry is written'
+        $text.Substring($guard, $reg - $guard) | Should -Match '\bexit 1\b'
     }
 }
 

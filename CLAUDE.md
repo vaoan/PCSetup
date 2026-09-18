@@ -535,6 +535,19 @@ Sets PowerShell execution policy to `RemoteSigned` for the current user, allowin
 ### 5-move-profile-folders.bat
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
+> **Optional by construction: if the target drive is not present, the script skips with exit 0.**
+> The check is `if not exist "%TARGET_DRIVE%\"` in the batch layer, before the PowerShell file
+> is generated, so a machine without a `Z:` keeps its profile on the system drive and `run-all.bat`
+> counts the script as a success. Before this, a missing drive was the worst possible outcome:
+> every folder creation failed, the registry was **still** repointed at `Z:\Users\<name>\...`, and
+> only then did it exit 1 - Desktop and Documents were left aimed at a drive that did not exist.
+> The generated script now also aborts (exit 1, message `registry left untouched`) when any target
+> folder could not be created, so a present-but-unwritable target never reaches the registry step
+> either. Both paths were verified by running the real script: against an absent drive letter and
+> against a base path that was a file, with `User Shell Folders` byte-identical afterwards.
+> `PCSETUP_GENERATE_ONLY=1` is the same test hook `update-all.bat` has; `setup.tests.ps1` uses it
+> to run a copy from a temp folder with its own `profile-folders.config` without relocating anything.
+
 ### 6-setup-games.bat
 Game-related applications setup. Installs gaming platforms, launchers, and tools. Every item is
 verified after install (`scoop prefix`, `winget list`, or a known install path) rather than trusted

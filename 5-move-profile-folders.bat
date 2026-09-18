@@ -1,5 +1,9 @@
 @echo off
 if /I "%PCSETUP_CI%"=="1" goto :after_admin_check
+:: Test hook: PCSETUP_GENERATE_ONLY=1 skips elevation, writes the PowerShell file and stops
+:: before running it, so tests can exercise the drive check and parse the output without
+:: relocating anything on the test machine (same hook as update-all.bat).
+if /I "%PCSETUP_GENERATE_ONLY%"=="1" goto :after_admin_check
 :: Auto-elevate to Administrator
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent()); if ($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }" >nul 2>&1
 if %errorlevel% neq 0 (
@@ -45,6 +49,17 @@ set "PCSETUP_TARGET_BASE=%TARGET_DRIVE%\Users\%TARGET_PROFILE_FOLDER%"
 set "PCSETUP_MOVE_FILES=%MOVE_FILES%"
 :: ============================================
 
+:: The relocation is optional by construction: a machine without the target drive keeps its
+:: profile on the system drive. Without this check every folder creation failed AND the
+:: registry was still repointed at the missing drive, so Desktop and Documents pointed at
+:: nothing. Checked here, before the PowerShell file exists, so nothing downstream can run.
+if not exist "%TARGET_DRIVE%\" (
+    echo SKIP: target drive %TARGET_DRIVE% is not present on this machine.
+    echo       Profile folders stay where they are. Attach the drive, or change TARGET_DRIVE
+    echo       in profile-folders.config, and re-run 5-move-profile-folders.bat to relocate them.
+    exit /b 0
+)
+
 set "SCRIPT=%TEMP%\temp-move-profile.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
@@ -84,6 +99,13 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     $dst = Join-Path $base $name
 >>"%SCRIPT%" echo     if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force ^| Out-Null }
 >>"%SCRIPT%" echo     if (-not (Test-Path $dst)) { Write-Host "  cannot create $dst" -ForegroundColor Red; Add-Failure "create $name" }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Stop here rather than repoint the registry at folders that do not exist. Moving on used
+>>"%SCRIPT%" echo # to leave every shell folder aimed at a path nothing could reach, and only then exit 1.
+>>"%SCRIPT%" echo if ($failures.Count -gt 0) {
+>>"%SCRIPT%" echo     Write-Host "Could not create the target folders under $base - registry left untouched: $($failures -join ', ')" -ForegroundColor Red
+>>"%SCRIPT%" echo     Write-Host "Nothing was moved and nothing was repointed. Fix the target and re-run." -ForegroundColor Yellow
+>>"%SCRIPT%" echo     exit 1
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo if ($moveFiles) {
@@ -145,6 +167,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo Start-Sleep -Seconds ^2
 >>"%SCRIPT%" echo if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }
 >>"%SCRIPT%" echo Write-Host "Done! If some apps still show old paths, restart them or log out/in." -ForegroundColor Green
+
+if /I "%PCSETUP_GENERATE_ONLY%"=="1" (
+    echo Generated: %SCRIPT%
+    exit /b 0
+)
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%"
 set "PF_EXIT=%errorlevel%"
