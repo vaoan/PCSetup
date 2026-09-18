@@ -326,3 +326,32 @@ function Invoke-CommandWithStatus {
         -GrowthLog $GrowthLog -QuietSeconds $QuietSeconds
     return (Wait-CommandWithStatus -Job $job)
 }
+
+function Disable-ConsoleQuickEdit {
+    # Turns off QuickEdit mode for THIS console (shared by every script run-all calls in it). With
+    # QuickEdit on, a single click inside the window starts a text selection and conhost blocks
+    # every write until Esc/Enter ends it - the title reads "Select Administrator: Windows
+    # PowerShell" and the whole run looks frozen. That happened twice in the VirtualBox test run.
+    # SetConsoleMode(STD_INPUT_HANDLE) without ENABLE_QUICK_EDIT_MODE (0x40), with
+    # ENABLE_EXTENDED_FLAGS (0x80) so the change is honoured; nothing is persisted and other
+    # windows are untouched. Returns $true when the flag is verified off, $false when there is
+    # no console (redirected/CI) or the call is refused.
+    if (-not ('PCSetup.ConsoleMode' -as [type])) {
+        Add-Type -Namespace PCSetup -Name ConsoleMode -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@
+    }
+    try {
+        $h = [PCSetup.ConsoleMode]::GetStdHandle(-10)
+        $mode = [uint32]0
+        if (-not [PCSetup.ConsoleMode]::GetConsoleMode($h, [ref]$mode)) { return $false }
+        $wanted = ($mode -band (-bnot [uint32]0x40)) -bor [uint32]0x80
+        if (-not [PCSetup.ConsoleMode]::SetConsoleMode($h, $wanted)) { return $false }
+        $check = [uint32]0
+        if (-not [PCSetup.ConsoleMode]::GetConsoleMode($h, [ref]$check)) { return $false }
+        return (($check -band 0x40) -eq 0)
+    }
+    catch { return $false }
+}

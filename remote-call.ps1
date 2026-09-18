@@ -7,6 +7,26 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 $ErrorActionPreference = "Stop"
+
+# QuickEdit off for this console: with it on, one click inside the window starts a selection
+# and conhost blocks every write until Esc - the title reads "Select ..." and the whole run
+# looks frozen. Every script run-all calls shares this console, so once here covers the run.
+# Same code as Disable-ConsoleQuickEdit in sources\status-line.ps1, which is not downloaded yet.
+try {
+    if (-not ('PCSetup.ConsoleMode' -as [type])) {
+        Add-Type -Namespace PCSetup -Name ConsoleMode -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@
+    }
+    $consoleIn = [PCSetup.ConsoleMode]::GetStdHandle(-10)
+    $consoleMode = [uint32]0
+    if ([PCSetup.ConsoleMode]::GetConsoleMode($consoleIn, [ref]$consoleMode)) {
+        [void][PCSetup.ConsoleMode]::SetConsoleMode($consoleIn, (($consoleMode -band (-bnot [uint32]0x40)) -bor [uint32]0x80))
+    }
+}
+catch { }
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
 # Server Core images do not always preload the compression assemblies used below.

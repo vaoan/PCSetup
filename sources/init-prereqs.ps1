@@ -608,6 +608,20 @@ function Test-WindowsFeatureEnabled {
     return ($feature -and $feature.State -eq 'Enabled')
 }
 
+function Test-WindowsFeatureAvailable {
+    # $false when this Windows edition has no such feature at all. Get-WindowsOptionalFeature
+    # returns nothing for it and DISM fails with 0x800F080C "unknown feature" - which is what
+    # Microsoft-Hyper-V-All does on Windows 11 Home. Nobody can "enable it manually" there.
+    param([string]$FeatureName)
+
+    $feature = Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction SilentlyContinue
+    return [bool]$feature
+}
+
+function Get-WindowsEditionName {
+    try { (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption } catch { 'this Windows edition' }
+}
+
 function Find-FeaturePayloadSource {
     # Windows install media (the ISO still attached to a VM, the USB stick still in a fresh PC)
     # carries feature payloads under sources\sxs. Pointing DISM at it with /Source /LimitAccess
@@ -654,6 +668,10 @@ function Start-WindowsFeatureEnable {
         Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
         return $null
     }
+    if (-not (Test-WindowsFeatureAvailable $FeatureName)) {
+        Write-Host "$DisplayName is not available on $(Get-WindowsEditionName); skipping." -ForegroundColor Yellow
+        return $null
+    }
     $extra = if ($Source) { @("/Source:$Source", '/LimitAccess') } else { @() }
     $how = if ($Source) { "from $Source" } else { 'through Windows Update' }
     Write-Host "Enabling Windows feature: $DisplayName ($FeatureName) in the background, $how - the rest of the setup continues meanwhile." -ForegroundColor Cyan
@@ -667,8 +685,9 @@ function Start-WindowsFeatureEnable {
 }
 
 function Enable-WindowsFeature {
-    # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'Enabled',
-    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is. With -Source the
+    # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'NotAvailable'
+    # (this edition has no such feature - Hyper-V on Home), 'Enabled', 'RebootRequired' or
+    # 'Failed'; the caller decides how bad 'Failed' is. With -Source the
     # first attempt reads the payload from install media (/LimitAccess: never Windows Update);
     # if that attempt does not verify - wrong build on the media, unreadable drive - the same
     # enable is retried the normal way through Windows Update before reporting a failure.
@@ -690,6 +709,10 @@ function Enable-WindowsFeature {
         if (Test-WindowsFeatureEnabled $FeatureName) {
             Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
             return 'AlreadyEnabled'
+        }
+        if (-not (Test-WindowsFeatureAvailable $FeatureName)) {
+            Write-Host "$DisplayName is not available on $(Get-WindowsEditionName); skipping." -ForegroundColor Yellow
+            return 'NotAvailable'
         }
         Write-Host "Enabling Windows feature: $DisplayName ($FeatureName)" -ForegroundColor Cyan
         if ($Source) { $attempts += @{ Label = "Enabling $DisplayName from media"; Extra = @("/Source:$Source", '/LimitAccess'); Job = $null } }
@@ -750,6 +773,14 @@ function Enable-WslPrerequisites {
     foreach ($featureName in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V-All')) {
         $result = Enable-WindowsFeature -FeatureName $featureName
         if ($result -eq 'AlreadyEnabled') { continue }
+        if ($result -eq 'NotAvailable') {
+            # Windows 11 Home has no Hyper-V at all; WSL2 there runs on VirtualMachinePlatform,
+            # so this is informational, not something to enable by hand after a reboot.
+            if ($featureName -eq 'Microsoft-Hyper-V-All') {
+                Write-Host "  (WSL2 does not need Hyper-V on this edition; VirtualMachinePlatform covers it.)" -ForegroundColor Yellow
+            }
+            continue
+        }
         if ($result -eq 'Failed') {
             Write-Host "Failed to enable $featureName. Enable it manually, reboot, then rerun 0-init-prereqs.bat." -ForegroundColor Yellow
             continue
@@ -802,6 +833,9 @@ function Enable-WslPrerequisites {
 $script:Failures = New-Object System.Collections.Generic.List[string]
 
 Write-Host "Starting PCSetup prerequisite initialization..." -ForegroundColor Cyan
+# A click inside the window must not be able to pause an unattended run (QuickEdit selection
+# blocks all output until Esc). The console is shared by every script run-all calls.
+if (Disable-ConsoleQuickEdit) { Write-Host "Console QuickEdit disabled for this run (a stray click can no longer pause it)." -ForegroundColor DarkGray }
 Ensure-GetFileHashCommand
 
 # Dark mode first, before anything downloads: it is instant and the rest of the run then

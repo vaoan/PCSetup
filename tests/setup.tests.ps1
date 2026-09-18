@@ -121,6 +121,13 @@ Describe "0-init-prereqs" {
         # No bare dism call may remain: it draws its own bar, which cannot tell "downloading
         # from Windows Update" from "hung", and nothing verified the feature afterwards.
         $script | Should -Not -Match '& dism\.exe'
+        # A feature this edition does not have (Hyper-V on Windows 11 Home: DISM 0x800F080C,
+        # Get-WindowsOptionalFeature returns nothing) is reported as unavailable, not failed,
+        # and the WSL loop moves on without asking for a manual enable + reboot.
+        $script | Should -Match 'function Test-WindowsFeatureAvailable'
+        $script | Should -Match "return 'NotAvailable'"
+        $script | Should -Match "if \(\`$result -eq 'NotAvailable'\) \{"
+        $script | Should -Match 'WSL2 does not need Hyper-V on this edition'
         # The silent capture wrapper (wsl --install, distro registration) goes through the
         # status line too, and no Start-Process -Wait is left in step 0.
         $script | Should -Match 'function Invoke-ProcessCapture[\s\S]*Invoke-CommandWithStatus -Label'
@@ -133,6 +140,20 @@ Describe "0-init-prereqs" {
         # The signals that move while DISM's own percentage sits still.
         $helper | Should -Match 'GetAllNetworkInterfaces'
         $helper | Should -Match 'TotalProcessorTime'
+    }
+    It "QuickEdit is switched off for the console so a stray click cannot pause an unattended run" {
+        # QuickEdit selection ("Select Administrator: Windows PowerShell" in the title) blocks
+        # every write until Esc. remote-call.ps1 switches it off before the download (its own
+        # inline copy - status-line.ps1 is not on disk yet), step 0 again via the shared helper.
+        $helper = Get-Content (Join-Path $PSScriptRoot "..\sources\status-line.ps1") -Raw
+        $helper | Should -Match 'function Disable-ConsoleQuickEdit'
+        $helper | Should -Match 'SetConsoleMode'
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match 'if \(Disable-ConsoleQuickEdit\)'
+        $script.IndexOf('Disable-ConsoleQuickEdit') | Should -BeLessThan $script.IndexOf("Invoke-Logged 'Dark mode'")
+        $remote = Get-Content (Join-Path $PSScriptRoot "..\remote-call.ps1") -Raw
+        $remote | Should -Match 'SetConsoleMode\(\$consoleIn'
+        $remote | Should -Match '-bnot \[uint32\]0x40'
     }
     It "Delivery Optimization is set to HTTP-only before the first download, as tuning not a prerequisite" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw

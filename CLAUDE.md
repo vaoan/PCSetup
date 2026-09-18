@@ -523,6 +523,26 @@ prerequisites.
 > (read back, `DoSvc` restarted so it applies now, `Get-DOConfig` reports `CdnOnly`); a refused
 > write is a warning, not a failure. Verified on this host and reverted afterwards.
 >
+> **QuickEdit is switched off for the console at the start of the run, so a click cannot pause
+> it.** With QuickEdit on (the conhost default), one click inside the window starts a text
+> selection and conhost blocks every write until Esc/Enter — the title reads *Select
+> Administrator: Windows PowerShell* and the run looks frozen. It happened twice in the
+> VirtualBox test runs. `remote-call.ps1` clears `ENABLE_QUICK_EDIT_MODE` (0x40) on
+> `STD_INPUT_HANDLE` before the download (inline, since `status-line.ps1` is not on disk yet)
+> and step 0 does it again through `Disable-ConsoleQuickEdit`. The console is shared by every
+> script `run-all.bat` calls, so once per window is enough; nothing is persisted and other
+> windows keep their setting. Verified in a spawned console: forced on, switched off, read back.
+>
+> **A feature the edition does not have is "not available", not "failed".** On Windows 11 Home
+> `Microsoft-Hyper-V-All` does not exist: `Get-WindowsOptionalFeature` returns nothing for it and
+> DISM exits `-2146498548` (`0x800F080C`, unknown feature). The WSL loop used to print *Failed
+> to enable ... Enable it manually, reboot, then rerun* — advice nobody can follow on Home.
+> `Test-WindowsFeatureAvailable` now gates every enable, `Enable-WindowsFeature` returns
+> `NotAvailable` with the edition name, and the loop continues without setting the reboot flag.
+> WSL2 on Home runs on `VirtualMachinePlatform` (+ `HypervisorPlatform`), which do exist there,
+> so nothing is actually missing. Seen on the VirtualBox test VM, whose unattended install used
+> image index 1 = Home.
+>
 > **.NET 3.5 is enabled in the background: started right after the DO tuning, collected just
 > before the WSL features.** `Start-WindowsFeatureEnable` launches DISM through
 > `Start-CommandCapture` (the status helper split into start + `Wait-CommandWithStatus`) and
