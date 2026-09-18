@@ -280,8 +280,17 @@ function Install-WingetPackage {
     }
 
     Write-Host "Installing/checking $Name via winget..." -ForegroundColor Cyan
-    & winget install --id $Id -e --accept-source-agreements --accept-package-agreements --silent
-    return ($LASTEXITCODE -eq 0)
+    # winget draws its bar only on a console it owns; captured, it prints nothing at all during
+    # a download (a 600 MB WSL package looked hung for minutes). Behind the status line the net
+    # rate, the installer CPU and winget's last line ("Downloading https://...") carry it.
+    $r = Invoke-CommandWithStatus -Label "Installing $Name (winget)" -FilePath 'winget.exe' `
+        -ArgumentList @('install', '--id', $Id, '-e', '--accept-source-agreements', '--accept-package-agreements', '--silent', '--disable-interactivity') `
+        -WatchProcess @('msiexec', 'WindowsPackageManagerServer') -WatchService @('msiserver')
+    if ($r.ExitCode -ne 0) {
+        $tail = @(($r.Output + $r.Error) -split "`r?`n" | Where-Object { $_ -match '\S' } | Select-Object -Last 3)
+        if ($tail) { Write-Host ($tail -join "`n") -ForegroundColor DarkGray }
+    }
+    return ($r.ExitCode -eq 0)
 }
 
 function Ensure-HypervisorBoot {

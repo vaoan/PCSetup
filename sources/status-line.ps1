@@ -48,6 +48,21 @@ function Get-DismLogMessage {
     return ''
 }
 
+function Get-LastOutputLine {
+    # Last non-blank line a tool has printed so far, whitespace squeezed and cut to 100 chars.
+    # For a tool that prints no percentage this is the phase indicator: winget's "Downloading
+    # https://.../wsl.2.6.1.0.x64.msi" or "Starting package install...", wsl.exe's
+    # "Downloading: Ubuntu 24.04 LTS", an installer's own status text. CR-separated progress
+    # fragments count as lines too, so the newest one wins.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    $lines = $Text -split "[`r`n]+" | Where-Object { $_ -match '\S' }
+    if (-not $lines) { return '' }
+    $last = ($lines[-1] -replace '\s+', ' ').Trim()
+    if ($last.Length -gt 100) { $last = $last.Substring(0, 100) }
+    return $last
+}
+
 function Get-NetworkBytesReceived {
     # Sum of bytes received on every non-loopback interface that is up. Pure .NET, no counters
     # to sample, so it is cheap enough to call twice a second.
@@ -230,7 +245,8 @@ function Wait-CommandWithStatus {
             $now = $Job.Clock.Elapsed.TotalSeconds
             if ($now -lt $Job.QuietSeconds) { continue }
 
-            $pct = Get-ProgressPercent (Read-CommandCaptureOutput $Job.Stdout)
+            $outText = Read-CommandCaptureOutput $Job.Stdout
+            $pct = Get-ProgressPercent $outText
             if ($null -ne $pct) {
                 $filled = [int][Math]::Round($pct / 5)
                 $head = '{0} [{1}{2}] {3,5:0.0}% {4}' -f $Job.Label, ('#' * $filled), ('-' * (20 - $filled)), $pct, $spinner[$Job.Tick % 4]
@@ -269,6 +285,10 @@ function Wait-CommandWithStatus {
             if ($Job.ActivityLog) {
                 $msg = Get-DismLogMessage $Job.ActivityLog
                 if ($msg) { $parts.Add($msg) }
+            }
+            else {
+                $tailLine = Get-LastOutputLine $outText
+                if ($tailLine) { $parts.Add($tailLine) }
             }
             $line = $head + ' | ' + ($parts -join ' | ')
 

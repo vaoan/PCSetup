@@ -570,6 +570,18 @@ prerequisites.
 > first-boot scan and every servicing step crawled. The media's build must match the guest
 > (`10.0.26200` here); a Windows 10 ISO's payload is refused with 0x800f081f and the fallback runs.
 >
+> **winget prints nothing while captured, so every winget install runs behind the line too.**
+> winget draws its progress bar only on a console it owns; with stdout redirected it emits
+> just "Found ...", "Downloading https://...", "Successfully verified installer hash",
+> "Starting package install..." — verified with `winget download` captured to a file. The
+> `Microsoft.WSL` package (hundreds of MB) therefore looked hung for minutes in the VM. Step 0's
+> `Install-WingetPackage`, script 2's `Install-WingetApp` + the Dokan fallback and script 6's
+> `Install-WingetApp` all go through `Invoke-CommandWithStatus` now, with
+> `--disable-interactivity` so a captured winget can never sit on a prompt, watching `msiexec`
+> + `msiserver`. For tools without a percentage the line carries **the tool's last stdout line**
+> (`Get-LastOutputLine`) in the slot DISM uses for its log message, so the phase is visible:
+> `Installing Windows Subsystem for Linux (winget) / | 1m 40s | net 9.8 MB/s (412 MB) | cpu 3% | Downloading https://github.com/microsoft/WSL/releases/download/2.6.1/wsl.2.6.1.0.x64.msi`.
+>
 > Where it is used: step 0's `Enable-WindowsFeature` (NetFx3 + the four WSL features: check →
 > act → verify with `Get-WindowsOptionalFeature`, never the exit code) and `Invoke-ProcessCapture`
 > (`wsl --install`, the Ubuntu registration — same return contract as before, with a `-Label`);

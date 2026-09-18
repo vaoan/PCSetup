@@ -71,7 +71,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName) {
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     ^& winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements
+>>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList "install", "--id", $id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity" -WatchProcess msiexec -WatchService msiserver
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; $null = $failures.Add($displayName) }
 >>"%SCRIPT%" echo }

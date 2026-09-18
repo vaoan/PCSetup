@@ -141,6 +141,28 @@ Describe "0-init-prereqs" {
         $helper | Should -Match 'GetAllNetworkInterfaces'
         $helper | Should -Match 'TotalProcessorTime'
     }
+    It "winget installs run behind the status line, which shows the tool's last output line" {
+        # winget draws its bar only on a console it owns; captured, it prints nothing during a
+        # download, so a 600 MB WSL package looked hung. The status line adds the last stdout
+        # line for tools without a percentage ("Downloading https://...").
+        . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")
+        $sample = "Found 7-Zip [7zip.7zip] Version 26.03`r`nDownloading https://www.7-zip.org/a/7z2603-x64.msi`r`n"
+        Get-LastOutputLine $sample | Should -Be 'Downloading https://www.7-zip.org/a/7z2603-x64.msi'
+        Get-LastOutputLine "a`r  [=== 50% ===]  `r [=== 51% ===] " | Should -Be '[=== 51% ===]'
+        Get-LastOutputLine '' | Should -Be ''
+        $helper = Get-Content (Join-Path $PSScriptRoot "..\sources\status-line.ps1") -Raw
+        $helper | Should -Match 'Get-LastOutputLine \$outText'
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Not -Match '& winget install'
+        $script | Should -Match "Invoke-CommandWithStatus -Label `"Installing \`$Name \(winget\)`" -FilePath 'winget\.exe'"
+        $script | Should -Match "'--disable-interactivity'"
+        foreach ($bat in '2-setup-windows.bat', '6-setup-games.bat') {
+            $text = Get-Content (Join-Path $PSScriptRoot "..\$bat") -Raw
+            $text | Should -Not -Match '\^& winget install'
+            $text | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$displayName \(winget\)" -FilePath winget\.exe'
+            $text | Should -Match '--disable-interactivity'
+        }
+    }
     It "QuickEdit is switched off for the console so a stray click cannot pause an unattended run" {
         # QuickEdit selection ("Select Administrator: Windows PowerShell" in the title) blocks
         # every write until Esc. remote-call.ps1 switches it off before the download (its own

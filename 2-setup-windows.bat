@@ -84,9 +84,10 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     # Never trust winget's exit code: it returns nonzero for "no applicable upgrade"
 >>"%SCRIPT%" echo     # and other benign states. Verify with winget list instead.
->>"%SCRIPT%" echo     $wingetArgs = @('install', '--id', $id, '-e', '--accept-source-agreements', '--accept-package-agreements', '--silent')
+>>"%SCRIPT%" echo     $wingetArgs = @('install', '--id', $id, '-e', '--accept-source-agreements', '--accept-package-agreements', '--silent', '--disable-interactivity')
 >>"%SCRIPT%" echo     if ($source) { $wingetArgs += @('--source', $source) }
->>"%SCRIPT%" echo     try { ^& winget @wingetArgs } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
+>>"%SCRIPT%" echo     # winget prints nothing while captured, so the status line (net rate, installer cpu, its last line) is the only movement.
+>>"%SCRIPT%" echo     try { $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList $wingetArgs -WatchProcess msiexec -WatchService msiserver } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; Add-Failure $displayName }
 >>"%SCRIPT%" echo }
@@ -189,7 +190,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo function Ensure-DokanInstalled {
 >>"%SCRIPT%" echo     if (Test-DokanInstalled) { return $true }
 >>"%SCRIPT%" echo     Write-Host "Installing Dokan Library (required by IceDrive)..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     try { ^& winget install --id dokan-dev.Dokany -e --accept-source-agreements --accept-package-agreements --silent } catch { }
+>>"%SCRIPT%" echo     try { $null = Invoke-CommandWithStatus -Label "Installing Dokan (winget)" -FilePath winget.exe -ArgumentList "install", "--id", "dokan-dev.Dokany", "-e", "--accept-source-agreements", "--accept-package-agreements", "--silent", "--disable-interactivity" -WatchProcess msiexec -WatchService msiserver } catch { }
 >>"%SCRIPT%" echo     if (Test-DokanInstalled) { return $true }
 >>"%SCRIPT%" echo     try {
 >>"%SCRIPT%" echo         $release = Invoke-RestMethod "https://api.github.com/repos/dokan-dev/dokany/releases/latest" -Headers @{ 'User-Agent' = 'PCSetup' }
