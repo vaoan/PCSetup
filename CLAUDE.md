@@ -658,7 +658,7 @@ Apps are declared in two tables — `$scoopApps` and `$wingetApps` (a row is `Id
 optional `Source` for msstore-only packages). Every entry is verified after install and anything
 that failed is listed at the end, with the script exiting non-zero.
 
-**Scoop:** Chrome, Discord, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
+**Scoop:** Chrome, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet, Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
 **winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, NVIDIA App (msstore)
 
 > **Docker Desktop is here so `test-local.bat` can actually be run.** Without it the container
@@ -672,8 +672,36 @@ that failed is listed at the end, with the script exiting non-zero.
 > Windows Server Core image needs Windows containers —
 > `& "$env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchDaemon` with Docker running, or
 > right-click the tray icon → *Switch to Windows containers*.
-**Direct download:** Discord Canary, Chrome Remote Desktop, Mudfish, IceDrive (+ Dokan)
+**Direct download:** Discord, Discord Canary (both `-s`, silent and no launch), Chrome Remote Desktop, Mudfish, IceDrive (+ Dokan)
 **Other:** Claude Code (Windows and inside WSL), WSL itself
+
+> **Installers that hand off to an updater are not registered the instant they return.** Discord
+> and Claude Desktop are Squirrel-style setups: the setup exits, `Update.exe` finishes the job.
+> winget printed *Successfully installed*, the check taken right after printed *FAILED to
+> install*, and the app was fully there seconds later (verified in the VM: `winget list` found
+> Discord, ARP entry present). Every post-install check in scripts 2 and 6 now polls for up to
+> 90 s (`Wait-InstalledCheck`) before calling anything a failure. Inside the echo lines that is
+> `if (^& $check)` — an unescaped `&` made CMD split the line and the generated function read
+> `if ($`, a parse error that shipped for one round; the test pins the caret.
+
+> **Discord and Discord Canary are direct downloads run with `-s`, not winget packages.** winget's
+> manifests for both carry **no** switches: the maintainers removed `--silent` (winget-pkgs
+> #77956, "no longer plays nicely"), so winget runs `DiscordSetup.exe` with no arguments — the
+> installer UI shows and Discord is launched at the end, and launched from an elevated setup that
+> comes with a **UAC prompt**, which is the opposite of unattended. Discord's own `-s` does what we
+> need, verified in the VM on Canary: installs in ~13 s, writes the Start-menu/desktop shortcuts
+> and the uninstall entry, **launches nothing**, and the app runs normally on its first start —
+> that is when its updater creates `installer.db` and pulls the current build, i.e. the "first-run
+> initialisation" winget was worried about simply happens at first launch. Chocolatey has used
+> `-s` for years. No process is killed anywhere; the fix is to never open the app.
+> **URL trap:** `https://discord.com/api/download?platform=win` (and `/download/canary`) redirects
+> to the **x86** build even with `&arch=x64` appended — the old Canary line installed 32-bit
+> 1.0.328 on a 64-bit machine. Only
+> `https://discord.com/api/downloads/distributions/app/installers/latest?channel=<stable|canary>&platform=win&arch=x64`
+> honours the architecture (that is the URL winget's manifest resolves to). The old Canary line
+> also passed `/S`, which this installer ignores, so Canary never installed at all. Because winget
+> still recognises the installed apps and would "upgrade" them interactively, both IDs sit in
+> `update-all.bat`'s `$wingetSkip` table; Discord updates itself.
 
 > **A failed Scoop install is sticky, and detection must not use `scoop list`.** Scoop keeps a
 > failed app in `scoop list` forever with an empty `Version` and `Info='Install failed'`, so the old

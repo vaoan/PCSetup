@@ -90,6 +90,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # ID so that entries in this table are never touched. Add a row to skip something else.
 >>"%SCRIPT%" echo $wingetSkip = @{
 >>"%SCRIPT%" echo     'Microsoft.WSL' = 'upgrading WSL restarts the VM, which kills every WSL-hosted console service (code-server, ttyd, ungit, dashboard, sshd)'
+>>"%SCRIPT%" echo     'Discord.Discord' = 'installed with -s by 2-setup-windows.bat and self-updating; winget has no silent switch for it and would open the installer UI + Discord'
+>>"%SCRIPT%" echo     'Discord.Discord.Canary' = 'same as Discord.Discord'
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo # Pure parser so the test suite can feed it a captured table. No regex anchors here: a
 >>"%SCRIPT%" echo # caret outside double quotes is eaten by CMD on the way into this file, so the anchored

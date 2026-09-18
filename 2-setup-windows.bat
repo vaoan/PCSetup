@@ -78,6 +78,23 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0)
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Squirrel-style installers (Discord) hand off to an updater and return before the app is
+>>"%SCRIPT%" echo # registered, so a check taken the instant the installer exits says FAILED for an app that is
+>>"%SCRIPT%" echo # installed a few seconds later. Every post-install check polls for up to 90 s instead.
+>>"%SCRIPT%" echo function Wait-InstalledCheck([scriptblock]$check, [int]$seconds = 90) {
+>>"%SCRIPT%" echo     $deadline = (Get-Date).AddSeconds($seconds)
+>>"%SCRIPT%" echo     $started = Get-Date
+>>"%SCRIPT%" echo     while ($true) {
+>>"%SCRIPT%" echo         if (^& $check) {
+>>"%SCRIPT%" echo             $waited = [int]((Get-Date) - $started).TotalSeconds
+>>"%SCRIPT%" echo             if ($waited -ge 5) { Write-Host "  (registered $waited s after the installer returned)" -ForegroundColor DarkGray }
+>>"%SCRIPT%" echo             return $true
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         if ((Get-Date) -gt $deadline) { return $false }
+>>"%SCRIPT%" echo         Start-Sleep -Seconds 5
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo 
 >>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName = $id, [string]$source) {
 >>"%SCRIPT%" echo     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Host "winget missing; cannot install $displayName." -ForegroundColor Red; Add-Failure $displayName; return }
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
@@ -88,7 +105,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     if ($source) { $wingetArgs += @('--source', $source) }
 >>"%SCRIPT%" echo     # winget prints nothing while captured, so the status line (net rate, installer cpu, its last line) is the only movement.
 >>"%SCRIPT%" echo     try { $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList $wingetArgs -WatchProcess msiexec -WatchService msiserver } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id }) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; Add-Failure $displayName }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
@@ -104,7 +121,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
 >>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name" -FilePath $tmp -ArgumentList $silentArgs
 >>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-Path $installedPath }) { Write-Host "$name installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
@@ -117,7 +134,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
 >>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name (msi)" -FilePath msiexec.exe -ArgumentList "/i", $tmp, "/qn", "/norestart" -WatchProcess msiexec -WatchService msiserver
 >>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-Path $installedPath }) { Write-Host "$name installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
@@ -130,7 +147,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo foreach ($bucket in 'extras', 'versions', 'nerd-fonts') { Add-ScoopBucket $bucket }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # winamp was removed from every Scoop bucket upstream, so it moved to winget below.
->>"%SCRIPT%" echo # discord also moved to winget: Scoop's extras/discord manifest does NOT ship Discord's
+>>"%SCRIPT%" echo # discord is a direct download below (see there): Scoop's extras/discord manifest does NOT ship Discord's
 >>"%SCRIPT%" echo # own build - it downloads github.com/portapps/discord-portable, a third-party portable
 >>"%SCRIPT%" echo # repackage that lagged the official client by months (1.0.9232 vs 1.0.9251) and
 >>"%SCRIPT%" echo # redirects Discord's data dir and self-updater. Discord force-updates and refuses to
@@ -146,7 +163,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Add an app by adding a row. Source is only needed for msstore-only packages.
 >>"%SCRIPT%" echo $wingetApps = @(
->>"%SCRIPT%" echo     @{ Id = 'Discord.Discord';                 Name = 'Discord' },
 >>"%SCRIPT%" echo     @{ Id = 'CodecGuide.K-LiteCodecPack.Mega'; Name = 'K-Lite Codec Pack Mega' },
 >>"%SCRIPT%" echo     @{ Id = 'pCloudAG.pCloudDrive';            Name = 'pCloud Drive' },
 >>"%SCRIPT%" echo     @{ Id = 'Devolutions.RemoteDesktopManager'; Name = 'Remote Desktop Manager' },
@@ -167,7 +183,18 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo )
 >>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo Install-DirectExe "Discord Canary" "https://discord.com/api/download/canary?platform=win" "/S" "$env:LOCALAPPDATA\DiscordCanary"
+>>"%SCRIPT%" echo # Discord and Discord Canary: direct downloads run with Discord's own -s switch. winget cannot do
+>>"%SCRIPT%" echo # this - its manifests carry no switches (the maintainers removed --silent), so winget shows the
+>>"%SCRIPT%" echo # installer UI and launches Discord at the end, with a UAC prompt from an elevated setup. -s was
+>>"%SCRIPT%" echo # verified in the VM: installs in ~13 s, creates shortcuts + the uninstall entry, launches nothing,
+>>"%SCRIPT%" echo # and the app runs on first start (its updater builds installer.db and fetches the current build
+>>"%SCRIPT%" echo # then). Only the distributions endpoint honours the architecture: api/download?platform=win
+>>"%SCRIPT%" echo # serves the x86 build even with arch=x64 (the old Canary line installed 32-bit 1.0.328). The old
+>>"%SCRIPT%" echo # /S was a switch this installer ignores, so Canary never installed at all. Both IDs are in
+>>"%SCRIPT%" echo # update-all.bat's winget skip table because winget would "upgrade" them interactively.
+>>"%SCRIPT%" echo $discordArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+>>"%SCRIPT%" echo Install-DirectExe "Discord" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=$discordArch" "-s" "$env:LOCALAPPDATA\Discord"
+>>"%SCRIPT%" echo Install-DirectExe "Discord Canary" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=canary&platform=win&arch=$discordArch" "-s" "$env:LOCALAPPDATA\DiscordCanary"
 >>"%SCRIPT%" echo Install-DirectMsi "Chrome Remote Desktop" "https://dl.google.com/dl/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo $mudfishInstalled = (Test-Path "${env:ProgramFiles(x86)}\Mudfish Cloud VPN\mudfish.exe") -or (Test-Path "$env:ProgramFiles\Mudfish Cloud VPN\mudfish.exe") -or (Test-Path "$env:LOCALAPPDATA\Mudfish Cloud VPN\mudfish.exe")

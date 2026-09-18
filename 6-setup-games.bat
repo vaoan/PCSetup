@@ -68,11 +68,22 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0)
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Same grace period as 2-setup-windows.bat: an installer that hands off to an updater is not
+>>"%SCRIPT%" echo # registered the instant it returns.
+>>"%SCRIPT%" echo function Wait-InstalledCheck([scriptblock]$check, [int]$seconds = 90) {
+>>"%SCRIPT%" echo     $deadline = (Get-Date).AddSeconds($seconds)
+>>"%SCRIPT%" echo     while ($true) {
+>>"%SCRIPT%" echo         if (^& $check) { return $true }
+>>"%SCRIPT%" echo         if ((Get-Date) -gt $deadline) { return $false }
+>>"%SCRIPT%" echo         Start-Sleep -Seconds 5
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo 
 >>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName) {
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList "install", "--id", $id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity" -WatchProcess msiexec -WatchService msiserver
->>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id }) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; $null = $failures.Add($displayName) }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.

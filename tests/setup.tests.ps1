@@ -380,6 +380,41 @@ Describe "1-delete-node-modules" {
 # 2 - setup-windows
 # -----------------------------
 Describe "2-setup-windows" {
+    It "post-install checks wait for installers that hand off to an updater (Discord, Claude Desktop)" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        # winget said "Successfully installed", the check taken the instant it returned said
+        # FAILED, and the app was there seconds later (Discord and Claude Desktop, seen in the VM).
+        $bat | Should -Match 'function Wait-InstalledCheck'
+        $bat | Should -Match 'if \(Wait-InstalledCheck \{ Test-WingetApp \$id \}\)'
+        (($bat -split "`r?`n") | Where-Object { $_ -match 'Wait-InstalledCheck \{ Test-Path \$installedPath \}' }).Count | Should -Be 2
+        $bat | Should -Not -Match 'if \(Test-WingetApp \$id\) \{ Write-Host "\$displayName installed\."'
+        # `& $check` inside an echo line: the & MUST be escaped or CMD splits the line there and
+        # the generated function reads `if ($` (a real parse error that shipped for one round).
+        $bat | Should -Match 'if \(\^& \$check\)'
+        $games = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
+        $games | Should -Match 'if \(Wait-InstalledCheck \{ Test-WingetApp \$id \}\)'
+        $games | Should -Match 'if \(\^& \$check\)'
+        # Nothing may kill an app the installer opened: the fix is to not open it in the first place.
+        $bat | Should -Not -Match 'Stop-LaunchedApp|Stop-Process -Name Discord'
+    }
+    It "Discord and Discord Canary install silently with -s from Discord's x64 endpoint, not through winget" {
+        # winget runs Discord's installer with NO switches (its maintainers removed -s), so it shows
+        # the installer UI and launches Discord at the end - from an elevated setup that comes with a
+        # UAC prompt. DiscordCanarySetup.exe -s was verified in the VM: installs in ~13 s, creates
+        # shortcuts + the uninstall entry, launches nothing, and the app runs on first start (its
+        # updater builds the version database then). The generic api/download URL serves the x86
+        # build even with arch=x64; only the distributions endpoint honours the architecture.
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match 'Install-DirectExe "Discord" "https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=stable&platform=win&arch=\$discordArch" "-s" "\$env:LOCALAPPDATA\\Discord"'
+        $bat | Should -Match 'Install-DirectExe "Discord Canary" "https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=canary&platform=win&arch=\$discordArch" "-s" "\$env:LOCALAPPDATA\\DiscordCanary"'
+        $bat | Should -Not -Match "Id = 'Discord\.Discord"
+        $bat | Should -Not -Match 'discord\.com/api/download\?platform=win|api/download/canary\?platform=win'
+        # winget still recognises the installed app and would "upgrade" it interactively; Discord
+        # updates itself, so update-all must leave both alone.
+        $upd = Get-Content (Join-Path $PSScriptRoot "..\update-all.bat") -Raw
+        $upd | Should -Match "'Discord\.Discord'\s*="
+        $upd | Should -Match "'Discord\.Discord\.Canary'\s*="
+    }
     It "direct installers run behind the shared status line, never a silent Start-Process -Wait" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
         $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
