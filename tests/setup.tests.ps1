@@ -113,10 +113,10 @@ Describe "0-init-prereqs" {
         $helper | Should -Match 'function Invoke-CommandWithStatus'
         $script | Should -Match 'function Enable-WindowsFeature'
         $script | Should -Match "Enable-WindowsFeature -FeatureName 'NetFx3'"
-        $script | Should -Match "-WatchProcess @\('TiWorker', 'TrustedInstaller'\)"
+        $script | Should -Match "WatchProcess\s*=\s*@\('TiWorker', 'TrustedInstaller'\)"
         # The download half of a DISM enable runs in svchost-hosted services; they are resolved
         # to PIDs through Win32_Service so the CPU figure moves during that phase too.
-        $script | Should -Match "-WatchService @\('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller'\)"
+        $script | Should -Match "WatchService\s*=\s*@\('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller'\)"
         $helper | Should -Match 'Win32_Service'
         # No bare dism call may remain: it draws its own bar, which cannot tell "downloading
         # from Windows Update" from "hung", and nothing verified the feature afterwards.
@@ -133,6 +133,32 @@ Describe "0-init-prereqs" {
         # The signals that move while DISM's own percentage sits still.
         $helper | Should -Match 'GetAllNetworkInterfaces'
         $helper | Should -Match 'TotalProcessorTime'
+    }
+    It "NetFx3 is enabled from install media when sources\sxs is reachable, else Windows Update" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match "Find-FeaturePayloadSource -Pattern '\*netfx3\*\.cab'"
+        $script | Should -Match "-DisplayName '\.NET Framework 3\.5' -Source \`$netfxSource"
+        # /LimitAccess is what keeps DISM off Windows Update; without it the media is only a hint.
+        $script | Should -Match '"/Source:\$Source", ''/LimitAccess'''
+        # And a media attempt that does not verify must fall through to the plain attempt.
+        $script | Should -Match 'retrying through Windows Update'
+
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1"), [ref]$tokens, [ref]$errors)
+        $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Find-FeaturePayloadSource' }, $true) | Select-Object -First 1
+        $fn | Should -Not -BeNullOrEmpty
+        Invoke-Expression $fn.Extent.Text
+        $root = Join-Path $env:TEMP "pcsetup-test-media-$([guid]::NewGuid().ToString('N'))"
+        $empty = Join-Path $env:TEMP "pcsetup-test-nomedia-$([guid]::NewGuid().ToString('N'))"
+        try {
+            $sxs = Join-Path $root 'sources\sxs'
+            New-Item -ItemType Directory -Path $sxs, (Join-Path $empty 'sources\sxs') -Force | Out-Null
+            Set-Content (Join-Path $sxs 'microsoft-windows-netfx3-ondemand-package~31bf3856ad364e35~amd64~~.cab') 'x'
+            Find-FeaturePayloadSource -Pattern '*netfx3*.cab' -Roots @($empty, $root) | Should -Be $sxs
+            Find-FeaturePayloadSource -Pattern '*netfx3*.cab' -Roots @($empty) | Should -Be ''
+            Find-FeaturePayloadSource -Pattern '*netfx3*.cab' -Roots @('Q:\does-not-exist\') | Should -Be ''
+        }
+        finally { Remove-Item $root, $empty -Recurse -Force -ErrorAction SilentlyContinue }
     }
     It "status line runs a command to completion with exit code, output and empty args dropped" {
         . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")

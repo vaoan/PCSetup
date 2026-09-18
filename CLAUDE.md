@@ -478,6 +478,20 @@ prerequisites.
 > (`wsl -l -q`) stay silent. Redirected output (CI) gets a plain line only when the whole
 > percentage changes or every 30 s.
 >
+> **.NET 3.5 is enabled from install media when any is reachable.** The 37.8 % stall is DISM
+> asking Windows Update for the 68 MB payload, and on a fresh install that request queues behind
+> WU's first-boot scan and Delivery Optimization's peer lookup (which finds nothing on a NAT VM).
+> `Find-FeaturePayloadSource` looks on every ready drive for `sources\sxs\*netfx3*.cab` — the
+> ISO still attached to a VM, the USB stick still in a real machine — and `Enable-WindowsFeature
+> -Source` passes it as `/Source:<sxs> /LimitAccess`, so Windows Update is never contacted and
+> the step finishes in well under a minute. A media attempt that does not verify (wrong build on
+> the media, unreadable drive) falls through to the plain WU attempt before anything is reported
+> as failed. The VirtualBox test VM (`Win`) therefore keeps `Z:\Downloads\Win11_25H2_English_x64_v2.iso`
+> attached on SATA port 2 with the boot order set to disk first, so the ISO never boots; it also
+> runs 4 CPUs / 8 GB, because on the 2-CPU / 4 GB default TiWorker shared two cores with WU's
+> first-boot scan and every servicing step crawled. The media's build must match the guest
+> (`10.0.26200` here); a Windows 10 ISO's payload is refused with 0x800f081f and the fallback runs.
+>
 > Where it is used: step 0's `Enable-WindowsFeature` (NetFx3 + the four WSL features: check →
 > act → verify with `Get-WindowsOptionalFeature`, never the exit code) and `Invoke-ProcessCapture`
 > (`wsl --install`, the Ubuntu registration — same return contract as before, with a `-Label`);

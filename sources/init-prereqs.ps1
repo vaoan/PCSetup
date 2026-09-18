@@ -573,37 +573,86 @@ function Test-WindowsFeatureEnabled {
     return ($feature -and $feature.State -eq 'Enabled')
 }
 
+function Find-FeaturePayloadSource {
+    # Windows install media (the ISO still attached to a VM, the USB stick still in a fresh PC)
+    # carries feature payloads under sources\sxs. Pointing DISM at it with /Source /LimitAccess
+    # skips Windows Update entirely: .NET 3.5 enables in well under a minute instead of queueing
+    # behind the first-boot update scan and a 68 MB Delivery Optimization download. Returns the
+    # sxs folder holding a file matching $Pattern, or '' when no media is present.
+    param(
+        [Parameter(Mandatory)][string]$Pattern,
+        [string[]]$Roots = @()
+    )
+    if (-not $Roots) {
+        $Roots = @([IO.DriveInfo]::GetDrives() |
+            Where-Object { $_.IsReady -and @('CDRom', 'Removable', 'Fixed') -contains "$($_.DriveType)" } |
+            ForEach-Object { $_.RootDirectory.FullName })
+    }
+    foreach ($root in $Roots) {
+        # Test-Path on a drive letter that does not exist (or a card reader with no card) is an
+        # error, and under $ErrorActionPreference = 'Stop' it would abort the whole scan.
+        try {
+            $sxs = Join-Path $root 'sources\sxs'
+            if (-not (Test-Path -LiteralPath $sxs -ErrorAction SilentlyContinue)) { continue }
+            $hit = Get-ChildItem -LiteralPath $sxs -Filter $Pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { return $sxs }
+        }
+        catch { }
+    }
+    return ''
+}
+
 function Enable-WindowsFeature {
     # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'Enabled',
-    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is.
+    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is. With -Source the
+    # first attempt reads the payload from install media (/LimitAccess: never Windows Update);
+    # if that attempt does not verify - wrong build on the media, unreadable drive - the same
+    # enable is retried the normal way through Windows Update before reporting a failure.
     param(
         [Parameter(Mandatory)][string]$FeatureName,
-        [string]$DisplayName = $FeatureName
+        [string]$DisplayName = $FeatureName,
+        [string]$Source = ''
     )
     if (Test-WindowsFeatureEnabled $FeatureName) {
         Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
         return 'AlreadyEnabled'
     }
     Write-Host "Enabling Windows feature: $DisplayName ($FeatureName)" -ForegroundColor Cyan
-    $r = Invoke-CommandWithStatus -Label "Enabling $DisplayName" -FilePath 'dism.exe' `
-        -ArgumentList @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') `
-        -WatchProcess @('TiWorker', 'TrustedInstaller') `
-        -WatchService @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller') `
-        -ActivityLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') `
-        -GrowthLog (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
-    $elapsed = '{0:0}s' -f $r.Elapsed.TotalSeconds
-    if (Test-WindowsFeatureEnabled $FeatureName) {
-        Write-Host "$DisplayName enabled (verified, $elapsed)." -ForegroundColor Green
-        return 'Enabled'
+    $attempts = @()
+    if ($Source) { $attempts += @{ Label = "Enabling $DisplayName from media"; Extra = @("/Source:$Source", '/LimitAccess') } }
+    $attempts += @{ Label = "Enabling $DisplayName"; Extra = @() }
+    foreach ($attempt in $attempts) {
+        if ($attempt.Extra.Count -gt 0) {
+            Write-Host "  payload source: $Source (Windows Update not contacted)" -ForegroundColor Cyan
+        }
+        $status = @{
+            Label        = $attempt.Label
+            FilePath     = 'dism.exe'
+            ArgumentList = @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') + $attempt.Extra
+            WatchProcess = @('TiWorker', 'TrustedInstaller')
+            WatchService = @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller')
+            ActivityLog  = (Join-Path $env:SystemRoot 'Logs\DISM\dism.log')
+            GrowthLog    = (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
+        }
+        $r = Invoke-CommandWithStatus @status
+        $elapsed = '{0:0}s' -f $r.Elapsed.TotalSeconds
+        if (Test-WindowsFeatureEnabled $FeatureName) {
+            Write-Host "$DisplayName enabled (verified, $elapsed)." -ForegroundColor Green
+            return 'Enabled'
+        }
+        $state = (Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction SilentlyContinue).State
+        if ($r.ExitCode -eq 3010 -or "$state" -match 'Pending') {
+            Write-Host "$DisplayName enabled, reboot required (state: $state, $elapsed)." -ForegroundColor Yellow
+            return 'RebootRequired'
+        }
+        $lastLine = ($r.Output -split "`r?`n" | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*\[' } | Select-Object -Last 1)
+        if ($attempt.Extra.Count -gt 0) {
+            Write-Host "  media source did not work (dism exit $($r.ExitCode), $elapsed): $lastLine - retrying through Windows Update." -ForegroundColor Yellow
+            continue
+        }
+        Write-Host "$DisplayName NOT enabled: dism exit $($r.ExitCode), state '$state', $elapsed. $lastLine $($r.Error)".Trim() -ForegroundColor Red
+        return 'Failed'
     }
-    $state = (Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction SilentlyContinue).State
-    if ($r.ExitCode -eq 3010 -or "$state" -match 'Pending') {
-        Write-Host "$DisplayName enabled, reboot required (state: $state, $elapsed)." -ForegroundColor Yellow
-        return 'RebootRequired'
-    }
-    $lastLine = ($r.Output -split "`r?`n" | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*\[' } | Select-Object -Last 1)
-    Write-Host "$DisplayName NOT enabled: dism exit $($r.ExitCode), state '$state', $elapsed. $lastLine $($r.Error)".Trim() -ForegroundColor Red
-    return 'Failed'
 }
 
 function Enable-WslPrerequisites {
@@ -777,7 +826,16 @@ if (-not (Install-FirstAvailableScoopPackage 'Visual C++ redistributables' @('vc
 # the run depends on 3.5, and a machine without Windows Update access would otherwise fail
 # step 0 over an optional runtime.
 try {
-    if ((Enable-WindowsFeature -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5') -eq 'Failed') {
+    # Install media still attached (VM ISO, USB stick) carries the payload: use it and skip the
+    # Windows Update queue that parked the first VM run at 37.8 % for minutes.
+    $netfxSource = Find-FeaturePayloadSource -Pattern '*netfx3*.cab'
+    if ($netfxSource) {
+        Write-Host "Install media found at $netfxSource - .NET Framework 3.5 will be enabled from it." -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "No install media with sources\sxs found; .NET Framework 3.5 comes from Windows Update (slow on a fresh install - attach the Windows ISO/USB to skip that)." -ForegroundColor Yellow
+    }
+    if ((Enable-WindowsFeature -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5' -Source $netfxSource) -eq 'Failed') {
         Write-Host ".NET Framework 3.5 could not be enabled; continuing (optional)." -ForegroundColor Yellow
     }
 }
