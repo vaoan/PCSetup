@@ -570,6 +570,28 @@ prerequisites.
 > first-boot scan and every servicing step crawled. The media's build must match the guest
 > (`10.0.26200` here); a Windows 10 ISO's payload is refused with 0x800f081f and the fallback runs.
 >
+> **The WSL installer and the Ubuntu image are prefetched into `%ProgramData%\PCSetup\cache`.**
+> Both start downloading in the background right after the .NET 3.5 job (curl, resumable with
+> `-C -`, status line attachable) and only when needed: the WSL MSI when `wsl --status` says not
+> installed, the image when `Ubuntu-24.04` is not registered. Sources are first-party only — the
+> MSI is the `wsl.<ver>.x64.msi` asset of the latest `microsoft/WSL` GitHub release (the same
+> file winget installs, ~260 MB) and the image is Canonical's
+> `ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz` from `cloud-images.ubuntu.com` (~360 MB). Before
+> use the MSI must carry a valid Microsoft Authenticode signature and the image must match
+> Canonical's freshly fetched `SHA256SUMS`; a file that fails is deleted and the online path
+> (winget / `wsl --install -d`) runs as before. The WSL section then installs from cache with
+> `msiexec /i /quiet /norestart` and registers with `wsl --install --from-file <image> --name
+> Ubuntu-24.04 --no-launch` (WSL 2.4.4+, older falls back), which skips the Store and Delivery
+> Optimization entirely — the step becomes extraction time only. Because the features force a
+> reboot on a fresh install, the WSL section returns early on run 1; any download still running
+> at the end of the script is **finished before exit** so run 2 finds both files cached and
+> waits for nothing. Tested without the network through `file://` URLs (curl handles them).
+>
+> **In the VirtualBox test VM WSL2 cannot start at all**, whatever the speed: nested VT-x is
+> off and cannot be turned on while the host runs Hyper-V (VirtualBox is on Hyper-V's platform
+> layer there). Everything before the WSL section is a valid test in that VM; WSL itself needs
+> real hardware or a Hyper-V VM.
+>
 > **winget prints nothing while captured, so every winget install runs behind the line too.**
 > winget draws its progress bar only on a console it owns; with stdout redirected it emits
 > just "Found ...", "Downloading https://...", "Successfully verified installer hash",

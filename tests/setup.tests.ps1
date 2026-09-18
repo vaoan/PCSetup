@@ -141,6 +141,61 @@ Describe "0-init-prereqs" {
         $helper | Should -Match 'GetAllNetworkInterfaces'
         $helper | Should -Match 'TotalProcessorTime'
     }
+    It "WSL installer and Ubuntu image are prefetched in the background into a verified cache" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        foreach ($fn in 'Start-CachedDownload', 'Complete-CachedDownload', 'Resolve-WslDownloads', 'Test-CachedMsiSignature', 'Test-CachedImageChecksum', 'Get-FileSha256') {
+            $script | Should -Match "function $fn"
+        }
+        # First-party sources only, resumable curl, and both files verified before use.
+        $script | Should -Match 'api\.github\.com/repos/microsoft/WSL/releases/latest'
+        $script | Should -Match 'cloud-images\.ubuntu\.com/wsl/releases/24\.04/current'
+        $script | Should -Match "'-C', '-'"
+        $script | Should -Match 'Get-AuthenticodeSignature'
+        $script | Should -Match 'SHA256SUMS'
+        $script | Should -Match "'--install', '--from-file', \`$image, '--name', \`$DistroName, '--no-launch'"
+        $script | Should -Match "'/i', \`$msiPath, '/quiet', '/norestart'"
+        # Started before the git bootstrap; unfinished downloads are completed at the very end.
+        $script.IndexOf("Start-CachedDownload -Label 'WSL installer'") | Should -BeLessThan $script.IndexOf("Install-BootstrapTool -Name 'git'")
+        $script.IndexOf('Finishing the $($pending.Label) download') | Should -BeGreaterThan $script.LastIndexOf('Enable-WslPrerequisites')
+        $script | Should -Match "PCSETUP_CI -eq '1'\) \{[^}]*skipping the WSL prefetch"
+
+        # Mechanics without the network: curl handles file:// URLs, so a temp file stands in for
+        # the 360 MB image. The helpers are extracted from the real script.
+        . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1"), [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Get-FileSha256', 'Start-CachedDownload', 'Complete-CachedDownload') {
+            $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
+            Invoke-Expression $fn.Extent.Text
+        }
+        $script:CacheDir = Join-Path $env:TEMP "pcsetup-test-cache-$([guid]::NewGuid().ToString('N'))"
+        $srcFile = Join-Path $env:TEMP "pcsetup-test-src-$([guid]::NewGuid().ToString('N')).bin"
+        try {
+            $bytes = New-Object byte[] 300000
+            (New-Object Random 7).NextBytes($bytes)
+            [IO.File]::WriteAllBytes($srcFile, $bytes)
+            $url = 'file:///' + ($srcFile -replace '\\', '/')
+            $pending = Start-CachedDownload -Label 'test blob' -Url $url -FileName 'blob.bin'
+            $pending | Should -Not -BeNullOrEmpty
+            $path = Complete-CachedDownload -Pending $pending
+            $path | Should -Be (Join-Path $script:CacheDir 'blob.bin')
+            (Get-Item $path).Length | Should -Be 300000
+            (Get-FileSha256 $path) | Should -Be (Get-FileSha256 $srcFile)
+            Test-Path "$path.part" | Should -BeFalse
+            # Second time: already cached, nothing started, same path returned.
+            (Start-CachedDownload -Label 'test blob' -Url $url -FileName 'blob.bin') | Should -BeNullOrEmpty
+            (Complete-CachedDownload -Pending $null -Destination $path) | Should -Be $path
+            # Collecting the same job twice returns the recorded result without waiting again.
+            (Complete-CachedDownload -Pending $pending) | Should -Be $path
+            # A failed download leaves nothing behind and reports ''.
+            $bad = Start-CachedDownload -Label 'missing blob' -Url 'file:///C:/pcsetup-does-not-exist.bin' -FileName 'missing.bin'
+            (Complete-CachedDownload -Pending $bad) | Should -Be ''
+            Test-Path (Join-Path $script:CacheDir 'missing.bin') | Should -BeFalse
+        }
+        finally {
+            Remove-Item $script:CacheDir, $srcFile -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     It "winget installs run behind the status line, which shows the tool's last output line" {
         # winget draws its bar only on a console it owns; captured, it prints nothing during a
         # download, so a 600 MB WSL package looked hung. The status line adds the last stdout

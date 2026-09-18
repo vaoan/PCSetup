@@ -306,6 +306,125 @@ function Ensure-HypervisorBoot {
     }
 }
 
+$script:CacheDir = Join-Path $env:ProgramData 'PCSetup\cache'
+
+function Get-FileSha256 {
+    param([string]$Path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $fs = [IO.File]::OpenRead($Path)
+    try { return ([BitConverter]::ToString($sha.ComputeHash($fs)) -replace '-', '').ToLowerInvariant() }
+    finally { $fs.Close(); $sha.Dispose() }
+}
+
+function Start-CachedDownload {
+    # Background curl into %ProgramData%\PCSetup\cache, resumable (-C -), returning a handle for
+    # Complete-CachedDownload - or $null when the file is already cached. The cache survives the
+    # reboot that the WSL features force, so the second run finds the ~260 MB WSL installer and
+    # the ~360 MB Ubuntu image on disk and never waits for a download.
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Url,
+        [Parameter(Mandatory)][string]$FileName
+    )
+    $dest = Join-Path $script:CacheDir $FileName
+    if (Test-Path -LiteralPath $dest) {
+        Write-Host "$Label already cached at $dest" -ForegroundColor Yellow
+        return $null
+    }
+    New-Item -ItemType Directory -Path $script:CacheDir -Force | Out-Null
+    $part = "$dest.part"
+    Write-Host "Downloading $Label in the background to $dest - the rest of the setup continues meanwhile." -ForegroundColor Cyan
+    $job = Start-CommandCapture -Label "Downloading $Label" -FilePath 'curl.exe' `
+        -ArgumentList @('-fsSL', '--retry', '3', '--retry-delay', '5', '-C', '-', '-o', $part, $Url)
+    return @{ Job = $job; Destination = $dest; Part = $part; Label = $Label; Result = $null }
+}
+
+function Complete-CachedDownload {
+    # Waits for a Start-CachedDownload job (the status line attaches if it is still running) and
+    # returns the cached file path, or ''. With no job, returns the already-cached file if present.
+    param(
+        [hashtable]$Pending = $null,
+        [string]$Destination = ''
+    )
+    if (-not $Pending) {
+        if ($Destination -and (Test-Path -LiteralPath $Destination)) { return $Destination }
+        return ''
+    }
+    if ($null -ne $Pending.Result) { return $Pending.Result }
+    $sinceStart = '{0:0}s' -f $Pending.Job.Clock.Elapsed.TotalSeconds
+    if (Test-CommandCaptureRunning -Job $Pending.Job) {
+        Write-Host "$($Pending.Label) is still downloading in the background (running for $sinceStart); waiting for it..." -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "$($Pending.Label) finished downloading in the background ($sinceStart)." -ForegroundColor Cyan
+    }
+    $r = Wait-CommandWithStatus -Job $Pending.Job
+    $size = if (Test-Path -LiteralPath $Pending.Part) { (Get-Item -LiteralPath $Pending.Part).Length } else { 0 }
+    if ($r.ExitCode -eq 0 -and $size -gt 0) {
+        Move-Item -LiteralPath $Pending.Part -Destination $Pending.Destination -Force
+        Write-Host ("$($Pending.Label) cached ({0:0.0} MB, {1:0}s)." -f ($size / 1MB), $r.Elapsed.TotalSeconds) -ForegroundColor Green
+        $Pending.Result = $Pending.Destination
+        return $Pending.Destination
+    }
+    Write-Host "$($Pending.Label) download did not finish (curl exit $($r.ExitCode)): $(Get-LastOutputLine ($r.Output + $r.Error)) - the online path will be used instead." -ForegroundColor Yellow
+    $Pending.Result = ''
+    return ''
+}
+
+function Resolve-WslDownloads {
+    # The two first-party sources: the WSL installer from Microsoft's GitHub release (the same
+    # MSI winget installs) and the Ubuntu 24.04 rootfs from Canonical's image server, which also
+    # publishes SHA256SUMS for it. Returns @{ Msi = @{Url; FileName} or $null; Image = @{...} }.
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+    $ubuntuArch = if ($arch -eq 'arm64') { 'arm64' } else { 'amd64' }
+    $msi = $null
+    try {
+        $release = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest' -Headers @{ 'User-Agent' = 'PCSetup' } -TimeoutSec 30
+        $asset = $release.assets | Where-Object { $_.name -like "wsl.*.$arch.msi" } | Select-Object -First 1
+        if ($asset) { $msi = @{ Url = $asset.browser_download_url; FileName = $asset.name } }
+    }
+    catch {
+        Write-Host "Could not resolve the latest WSL release ($($_.Exception.Message)); the installer will come through winget instead." -ForegroundColor Yellow
+    }
+    $base = 'https://cloud-images.ubuntu.com/wsl/releases/24.04/current'
+    $imageName = "ubuntu-noble-wsl-$ubuntuArch-wsl.rootfs.tar.gz"
+    return @{
+        Msi   = $msi
+        Image = @{ Url = "$base/$imageName"; FileName = $imageName; SumsUrl = "$base/SHA256SUMS" }
+    }
+}
+
+function Test-CachedMsiSignature {
+    # A cached installer is only used when it still carries a valid Microsoft Authenticode
+    # signature - a truncated or tampered file fails this and the online path takes over.
+    param([string]$Path)
+    try {
+        $sig = Get-AuthenticodeSignature -FilePath $Path -ErrorAction Stop
+        return ($sig.Status -eq 'Valid' -and "$($sig.SignerCertificate.Subject)" -match 'Microsoft Corporation')
+    }
+    catch { return $false }
+}
+
+function Test-CachedImageChecksum {
+    # Canonical's SHA256SUMS (fetched fresh, it is a few hundred bytes) must list the cached
+    # image with the hash it has on disk. Any failure to fetch or match means "do not use it".
+    param([string]$Path, [string]$SumsUrl)
+    try {
+        $sums = Invoke-RestMethod -Uri $SumsUrl -UseBasicParsing -TimeoutSec 30
+        $name = [regex]::Escape((Split-Path -Leaf $Path))
+        $m = [regex]::Match("$sums", "(?m)^([0-9a-fA-F]{64})\s+\*?$name\s*$")
+        if (-not $m.Success) { Write-Host "  SHA256SUMS has no entry for $(Split-Path -Leaf $Path)." -ForegroundColor Yellow; return $false }
+        $expected = $m.Groups[1].Value.ToLowerInvariant()
+        $actual = Get-FileSha256 $Path
+        if ($actual -ne $expected) { Write-Host "  SHA256 mismatch: expected $expected, file has $actual." -ForegroundColor Yellow; return $false }
+        return $true
+    }
+    catch {
+        Write-Host "  Could not verify the image checksum ($($_.Exception.Message))." -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Test-WslDistroRegistered {
     param([string]$DistroName = 'Ubuntu-24.04')
 
@@ -340,6 +459,26 @@ function Install-WslDistro {
     }
 
     Write-Host "Installing/checking WSL distro: $DistroName" -ForegroundColor Cyan
+
+    # Cached Canonical image first: no Store, no Delivery Optimization, just the extraction.
+    # Requires wsl --install --from-file (WSL 2.4.4+); anything older falls to the online chain.
+    $image = Complete-CachedDownload -Pending $script:WslImagePending -Destination $script:WslImagePath
+    if ($image) {
+        if (Test-CachedImageChecksum -Path $image -SumsUrl $script:WslImageSumsUrl) {
+            Write-Host "Registering $DistroName from the cached image (wsl --install --from-file)..." -ForegroundColor Cyan
+            $fromFile = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--from-file', $image, '--name', $DistroName, '--no-launch') -Label "Registering $DistroName from cached image"
+            if ($fromFile.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
+                Write-Host "$DistroName registered from the cached image (verified)." -ForegroundColor Green
+                return $true
+            }
+            Write-Host "from-file registration did not finish (wsl exit $($fromFile.ExitCode)): $(Get-LastOutputLine $fromFile.Output) - falling back to the online install." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Cached image failed verification against Canonical's SHA256SUMS; deleting it and falling back to the online install." -ForegroundColor Yellow
+            Remove-Item -LiteralPath $image -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch') -Label "Installing $DistroName (wsl --install)"
     if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
         return $true
@@ -805,22 +944,48 @@ function Enable-WslPrerequisites {
 
     $wslStatus = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')
     if ($wslStatus.Output -match 'not installed') {
-        Install-WingetPackage 'Microsoft.WSL' 'Windows Subsystem for Linux' | Out-Null
-        Ensure-HypervisorBoot
-
-        Write-Host "Installing WSL platform files..." -ForegroundColor Cyan
-        $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution') -Label 'Installing WSL (wsl --install --no-distribution)'
-        if ($wslInstall.ExitCode -ne 0) {
-            Write-Host "WSL --no-distribution install did not finish; trying default WSL install..." -ForegroundColor Yellow
-            $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install') -Label 'Installing WSL (wsl --install)'
-            if ($wslInstall.ExitCode -ne 0) {
-                Write-Host "WSL platform install did not finish. Reboot Windows, then run: wsl --install" -ForegroundColor Yellow
-                if (-not [string]::IsNullOrWhiteSpace($wslInstall.Output)) {
-                    Write-Host $wslInstall.Output.Trim() -ForegroundColor Yellow
+        # Cached Microsoft installer first (prefetched at the top of the run, signature checked);
+        # winget + wsl --install only when there is none or it does not take. The MSI itself
+        # needs no reboot - only the features do, and the loop above already tracked those.
+        $installedFromCache = $false
+        $msiPath = Complete-CachedDownload -Pending $script:WslMsiPending -Destination $script:WslMsiPath
+        if ($msiPath) {
+            if (Test-CachedMsiSignature $msiPath) {
+                Write-Host "Installing WSL from the cached installer $msiPath..." -ForegroundColor Cyan
+                $msiRun = Invoke-CommandWithStatus -Label 'Installing WSL (msi)' -FilePath 'msiexec.exe' -ArgumentList @('/i', $msiPath, '/quiet', '/norestart') -WatchProcess @('msiexec') -WatchService @('msiserver')
+                $wslStatus = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')
+                if ($wslStatus.Output -notmatch 'not installed') {
+                    Write-Host ("WSL installed from the cached installer (verified, msiexec exit {0}, {1:0}s)." -f $msiRun.ExitCode, $msiRun.Elapsed.TotalSeconds) -ForegroundColor Green
+                    $installedFromCache = $true
+                }
+                else {
+                    Write-Host "Cached installer did not take (msiexec exit $($msiRun.ExitCode)); using the online path." -ForegroundColor Yellow
                 }
             }
+            else {
+                Write-Host "Cached WSL installer failed the Microsoft signature check; deleting it and using the online path." -ForegroundColor Yellow
+                Remove-Item -LiteralPath $msiPath -Force -ErrorAction SilentlyContinue
+            }
         }
-        $requiresReboot = $true
+        Ensure-HypervisorBoot
+        if (-not $installedFromCache) {
+            Install-WingetPackage 'Microsoft.WSL' 'Windows Subsystem for Linux' | Out-Null
+
+            Write-Host "Installing WSL platform files..." -ForegroundColor Cyan
+            $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution') -Label 'Installing WSL (wsl --install --no-distribution)'
+            if ($wslInstall.ExitCode -ne 0) {
+                Write-Host "WSL --no-distribution install did not finish; trying default WSL install..." -ForegroundColor Yellow
+                $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install') -Label 'Installing WSL (wsl --install)'
+                if ($wslInstall.ExitCode -ne 0) {
+                    Write-Host "WSL platform install did not finish. Reboot Windows, then run: wsl --install" -ForegroundColor Yellow
+                    if (-not [string]::IsNullOrWhiteSpace($wslInstall.Output)) {
+                        Write-Host $wslInstall.Output.Trim() -ForegroundColor Yellow
+                    }
+                }
+            }
+            $requiresReboot = $true
+            $wslStatus = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')
+        }
     }
 
     if ($wslStatus.Output -match 'virtualization is not enabled|Virtual Machine Platform') {
@@ -887,6 +1052,49 @@ try {
 }
 catch {
     Write-Host ".NET Framework 3.5 could not be started in the background ($($_.Exception.Message)); it will be enabled in the foreground later." -ForegroundColor Yellow
+}
+
+# WSL prefetch: the ~260 MB WSL installer (Microsoft's GitHub release, Authenticode-checked
+# before use) and the ~360 MB Ubuntu 24.04 image (Canonical's image server, SHA256SUMS-checked)
+# download in the background into %ProgramData%\PCSetup\cache while everything else installs.
+# The WSL section uses them instead of winget/Store downloads, and because the features force a
+# reboot on a fresh install, the second run finds both already on disk. Only what is missing is
+# fetched; a rerun with WSL and the distro in place downloads nothing.
+$script:WslMsiPending = $null
+$script:WslImagePending = $null
+$script:WslMsiPath = ''
+$script:WslImagePath = ''
+$script:WslImageSumsUrl = ''
+if ($env:PCSETUP_CI -eq '1') {
+    Write-Host "SKIP: CI mode - skipping the WSL prefetch (no WSL on Server Core)." -ForegroundColor Yellow
+}
+else {
+    try {
+        $needWsl = $true
+        $needDistro = $true
+        if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+            $needWsl = ((Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--status')).Output -match 'not installed')
+            $needDistro = -not (Test-WslDistroRegistered)
+        }
+        if ($needWsl -or $needDistro) {
+            $wslDownloads = Resolve-WslDownloads
+            if ($needWsl -and $wslDownloads.Msi) {
+                $script:WslMsiPath = Join-Path $script:CacheDir $wslDownloads.Msi.FileName
+                $script:WslMsiPending = Start-CachedDownload -Label 'WSL installer' -Url $wslDownloads.Msi.Url -FileName $wslDownloads.Msi.FileName
+            }
+            if ($needDistro) {
+                $script:WslImagePath = Join-Path $script:CacheDir $wslDownloads.Image.FileName
+                $script:WslImageSumsUrl = $wslDownloads.Image.SumsUrl
+                $script:WslImagePending = Start-CachedDownload -Label 'Ubuntu 24.04 image' -Url $wslDownloads.Image.Url -FileName $wslDownloads.Image.FileName
+            }
+        }
+        else {
+            Write-Host "WSL and Ubuntu-24.04 are already in place; nothing to prefetch." -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "WSL prefetch could not be started ($($_.Exception.Message)); the WSL section will download on its own." -ForegroundColor Yellow
+    }
 }
 Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
@@ -1044,6 +1252,15 @@ if ($env:PCSETUP_CI -eq '1') {
 }
 else {
     Enable-WslPrerequisites
+}
+
+# A prefetch still running here means the WSL section returned early (reboot pending) before it
+# needed the file. Finish it now so the next run finds it in the cache instead of downloading.
+foreach ($pending in @($script:WslMsiPending, $script:WslImagePending)) {
+    if ($pending -and ($null -eq $pending.Result)) {
+        Write-Host "Finishing the $($pending.Label) download so the next run can use it..." -ForegroundColor Cyan
+        Complete-CachedDownload -Pending $pending | Out-Null
+    }
 }
 
 if ($script:Failures.Count -gt 0) {
