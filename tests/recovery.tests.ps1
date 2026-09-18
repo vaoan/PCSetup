@@ -212,6 +212,27 @@ Describe 'Recovery scripts - configuration agreement' {
         ($ports.Values | Select-Object -Unique).Count | Should -Be 1 -Because "ports disagree: $($ports.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })"
     }
 
+    It 'the chat origin port is identical everywhere it is declared' {
+        # chat.ffxiv.be moved from the ChatAnywhere plugin (3000) to chat-proxy.js
+        # (7543) on 2026-09-15. Three files declare it; the www check above never
+        # looked at the chat line, so one of them lagging would have gone unnoticed.
+        $ports = @{}
+        $repoCfg = Get-Content (Join-Path $script:CfDir '.cloudflared\config.yml') -Raw
+        if ($repoCfg -match 'chat\.[^\s]+\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['repo config.yml'] = $Matches[1] }
+
+        $install = Get-ScriptText 'install-tunnel.ps1'
+        if ($install -match 'hostname:\s*chat\.[^\s]+\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['install-tunnel.ps1'] = $Matches[1] }
+
+        $recovery = Get-ScriptText 'post-format-recovery.ps1'
+        if ($recovery -match 'hostname:\s*chat\.\$webHostname\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['post-format-recovery.ps1'] = $Matches[1] }
+
+        $proxy = Get-Content (Join-Path $script:CfDir 'chat-proxy.js') -Raw
+        if ($proxy -match 'const PROXY_PORT = (\d+);') { $ports['chat-proxy.js'] = $Matches[1] }
+
+        $ports.Count | Should -Be 4 -Because 'config.yml, install-tunnel.ps1, post-format-recovery.ps1 and chat-proxy.js all declare the chat port'
+        ($ports.Values | Select-Object -Unique).Count | Should -Be 1 -Because "ports disagree: $($ports.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })"
+    }
+
     It 'the console hostname list matches between provisioning and Access gating' {
         $setup  = Get-ScriptText 'setup-console-windows.ps1'
         $access = Get-ScriptText 'setup-access-apps.ps1'

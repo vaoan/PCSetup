@@ -1271,9 +1271,48 @@ All main app routes go through a local reverse proxy on port 7542. The PC setup 
 | Hostname | Backend |
 |---|---|
 | `www.ffxiv.be` | `localhost:7542` |
-| `chat.ffxiv.be` | `localhost:3000` |
+| `chat.ffxiv.be` | `localhost:7543` → `chat-proxy.js` → `localhost:3000` (ChatAnywhere plugin, inside the game) |
 
 Config lives at `cloudflared/.cloudflared/config.yml` in this repo and is deployed to `C:\Users\Heiner\.cloudflared\config.yml` by `install-tunnel.ps1`.
+
+> **The ingress in that file is ignored: `ffxivbe-tunnel` is remotely managed.** Its ingress
+> lives in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), and cloudflared applies
+> *that* — the log says `Updated to new configuration ... version=N` at every start, and the API
+> reports `source: cloudflare`. Found out the hard way on 2026-09-15: the local file said 7543,
+> the restarted tunnel still sent `chat.ffxiv.be` to 3000. Change the ingress with
+> `PUT /accounts/<acct>/cfd_tunnel/c552cb9c-…/configurations` (token
+> `CLOUDFLARE_ACCOUNT_API_TOKEN`, account `d34896e6a0f8b2fba5e03dec659eac50`) or in the
+> dashboard; cloudflared hot-reloads it within seconds, no restart. The local file still matters
+> for `tunnel`, `credentials-file` and `protocol`, and it is kept in step with the remote ingress so
+> the contract test in `tests\recovery.tests.ps1` has something to check — it is documentation,
+> not configuration. `dev-console` (`dev-config.yml`) is the opposite: locally managed.
+
+> **`chat.ffxiv.be` is not a web app. It is the ChatAnywhere Dalamud plugin's web UI, served
+> from inside `ffxiv_dx11.exe` (the "Me" XIVLauncher profile) on port 3000**, so it is only up
+> while that game client is running. Its embedded server (WatsonWebserver.Lite over CavemanTcp)
+> ends **every** connection with a TCP **RST** instead of a FIN, confirmed with pktmon on
+> 2026-09-15 — and Windows discards unread receive-buffer data on RST. cloudflared reads the
+> origin at the pace the Cloudflare edge accepts, so the 462 KB JS bundle arrived truncated
+> **6 times in 10** (curl exit 92), while a reader that drains at loopback speed got it intact.
+> `cloudflared/chat-proxy.js` (127.0.0.1:7543) is that reader: it buffers each origin response,
+> checks it is complete, retries idempotent requests up to 3 times (never POST — a chat message
+> must not be sent twice), and pipes `/sse` through untouched. Measured against the real origin:
+> Node on Windows gets 36/40 intact per attempt, so three attempts leave ~0.1 % per bundle load;
+> Node inside WSL gets 40/40 because Linux keeps queued data on RST — if 0.1 % ever matters,
+> moving the proxy into WSL behind a `tcp-relay.js` is the next step. It is launched by
+> `start-console.ps1`, healed by `console-health.ps1` (which probes `/.chat-proxy/health`, not
+> `/`, so a closed game does not read as a wedged proxy), drift-checked by `verify-console.ps1`,
+> and tested by `node --test cloudflared\chat-proxy.test.mjs`.
+>
+> **AdGuard was the first, larger cause of the 502s the same day.** AdGuard 8 filters every
+> non-browser app's plain-HTTP traffic, loopback included, and inserted its own proxy between
+> cloudflared and port 3000 (the response body carried `local.adguard.org` scripts tagged
+> `app=cloudflared.exe`). That proxy throttled the bundle to ~65 KB per 100 s and reset half the
+> connections. **Both `cloudflared.exe` and `node.exe` are excluded** in AdGuard → App management
+> ("Route traffic through AdGuard" off); an AdGuard update that resets that list brings the 502s
+> back, and the tell is AdGuard markup in a `curl http://127.0.0.1:3000/` body. AdGuard 8's UI is
+> Sciter (invisible to UI Automation) and its settings DB is encrypted, so the exclusion is a
+> manual toggle, not a script.
 
 ### Post-Format Recovery
 
@@ -1304,7 +1343,9 @@ Or run individual steps:
 > **A 530 and a 502 on `www`/`chat` mean different things.** 530 is the tunnel being down;
 > 502 is the tunnel up and the **local app** not running. This repo does not manage the web stack,
 > so restoring `ffxivbe-tunnel` moves those hostnames from 530 to 502 and no further — bring up
-> 7542 and 3000 yourself for a 200.
+> 7542 yourself for a 200 on `www`. For `chat`, a 502 with the game closed is expected; with
+> the game open, check `chat-proxy.js` on 7543 (`console-health.ps1 -ReportOnly`) before
+> the plugin.
 
 > **Note on cloudflared installation:** Scripts auto-install the official signed MSI. Do NOT install via Chocolatey — Smart App Control blocks unsigned executables.
 
@@ -1362,6 +1403,7 @@ Already set up, survives PC formats:
 | `cloudflared/uninstall-tunnel.ps1` | Stops task, kills processes, leaves config/DNS intact |
 | `cloudflared/create-shortcuts.ps1` | Creates desktop shortcuts |
 | `cloudflared/.cloudflared/config.yml` | ffxivbe-tunnel routing config |
+| `cloudflared/chat-proxy.js` | Buffering proxy 127.0.0.1:7543 → ChatAnywhere plugin 3000 for `chat.ffxiv.be` (the plugin RSTs every connection; see the `ffxivbe-tunnel hostnames` note). Tests: `cloudflared/chat-proxy.test.mjs` |
 | `cloudflared/transfer-ffxiv-be.ps1` | Transfers `ffxiv.be` to DNSimple and delegates DNS to Cloudflare. Dry-runs by default; needs `-AuthCode <code> -Execute` to actually buy. Requires `DNSIMPLE_API_TOKEN`. See "Domain: ffxiv.be" below. |
 
 ### Domain: ffxiv.be

@@ -92,6 +92,9 @@ $sshwiftyLog   = "$sshwiftyDir\sshwifty.log"
 $proxyScript   = "$launcherDir\console-proxy.js"
 $proxyLog      = "$launcherDir\proxy.log"
 $proxyPidFile  = "$launcherDir\proxy.pid"
+$chatProxyScript  = "$launcherDir\chat-proxy.js"
+$chatProxyLog     = "$launcherDir\chat-proxy.log"
+$chatProxyPidFile = "$launcherDir\chat-proxy.pid"
 $healthLog     = "$cfDir\console-health.log"
 
 $devConfigPath       = "$cfDir\dev-config.yml"
@@ -184,13 +187,13 @@ function Get-ProcessCommandLine {
 # console probe has to send the real hostname.
 # Returns $true / $false, or $null when it cannot tell (no curl.exe).
 function Test-HttpOk {
-    param([int]$Port, [string]$HostHeader, [int]$TimeoutSec = 5)
+    param([int]$Port, [string]$HostHeader, [int]$TimeoutSec = 5, [string]$Path = '/')
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     if (-not $curl) { return $null }
     # NOTE: not $args - that is an automatic variable inside a function.
     $curlArgs = @('-s', '-o', 'NUL', '-w', '%{http_code}', '--max-time', "$TimeoutSec")
     if ($HostHeader) { $curlArgs += @('-H', "Host: $HostHeader") }
-    $curlArgs += "http://127.0.0.1:$Port/"
+    $curlArgs += "http://127.0.0.1:$Port$Path"
     try {
         $code = (& $curl.Source @curlArgs 2>$null | Out-String).Trim()
         # Any real HTTP response means the origin is answering. 3xx is healthy
@@ -530,6 +533,52 @@ if ($proxyDown -and -not $ReportOnly) {
             Add-Repair "Started console-proxy (PID $($proc.Id)) -> 127.0.0.1:7681"
         } else {
             Add-Failure "console-proxy was started (PID $($proc.Id)) but 7681 is still not listening - see $proxyLog"
+        }
+    }
+}
+
+# -- 5b. chat-proxy.js (127.0.0.1:7543) --------------------------------------
+# chat.ffxiv.be's buffering proxy in front of the ChatAnywhere plugin (3000).
+# Probe its own health path, NOT '/': with the game closed a healthy proxy
+# answers '/' with 502, and that must not read as a wedged proxy to be killed
+# and restarted every five minutes.
+$chatProxyDown = $false
+if (-not (Test-PortListening -Port 7543)) {
+    Add-Finding "chat-proxy (127.0.0.1:7543) is down - chat.ffxiv.be will 502"
+    $chatProxyDown = $true
+} else {
+    $http = Test-HttpOk -Port 7543 -Path '/.chat-proxy/health'
+    if ($http -eq $false) {
+        Add-Finding "chat-proxy holds 7543 but is not answering its health probe - chat.ffxiv.be will 502"
+        $chatProxyDown = $true
+        if (-not $ReportOnly) {
+            $ownerPid = Get-PortOwnerPid -Port 7543
+            if ($ownerPid -gt 0) {
+                Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 400
+                Add-Repair "Stopped wedged chat-proxy (PID $ownerPid)"
+            }
+        }
+    } else {
+        Write-HealthLog "chat-proxy is up and answering on 7543" 'OK'
+    }
+}
+
+if ($chatProxyDown -and -not $ReportOnly) {
+    if (-not (Test-Path $chatProxyScript)) {
+        Add-Failure "chat-proxy.js not found: $chatProxyScript (run start-console.bat, which copies it from the repo)"
+    } elseif (-not $nodeExe) {
+        Add-Failure "node.exe not found - run 3-setup-node.bat"
+    } else {
+        $proc = Start-Process -FilePath $nodeExe -ArgumentList $chatProxyScript `
+            -RedirectStandardError $chatProxyLog -RedirectStandardOutput "$chatProxyLog.out" `
+            -WindowStyle Hidden -PassThru
+        $proc.Id | Out-File -FilePath $chatProxyPidFile -Encoding utf8
+        Start-Sleep -Seconds 2
+        if (Test-PortListening -Port 7543) {
+            Add-Repair "Started chat-proxy (PID $($proc.Id)) -> 127.0.0.1:7543"
+        } else {
+            Add-Failure "chat-proxy was started (PID $($proc.Id)) but 7543 is still not listening - see $chatProxyLog"
         }
     }
 }

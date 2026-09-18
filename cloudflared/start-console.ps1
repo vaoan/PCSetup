@@ -26,6 +26,9 @@ $sshwiftyLog   = "$sshwiftyDir\sshwifty.log"
 $proxyScript   = "$launcherDir\console-proxy.js"
 $proxyLog      = "$launcherDir\proxy.log"
 $proxyPidFile  = "$launcherDir\proxy.pid"
+$chatProxyScript  = "$launcherDir\chat-proxy.js"
+$chatProxyLog     = "$launcherDir\chat-proxy.log"
+$chatProxyPidFile = "$launcherDir\chat-proxy.pid"
 $sshProxyScript = "$PSScriptRoot\ssh-proxy.js"
 $sshProxyLog   = "$launcherDir\ssh-proxy.log"
 $sshProxyPidFile = "$launcherDir\ssh-proxy.pid"
@@ -285,7 +288,8 @@ $repoCfDir = 'Z:\Users\Heiner\Documents\PCSetup\cloudflared'
 if (Test-Path $repoCfDir) {
     foreach ($asset in 'console-proxy.js', 'console-launcher.js',
                        'console-pwa-manifest.webmanifest', 'console-pwa-sw.js',
-                       'console-pwa-icon-192.png', 'console-pwa-icon-512.png') {
+                       'console-pwa-icon-192.png', 'console-pwa-icon-512.png',
+                       'chat-proxy.js') {
         $src = Join-Path $repoCfDir $asset
         if (Test-Path $src) { Copy-Item $src (Join-Path $launcherDir $asset) -Force }
     }
@@ -315,6 +319,37 @@ $proxyProc = Start-Process -FilePath $nodeExe `
     -PassThru
 $proxyProc.Id | Out-File -FilePath $proxyPidFile -Encoding utf8
 Write-Log "Launcher proxy: started (PID $($proxyProc.Id)) -> 127.0.0.1:7681"
+
+# -- 5b. Restart chat-proxy.js on port 7543 -----------------------------------
+# chat.ffxiv.be's origin is the ChatAnywhere Dalamud plugin inside the game
+# process (127.0.0.1:3000). Its server ends every connection with a TCP RST,
+# and Windows discards unread receive data on RST, so cloudflared - which reads
+# at the edge's pace - got the 462 KB JS bundle truncated 6 times in 10.
+# chat-proxy.js drains the origin at loopback speed, buffers, verifies and
+# retries; cloudflared's ingress points at 7543 instead of 3000. It belongs to
+# ffxivbe-tunnel, not the console, but it is a Windows-side Node process like
+# the others here, so it shares this launcher and console-health.ps1's watchdog.
+if (Test-Path $chatProxyScript) {
+    if (Test-Path $chatProxyPidFile) {
+        $oldPid = (Get-Content $chatProxyPidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldPid -match '^\d+$') {
+            Stop-Process -Id ([int]$oldPid) -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item $chatProxyPidFile -Force -ErrorAction SilentlyContinue
+    }
+    Stop-ListenerOnPort -Port 7543
+    Start-Sleep -Milliseconds 300
+
+    $chatProxyProc = Start-Process -FilePath $nodeExe `
+        -ArgumentList $chatProxyScript `
+        -RedirectStandardError $chatProxyLog `
+        -WindowStyle Hidden `
+        -PassThru
+    $chatProxyProc.Id | Out-File -FilePath $chatProxyPidFile -Encoding utf8
+    Write-Log "Chat proxy: started (PID $($chatProxyProc.Id)) -> 127.0.0.1:7543 -> 127.0.0.1:3000"
+} else {
+    Write-Log "Chat proxy: $chatProxyScript not found (repo not reachable?) - chat.ffxiv.be will 502 until it is deployed"
+}
 
 # -- 6. Restart cloudflared via the self-healing supervisor -------------------
 # The supervisor waits for the Cloudflare edge to be reachable before launching

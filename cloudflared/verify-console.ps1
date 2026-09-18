@@ -275,7 +275,8 @@ function Test-DeployedCopies {
     # copy here silently serves an old icon/manifest even when the repo is right.
     foreach ($name in 'console-proxy.js', 'console-launcher.js',
                       'console-pwa-manifest.webmanifest', 'console-pwa-sw.js',
-                      'console-pwa-icon-192.png', 'console-pwa-icon-512.png') {
+                      'console-pwa-icon-192.png', 'console-pwa-icon-512.png',
+                      'chat-proxy.js') {
         $deployed = Join-Path $launcherDir $name
         $repo     = Join-Path $repoCf $name
         if (-not (Test-Path $deployed)) {
@@ -364,9 +365,13 @@ Test-ProcessMatch -Name 'cloudflared ssh tunnel' -Pattern 'run ssh-tunnel'
 Test-ProcessMatch -Name 'cloudflared dev tunnel' -Pattern 'cloudflared-dev|dev-config\.yml|dev-console'
 Test-ProcessMatch -Name 'SSHwifty' -Pattern 'sshwifty_windows_amd64\.exe'
 Test-ProcessMatch -Name 'console proxy' -Pattern 'console-proxy\.js'
+Test-ProcessMatch -Name 'chat proxy' -Pattern 'chat-proxy\.js'
 
-# Local origin checks for the web tunnel
+# Local origin checks for the web tunnel. chat.ffxiv.be is cloudflared -> chat-proxy.js
+# (7543) -> the ChatAnywhere plugin inside the game (3000); the origin check only
+# passes while the game is running, the proxy's health path passes regardless.
 Test-LocalHttp -Name 'web origin' -Url 'http://127.0.0.1:7542/'
+Test-LocalHttp -Name 'chat proxy' -Url 'http://127.0.0.1:7543/.chat-proxy/health'
 Test-LocalHttp -Name 'chat origin' -Url 'http://127.0.0.1:3000/'
 
 # Console / WSL checks

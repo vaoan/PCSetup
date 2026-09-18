@@ -154,7 +154,7 @@ Current Worker deployment caveat:
 ### Tunnel not connecting
 - Check the local origins are running:
   - `curl http://127.0.0.1:7542`
-  - `curl http://127.0.0.1:3000`
+  - `curl http://127.0.0.1:7543/.chat-proxy/health` (chat-proxy.js; `3000` is the ChatAnywhere plugin behind it, only up while the game runs)
 - Verify tunnel config: `cloudflared tunnel info ffxivbe-tunnel`
 - Check credentials file exists at path in config.yml
 

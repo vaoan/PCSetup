@@ -453,8 +453,10 @@ protocol: http2
 ingress:
   - hostname: www.$webHostname
     service: http://127.0.0.1:7542
+  # chat.$webHostname is the ChatAnywhere Dalamud plugin on 3000, reached through
+  # chat-proxy.js on 7543 (the plugin RSTs every connection; see the proxy header).
   - hostname: chat.$webHostname
-    service: http://127.0.0.1:3000
+    service: http://127.0.0.1:7543
   - service: http_status:404
 "@
 

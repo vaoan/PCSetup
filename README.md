@@ -85,7 +85,7 @@ Important operational note:
 ### `ffxivbe-tunnel`
 
 Requires these local origins to exist:
-- `chat.ffxiv.be` -> `http://127.0.0.1:3000`
+- `chat.ffxiv.be` -> `http://127.0.0.1:7543` (`chat-proxy.js`, buffering in front of the ChatAnywhere plugin on 3000)
 
 The tunnel installer and recovery script only manage the `ffxivbe-tunnel` task and its config. They do not stop or rewrite other Cloudflare tunnels.
 
