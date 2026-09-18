@@ -103,30 +103,12 @@ function Get-WatchedCpuSeconds {
     return $secs
 }
 
-function Invoke-CommandWithStatus {
-    # Runs a native command with stdout/stderr captured to files and redraws ONE status line in
-    # place while it runs. Nothing is drawn for the first second, so quick commands stay silent;
-    # once drawing starts the line is cut to the window width and overwritten with `r, so a
-    # 20-minute step still occupies one row of the log. When output is redirected (CI) a plain
-    # line goes out only when the whole percentage changes or every 30 s.
-    #
-    #   Enabling .NET Framework 3.5 [#######-------------]  37.8% / | 4m 12s | net 2.4 MB/s (61 MB) | cpu 43% | CBS.log +18.3 MB | DISM Package Manager: ...
-    #
-    # Signals, most important first (the tail is what gets cut on a narrow window):
-    #   - the tool's own percentage, when it prints one (DISM does; most installers do not);
-    #   - a spinner that ticks every redraw, so the line moves even when every number is flat;
-    #   - elapsed time;
-    #   - network receive rate and total since the step began - the one thing that moves while
-    #     DISM sits at 37.8 % fetching .NET 3.5 from Windows Update, or wsl --install downloads;
-    #   - CPU of the launched process plus -WatchProcess names (TiWorker, msiexec) plus the
-    #     svchost processes hosting -WatchService names (wuauserv, DoSvc, BITS): together with
-    #     the network figure this says which phase the step is in;
-    #   - growth of -GrowthLog (CBS.log grows the whole time servicing works);
-    #   - the last real message in -ActivityLog (dism.log).
-    #
-    # Why: `dism /Enable-Feature NetFx3` sat at 37.8 % for minutes in the VirtualBox run and the
-    # bar alone cannot tell "downloading" from "hung"; Start-Process -Wait on an installer or
-    # wsl --install showed nothing at all. Returns @{ ExitCode; Output; Error; Elapsed }.
+function Start-CommandCapture {
+    # Launches a native command with stdout/stderr captured to temp files and returns a job
+    # (a hashtable) that Wait-CommandWithStatus can draw the status line for - now, or minutes
+    # later. Splitting start from wait is what lets step 0 kick off the .NET 3.5 enable at the
+    # top, install everything else meanwhile, and attach the same line to it only if it is
+    # still running when something needs it.
     param(
         [Parameter(Mandatory)][string]$Label,
         [Parameter(Mandatory)][string]$FilePath,
@@ -139,40 +121,6 @@ function Invoke-CommandWithStatus {
     )
     $stdout = Join-Path $env:TEMP ("pcsetup-status-{0}.out" -f [guid]::NewGuid().ToString('N'))
     $stderr = "$stdout.err"
-    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
-    $spinner = '|/-\'
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    $growthStart = if ($GrowthLog -and (Test-Path -LiteralPath $GrowthLog)) { (Get-Item -LiteralPath $GrowthLog).Length } else { 0 }
-    $netStart = Get-NetworkBytesReceived
-    $netLast = $netStart
-    $netLastAt = 0.0
-    $netRate = 0.0
-    $cpuLast = 0.0
-    $cpuLastAt = 0.0
-    $cpuPct = 0.0
-    $cores = [Math]::Max(1, [Environment]::ProcessorCount)
-    $lastLen = 0
-    $lastWholePct = -1
-    $lastPlainAt = -60.0
-    $tick = 0
-
-    $readOut = {
-        if (-not (Test-Path -LiteralPath $stdout)) { return '' }
-        try {
-            $fs = [IO.File]::Open($stdout, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-            try { $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::Default); $sr.ReadToEnd() } finally { $fs.Close() }
-        }
-        catch { '' }
-    }
-    $fmtElapsed = {
-        param([double]$s)
-        if ($s -ge 3600) { '{0}h {1:00}m' -f [int][Math]::Floor($s / 3600), [int]([Math]::Floor($s / 60) % 60) }
-        else { '{0}m {1:00}s' -f [int][Math]::Floor($s / 60), [int]($s % 60) }
-    }
-    $fmtBytes = {
-        param([double]$b)
-        if ($b -ge 1GB) { '{0:0.00} GB' -f ($b / 1GB) } else { '{0:0.0} MB' -f ($b / 1MB) }
-    }
 
     # Start-Process rejects an empty string inside -ArgumentList, and a caller that builds its
     # arguments from a variable can easily hand one over.
@@ -189,89 +137,192 @@ function Invoke-CommandWithStatus {
     # Touch the handle now, or .ExitCode is $null after the process exits (PowerShell only
     # caches the handle on first access; without this DISM's 3010 "reboot required" is lost).
     $null = $proc.Handle
-    $svcIds = @(Get-ServiceProcessIds $WatchService)
-    $svcIdsAt = 0.0
-    $cpuLast = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess -ExtraIds $svcIds
+
+    $job = @{
+        Label        = $Label
+        Process      = $proc
+        Stdout       = $stdout
+        Stderr       = $stderr
+        WatchProcess = $WatchProcess
+        WatchService = $WatchService
+        ActivityLog  = $ActivityLog
+        GrowthLog    = $GrowthLog
+        QuietSeconds = $QuietSeconds
+        Clock        = [Diagnostics.Stopwatch]::StartNew()
+        GrowthStart  = if ($GrowthLog -and (Test-Path -LiteralPath $GrowthLog)) { (Get-Item -LiteralPath $GrowthLog).Length } else { 0 }
+        NetStart     = 0
+        NetLast      = 0
+        NetLastAt    = 0.0
+        NetRate      = 0.0
+        CpuLast      = 0.0
+        CpuLastAt    = 0.0
+        CpuPct       = 0.0
+        SvcIds       = @(Get-ServiceProcessIds $WatchService)
+        SvcIdsAt     = 0.0
+        Tick         = 0
+        LastLen      = 0
+        LastWholePct = -1
+        LastPlainAt  = -60.0
+    }
+    $job.NetStart = Get-NetworkBytesReceived
+    $job.NetLast = $job.NetStart
+    $job.CpuLast = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess -ExtraIds $job.SvcIds
+    return $job
+}
+
+function Test-CommandCaptureRunning {
+    param([Parameter(Mandatory)][hashtable]$Job)
+    return (-not $Job.Process.HasExited)
+}
+
+function Read-CommandCaptureOutput {
+    # The tool still holds the file, so it is opened shared; wsl.exe writes UTF-16, which
+    # arrives as text full of NULs, so those are stripped.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    try {
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try { $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::Default); ($sr.ReadToEnd()) -replace "`0", '' } finally { $fs.Close() }
+    }
+    catch { '' }
+}
+
+function Wait-CommandWithStatus {
+    # Draws ONE status line in place for a job from Start-CommandCapture until its process
+    # exits, then returns @{ ExitCode; Output; Error; Elapsed } and removes the temp files.
+    # Nothing is drawn for the job's first QuietSeconds, so quick commands stay silent; a job
+    # attached to later than that draws immediately. The line is cut to the window width and
+    # overwritten with `r, so a 20-minute step still occupies one row of the log. When output
+    # is redirected (CI) a plain line goes out only when the whole percentage changes or every
+    # 30 s.
+    #
+    #   Enabling .NET Framework 3.5 [#######-------------]  37.8% / | 4m 12s | net 2.4 MB/s (61 MB) | cpu 43% | CBS.log +18.3 MB | DISM Package Manager: ...
+    #
+    # Signals, most important first (the tail is what gets cut on a narrow window):
+    #   - the tool's own percentage, when it prints one (DISM does; most installers do not);
+    #   - a spinner that ticks every redraw, so the line moves even when every number is flat;
+    #   - elapsed time since the job started;
+    #   - network receive rate and total since the job began - the one thing that moves while
+    #     DISM sits at 37.8 % fetching .NET 3.5 from Windows Update, or wsl --install downloads;
+    #   - CPU of the launched process plus -WatchProcess names (TiWorker, msiexec) plus the
+    #     svchost processes hosting -WatchService names (wuauserv, DoSvc, BITS): together with
+    #     the network figure this says which phase the step is in;
+    #   - growth of -GrowthLog (CBS.log grows the whole time servicing works);
+    #   - the last real message in -ActivityLog (dism.log).
+    param([Parameter(Mandatory)][hashtable]$Job)
+    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
+    $spinner = '|/-\'
+    $cores = [Math]::Max(1, [Environment]::ProcessorCount)
+    $proc = $Job.Process
+    $fmtElapsed = {
+        param([double]$s)
+        if ($s -ge 3600) { '{0}h {1:00}m' -f [int][Math]::Floor($s / 3600), [int]([Math]::Floor($s / 60) % 60) }
+        else { '{0}m {1:00}s' -f [int][Math]::Floor($s / 60), [int]($s % 60) }
+    }
+    $fmtBytes = {
+        param([double]$b)
+        if ($b -ge 1GB) { '{0:0.00} GB' -f ($b / 1GB) } else { '{0:0.0} MB' -f ($b / 1MB) }
+    }
     try {
         while (-not $proc.HasExited) {
             Start-Sleep -Milliseconds 500
-            $tick++
-            $now = $clock.Elapsed.TotalSeconds
-            if ($now -lt $QuietSeconds) { continue }
+            $Job.Tick++
+            $now = $Job.Clock.Elapsed.TotalSeconds
+            if ($now -lt $Job.QuietSeconds) { continue }
 
-            $pct = Get-ProgressPercent (& $readOut)
+            $pct = Get-ProgressPercent (Read-CommandCaptureOutput $Job.Stdout)
             if ($null -ne $pct) {
                 $filled = [int][Math]::Round($pct / 5)
-                $head = '{0} [{1}{2}] {3,5:0.0}% {4}' -f $Label, ('#' * $filled), ('-' * (20 - $filled)), $pct, $spinner[$tick % 4]
+                $head = '{0} [{1}{2}] {3,5:0.0}% {4}' -f $Job.Label, ('#' * $filled), ('-' * (20 - $filled)), $pct, $spinner[$Job.Tick % 4]
             }
             else {
-                $head = '{0} {1}' -f $Label, $spinner[$tick % 4]
+                $head = '{0} {1}' -f $Job.Label, $spinner[$Job.Tick % 4]
             }
             $parts = New-Object System.Collections.Generic.List[string]
             $parts.Add((& $fmtElapsed $now))
 
             # Rates are sampled once a second, not per tick, so they do not flicker.
             $netNow = Get-NetworkBytesReceived
-            if (($now - $netLastAt) -ge 1.0) {
-                $netRate = [Math]::Max(0.0, ($netNow - $netLast) / ($now - $netLastAt))
-                $netLast = $netNow
-                $netLastAt = $now
+            if (($now - $Job.NetLastAt) -ge 1.0) {
+                $Job.NetRate = [Math]::Max(0.0, ($netNow - $Job.NetLast) / ($now - $Job.NetLastAt))
+                $Job.NetLast = $netNow
+                $Job.NetLastAt = $now
             }
-            $parts.Add(('net {0:0.0} MB/s ({1})' -f ($netRate / 1MB), (& $fmtBytes ([Math]::Max(0, $netNow - $netStart)))))
+            $parts.Add(('net {0:0.0} MB/s ({1})' -f ($Job.NetRate / 1MB), (& $fmtBytes ([Math]::Max(0, $netNow - $Job.NetStart)))))
 
-            if (($now - $cpuLastAt) -ge 1.0) {
-                if ($WatchService -and ($now - $svcIdsAt) -ge 5.0) {
-                    $svcIds = @(Get-ServiceProcessIds $WatchService)
-                    $svcIdsAt = $now
+            if (($now - $Job.CpuLastAt) -ge 1.0) {
+                if ($Job.WatchService -and ($now - $Job.SvcIdsAt) -ge 5.0) {
+                    $Job.SvcIds = @(Get-ServiceProcessIds $Job.WatchService)
+                    $Job.SvcIdsAt = $now
                 }
-                $cpuNow = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess -ExtraIds $svcIds
-                $cpuPct = [Math]::Min(100.0, [Math]::Max(0.0, ($cpuNow - $cpuLast) / ($now - $cpuLastAt) / $cores * 100.0))
-                $cpuLast = $cpuNow
-                $cpuLastAt = $now
+                $cpuNow = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $Job.WatchProcess -ExtraIds $Job.SvcIds
+                $Job.CpuPct = [Math]::Min(100.0, [Math]::Max(0.0, ($cpuNow - $Job.CpuLast) / ($now - $Job.CpuLastAt) / $cores * 100.0))
+                $Job.CpuLast = $cpuNow
+                $Job.CpuLastAt = $now
             }
-            $parts.Add(('cpu {0:0}%' -f $cpuPct))
+            $parts.Add(('cpu {0:0}%' -f $Job.CpuPct))
 
-            if ($GrowthLog -and (Test-Path -LiteralPath $GrowthLog)) {
-                $grown = (Get-Item -LiteralPath $GrowthLog).Length - $growthStart
-                $parts.Add(('{0} +{1}' -f (Split-Path -Leaf $GrowthLog), (& $fmtBytes ([Math]::Max(0, $grown)))))
+            if ($Job.GrowthLog -and (Test-Path -LiteralPath $Job.GrowthLog)) {
+                $grown = (Get-Item -LiteralPath $Job.GrowthLog).Length - $Job.GrowthStart
+                $parts.Add(('{0} +{1}' -f (Split-Path -Leaf $Job.GrowthLog), (& $fmtBytes ([Math]::Max(0, $grown)))))
             }
-            if ($ActivityLog) {
-                $msg = Get-DismLogMessage $ActivityLog
+            if ($Job.ActivityLog) {
+                $msg = Get-DismLogMessage $Job.ActivityLog
                 if ($msg) { $parts.Add($msg) }
             }
             $line = $head + ' | ' + ($parts -join ' | ')
 
             if ($redirected) {
                 $whole = if ($null -ne $pct) { [int][Math]::Floor($pct) } else { -1 }
-                if ($whole -ne $lastWholePct -or ($now - $lastPlainAt) -ge 30) {
+                if ($whole -ne $Job.LastWholePct -or ($now - $Job.LastPlainAt) -ge 30) {
                     Write-Host $line
-                    $lastWholePct = $whole
-                    $lastPlainAt = $now
+                    $Job.LastWholePct = $whole
+                    $Job.LastPlainAt = $now
                 }
             }
             else {
                 $width = try { [Console]::WindowWidth - 1 } catch { 119 }
                 if ($width -lt 40) { $width = 40 }
                 if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
-                $pad = if ($lastLen -gt $line.Length) { ' ' * ($lastLen - $line.Length) } else { '' }
+                $pad = if ($Job.LastLen -gt $line.Length) { ' ' * ($Job.LastLen - $line.Length) } else { '' }
                 Write-Host ("`r" + $line + $pad) -NoNewline
-                $lastLen = $line.Length
+                $Job.LastLen = $line.Length
             }
         }
         $proc.WaitForExit()
-        if (-not $redirected -and $lastLen -gt 0) { Write-Host '' }
-        # wsl.exe writes UTF-16, which arrives here as text full of NULs; strip them so callers
-        # can regex the output.
-        $output = (& $readOut) -replace "`0", ''
-        $errText = if (Test-Path -LiteralPath $stderr) { try { ([IO.File]::ReadAllText($stderr)) -replace "`0", '' } catch { '' } } else { '' }
+        if (-not $redirected -and $Job.LastLen -gt 0) { Write-Host '' }
+        $output = Read-CommandCaptureOutput $Job.Stdout
+        $errText = Read-CommandCaptureOutput $Job.Stderr
         return @{
             ExitCode = $proc.ExitCode
             Output   = $output
             Error    = $errText
-            Elapsed  = $clock.Elapsed
+            Elapsed  = $Job.Clock.Elapsed
         }
     }
     finally {
-        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $Job.Stdout, $Job.Stderr -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Invoke-CommandWithStatus {
+    # Start-CommandCapture + Wait-CommandWithStatus in one call: run a native command to
+    # completion behind the one-line status. Why this exists at all: `dism /Enable-Feature
+    # NetFx3` sat at 37.8 % for minutes in the VirtualBox run and the bar alone cannot tell
+    # "downloading" from "hung"; Start-Process -Wait on an installer or wsl --install showed
+    # nothing at all. Returns @{ ExitCode; Output; Error; Elapsed }.
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [string[]]$WatchProcess = @(),
+        [string[]]$WatchService = @(),
+        [string]$ActivityLog = '',
+        [string]$GrowthLog = '',
+        [double]$QuietSeconds = 1.0
+    )
+    $job = Start-CommandCapture -Label $Label -FilePath $FilePath -ArgumentList $ArgumentList `
+        -WatchProcess $WatchProcess -WatchService $WatchService -ActivityLog $ActivityLog `
+        -GrowthLog $GrowthLog -QuietSeconds $QuietSeconds
+    return (Wait-CommandWithStatus -Job $job)
 }

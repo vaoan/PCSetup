@@ -137,7 +137,7 @@ Describe "0-init-prereqs" {
     It "Delivery Optimization is set to HTTP-only before the first download, as tuning not a prerequisite" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
         $script | Should -Match 'function Set-DeliveryOptimizationHttpOnly'
-        $script | Should -Match "SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows\\\\DeliveryOptimization"
+        $script | Should -Match 'SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization'
         $script | Should -Match "SetValue\('DODownloadMode', 0"
         # Runs before the git bootstrap (the first download) and after dark mode.
         $script.IndexOf("Invoke-Logged 'Delivery Optimization'") | Should -BeGreaterThan $script.IndexOf("Invoke-Logged 'Dark mode'")
@@ -156,12 +156,23 @@ Describe "0-init-prereqs" {
         $bat | Should -Match '"npm prefix -g"'
         ($bat -split "`r?`n" | Where-Object { $_ -notmatch 'echo #' }) -join "`n" | Should -Not -Match 'npm\.cmd'
         # nvm 2.x's global prefix (the version folder) is not on PATH; script 3 puts it there once.
-        $bat | Should -Match "SetEnvironmentVariable\('Path', \(@\(\$npmPrefix\) \+ \$userPathParts -join ';'\), 'User'\)"
+        $bat | Should -Match 'SetEnvironmentVariable\(''Path'', \(@\(\$npmPrefix\) \+ \$userPathParts -join '';''\), ''User''\)'
     }
     It "NetFx3 is enabled from install media when sources\sxs is reachable, else Windows Update" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
         $script | Should -Match "Find-FeaturePayloadSource -Pattern '\*netfx3\*\.cab'"
         $script | Should -Match "-DisplayName '\.NET Framework 3\.5' -Source \`$netfxSource"
+        # Started in the background right after the DO tuning, before the first download, and
+        # collected (status line attached if still running) just before the WSL features - the
+        # next DISM call, which cannot overlap with it.
+        $script | Should -Match "\`$netfxPending = Start-WindowsFeatureEnable -FeatureName 'NetFx3'"
+        $script.IndexOf("Start-WindowsFeatureEnable -FeatureName 'NetFx3'") | Should -BeLessThan $script.IndexOf("Install-BootstrapTool -Name 'git'")
+        $script | Should -Match "-Source \`$netfxSource -Started \`$netfxPending"
+        $script.IndexOf('-Started $netfxPending') | Should -BeGreaterThan $script.IndexOf('& nvm use lts')
+        $script.IndexOf('-Started $netfxPending') | Should -BeLessThan $script.LastIndexOf('Enable-WslPrerequisites')
+        $helper = Get-Content (Join-Path $PSScriptRoot "..\sources\status-line.ps1") -Raw
+        $helper | Should -Match 'function Start-CommandCapture'
+        $helper | Should -Match 'function Wait-CommandWithStatus'
         # /LimitAccess is what keeps DISM off Windows Update; without it the media is only a hint.
         $script | Should -Match '"/Source:\$Source", ''/LimitAccess'''
         # And a media attempt that does not verify must fall through to the plain attempt.
@@ -203,6 +214,16 @@ exit 7
             $r.Output | Should -Match 'completed successfully'
             $r.Error | Should -Match 'warning on stderr'
             $r.Elapsed.TotalSeconds | Should -BeGreaterThan 1
+
+            # Start now, do other work, attach later: the background .NET 3.5 pattern.
+            $job = Start-CommandCapture -Label 'Background fake' -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $fake)
+            Test-CommandCaptureRunning -Job $job | Should -BeTrue
+            Start-Sleep -Milliseconds 300
+            $r2 = Wait-CommandWithStatus -Job $job
+            Test-CommandCaptureRunning -Job $job | Should -BeFalse
+            $r2.ExitCode | Should -Be 7
+            Get-ProgressPercent $r2.Output | Should -Be 100
+            Test-Path -LiteralPath $job.Stdout | Should -BeFalse
         }
         finally { Remove-Item $fake -Force -ErrorAction SilentlyContinue }
     }

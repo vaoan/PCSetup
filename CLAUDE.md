@@ -513,6 +513,19 @@ prerequisites.
 > (read back, `DoSvc` restarted so it applies now, `Get-DOConfig` reports `CdnOnly`); a refused
 > write is a warning, not a failure. Verified on this host and reverted afterwards.
 >
+> **.NET 3.5 is enabled in the background: started right after the DO tuning, collected just
+> before the WSL features.** `Start-WindowsFeatureEnable` launches DISM through
+> `Start-CommandCapture` (the status helper split into start + `Wait-CommandWithStatus`) and
+> returns a handle; git, Chocolatey, Scoop, Python, the redistributables, the .NET runtimes, Java
+> and Node all install while DISM sits in the Windows Update queue. `Enable-WindowsFeature
+> -Started` then collects it: if DISM is still running the same one-line status attaches to it
+> and *that* is where the wait shows (`... is still enabling in the background (running for
+> 212s); waiting for it...`); if it already finished, only the result is verified. The collect
+> point is fixed by one rule — it must precede the next DISM call (the WSL features), because
+> two CBS operations cannot run at once. A media attempt that fails still falls through to a
+> foreground WU attempt. If step 0 dies before the collect, the orphaned DISM simply finishes on
+> its own and the next run sees "already enabled".
+>
 > **.NET 3.5 is enabled from install media when any is reachable.** The 37.8 % stall is DISM
 > asking Windows Update for the 68 MB payload, and on a fresh install that request queues behind
 > WU's first-boot scan and Delivery Optimization's peer lookup (which finds nothing on a NAT VM).

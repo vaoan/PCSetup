@@ -627,7 +627,9 @@ function Find-FeaturePayloadSource {
         # Test-Path on a drive letter that does not exist (or a card reader with no card) is an
         # error, and under $ErrorActionPreference = 'Stop' it would abort the whole scan.
         try {
-            $sxs = Join-Path $root 'sources\sxs'
+            # [IO.Path]::Combine, not Join-Path: Join-Path validates the drive and throws on a
+            # letter that is not mounted right now.
+            $sxs = [IO.Path]::Combine($root, 'sources\sxs')
             if (-not (Test-Path -LiteralPath $sxs -ErrorAction SilentlyContinue)) { continue }
             $hit = Get-ChildItem -LiteralPath $sxs -Filter $Pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($hit) { return $sxs }
@@ -637,12 +639,12 @@ function Find-FeaturePayloadSource {
     return ''
 }
 
-function Enable-WindowsFeature {
-    # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'Enabled',
-    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is. With -Source the
-    # first attempt reads the payload from install media (/LimitAccess: never Windows Update);
-    # if that attempt does not verify - wrong build on the media, unreadable drive - the same
-    # enable is retried the normal way through Windows Update before reporting a failure.
+function Start-WindowsFeatureEnable {
+    # Kicks off `dism /Enable-Feature` in the background and returns a handle for
+    # Enable-WindowsFeature -Started, or $null when the feature is already on. The setup keeps
+    # installing while DISM waits in the Windows Update queue; nothing here needs .NET 3.5, so
+    # the only hard constraint is that the job is collected before the next DISM call (two
+    # CBS operations cannot run at once), which is what the WSL section does.
     param(
         [Parameter(Mandatory)][string]$FeatureName,
         [string]$DisplayName = $FeatureName,
@@ -650,26 +652,75 @@ function Enable-WindowsFeature {
     )
     if (Test-WindowsFeatureEnabled $FeatureName) {
         Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
-        return 'AlreadyEnabled'
+        return $null
     }
-    Write-Host "Enabling Windows feature: $DisplayName ($FeatureName)" -ForegroundColor Cyan
+    $extra = if ($Source) { @("/Source:$Source", '/LimitAccess') } else { @() }
+    $how = if ($Source) { "from $Source" } else { 'through Windows Update' }
+    Write-Host "Enabling Windows feature: $DisplayName ($FeatureName) in the background, $how - the rest of the setup continues meanwhile." -ForegroundColor Cyan
+    $job = Start-CommandCapture -Label ("Enabling $DisplayName" + $(if ($Source) { ' from media' } else { '' })) -FilePath 'dism.exe' `
+        -ArgumentList (@('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') + $extra) `
+        -WatchProcess @('TiWorker', 'TrustedInstaller') `
+        -WatchService @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller') `
+        -ActivityLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') `
+        -GrowthLog (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
+    return @{ Job = $job; Extra = $extra; Source = $Source }
+}
+
+function Enable-WindowsFeature {
+    # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'Enabled',
+    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is. With -Source the
+    # first attempt reads the payload from install media (/LimitAccess: never Windows Update);
+    # if that attempt does not verify - wrong build on the media, unreadable drive - the same
+    # enable is retried the normal way through Windows Update before reporting a failure.
+    # With -Started (from Start-WindowsFeatureEnable) the first attempt is the job already
+    # running: the status line attaches to it if it is still going, otherwise its result is
+    # just read. $null for -Started means "nothing was started" and the normal path runs.
+    param(
+        [Parameter(Mandatory)][string]$FeatureName,
+        [string]$DisplayName = $FeatureName,
+        [string]$Source = '',
+        [hashtable]$Started = $null
+    )
     $attempts = @()
-    if ($Source) { $attempts += @{ Label = "Enabling $DisplayName from media"; Extra = @("/Source:$Source", '/LimitAccess') } }
-    $attempts += @{ Label = "Enabling $DisplayName"; Extra = @() }
+    if ($Started) {
+        $attempts += @{ Label = $Started.Job.Label; Extra = $Started.Extra; Job = $Started.Job }
+        if ($Started.Extra.Count -gt 0) { $attempts += @{ Label = "Enabling $DisplayName"; Extra = @(); Job = $null } }
+    }
+    else {
+        if (Test-WindowsFeatureEnabled $FeatureName) {
+            Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
+            return 'AlreadyEnabled'
+        }
+        Write-Host "Enabling Windows feature: $DisplayName ($FeatureName)" -ForegroundColor Cyan
+        if ($Source) { $attempts += @{ Label = "Enabling $DisplayName from media"; Extra = @("/Source:$Source", '/LimitAccess'); Job = $null } }
+        $attempts += @{ Label = "Enabling $DisplayName"; Extra = @(); Job = $null }
+    }
     foreach ($attempt in $attempts) {
-        if ($attempt.Extra.Count -gt 0) {
-            Write-Host "  payload source: $Source (Windows Update not contacted)" -ForegroundColor Cyan
+        if ($attempt.Job) {
+            $sinceStart = '{0:0}s' -f $attempt.Job.Clock.Elapsed.TotalSeconds
+            if (Test-CommandCaptureRunning -Job $attempt.Job) {
+                Write-Host "$DisplayName is still enabling in the background (running for $sinceStart); waiting for it..." -ForegroundColor Cyan
+            }
+            else {
+                Write-Host "$DisplayName finished enabling in the background ($sinceStart); checking the result..." -ForegroundColor Cyan
+            }
+            $r = Wait-CommandWithStatus -Job $attempt.Job
         }
-        $status = @{
-            Label        = $attempt.Label
-            FilePath     = 'dism.exe'
-            ArgumentList = @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') + $attempt.Extra
-            WatchProcess = @('TiWorker', 'TrustedInstaller')
-            WatchService = @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller')
-            ActivityLog  = (Join-Path $env:SystemRoot 'Logs\DISM\dism.log')
-            GrowthLog    = (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
+        else {
+            if ($attempt.Extra.Count -gt 0) {
+                Write-Host "  payload source: $Source (Windows Update not contacted)" -ForegroundColor Cyan
+            }
+            $status = @{
+                Label        = $attempt.Label
+                FilePath     = 'dism.exe'
+                ArgumentList = @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') + $attempt.Extra
+                WatchProcess = @('TiWorker', 'TrustedInstaller')
+                WatchService = @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller')
+                ActivityLog  = (Join-Path $env:SystemRoot 'Logs\DISM\dism.log')
+                GrowthLog    = (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
+            }
+            $r = Invoke-CommandWithStatus @status
         }
-        $r = Invoke-CommandWithStatus @status
         $elapsed = '{0:0}s' -f $r.Elapsed.TotalSeconds
         if (Test-WindowsFeatureEnabled $FeatureName) {
             Write-Host "$DisplayName enabled (verified, $elapsed)." -ForegroundColor Green
@@ -772,6 +823,28 @@ if ($env:PCSETUP_CI -eq '1') {
 elseif (-not (Invoke-Logged 'Delivery Optimization' { Set-DeliveryOptimizationHttpOnly })) {
     Write-Host "Delivery Optimization could not be set to HTTP-only; continuing (downloads may start slower)." -ForegroundColor Yellow
 }
+
+# .NET Framework 3.5 starts NOW, in the background, and is collected just before the WSL
+# features (the next DISM call). On a fresh install DISM has no local payload and waits in the
+# Windows Update queue for minutes - that wait now overlaps with everything installed below
+# instead of blocking it. Install media still attached (VM ISO, USB stick) carries the payload
+# and is used when present, which makes it seconds instead. Nothing in this setup needs 3.5;
+# it stays a warning when it cannot be enabled.
+$netfxSource = ''
+$netfxPending = $null
+try {
+    $netfxSource = Find-FeaturePayloadSource -Pattern '*netfx3*.cab'
+    if ($netfxSource) {
+        Write-Host "Install media found at $netfxSource - .NET Framework 3.5 will be enabled from it." -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "No install media with sources\sxs found; .NET Framework 3.5 comes from Windows Update in the background (attach the Windows ISO/USB to make it instant)." -ForegroundColor Yellow
+    }
+    $netfxPending = Start-WindowsFeatureEnable -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5' -Source $netfxSource
+}
+catch {
+    Write-Host ".NET Framework 3.5 could not be started in the background ($($_.Exception.Message)); it will be enabled in the foreground later." -ForegroundColor Yellow
+}
 Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
 Refresh-SetupEnvironment
@@ -864,30 +937,6 @@ if (-not (Install-FirstAvailableScoopPackage 'Visual C++ redistributables' @('vc
     Install-WingetPackage 'Microsoft.VCRedist.2015+.x86' 'Visual C++ Redistributable x86' | Out-Null
 }
 
-# .NET Framework 3.5 has no local payload on a fresh install, so DISM fetches it from Windows
-# Update and its own bar sits at ~37 % for minutes. Enable-WindowsFeature keeps one live status
-# line going (elapsed, CBS.log growth, last dism.log message) so that wait is visibly alive.
-# Still a warning rather than a failure when it cannot be enabled, as before: nothing later in
-# the run depends on 3.5, and a machine without Windows Update access would otherwise fail
-# step 0 over an optional runtime.
-try {
-    # Install media still attached (VM ISO, USB stick) carries the payload: use it and skip the
-    # Windows Update queue that parked the first VM run at 37.8 % for minutes.
-    $netfxSource = Find-FeaturePayloadSource -Pattern '*netfx3*.cab'
-    if ($netfxSource) {
-        Write-Host "Install media found at $netfxSource - .NET Framework 3.5 will be enabled from it." -ForegroundColor Cyan
-    }
-    else {
-        Write-Host "No install media with sources\sxs found; .NET Framework 3.5 comes from Windows Update (slow on a fresh install - attach the Windows ISO/USB to skip that)." -ForegroundColor Yellow
-    }
-    if ((Enable-WindowsFeature -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5' -Source $netfxSource) -eq 'Failed') {
-        Write-Host ".NET Framework 3.5 could not be enabled; continuing (optional)." -ForegroundColor Yellow
-    }
-}
-catch {
-    Write-Host ".NET Framework 3.5 enablement skipped: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
 foreach ($runtime in @(
     @{ Id = 'Microsoft.DotNet.DesktopRuntime.6'; Name = '.NET 6 Desktop Runtime' },
     @{ Id = 'Microsoft.DotNet.DesktopRuntime.8'; Name = '.NET 8 Desktop Runtime' },
@@ -931,6 +980,18 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw 'npm is not available after nvm use lts.'
 }
 Write-Host ("npm resolved to {0}" -f (Get-Command npm).Source) -ForegroundColor Green
+
+# Collect the .NET Framework 3.5 enable started at the top. If DISM is still busy, the status
+# line attaches to it here and this is where the wait shows; if it already finished, only the
+# result is checked. Must precede the WSL features: two DISM/CBS operations cannot run at once.
+try {
+    if ((Enable-WindowsFeature -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5' -Source $netfxSource -Started $netfxPending) -eq 'Failed') {
+        Write-Host ".NET Framework 3.5 could not be enabled; continuing (optional)." -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host ".NET Framework 3.5 enablement skipped: $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 if ($env:PCSETUP_CI -eq '1') {
     # A Server Core container has no hypervisor, no Appx surface and no winget, so every step
