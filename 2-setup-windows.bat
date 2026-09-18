@@ -114,7 +114,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         $tmp = $env:TEMP + '\' + ($name -replace '\W', '') + 'Setup.msi'
 >>"%SCRIPT%" echo         if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
->>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name (msi)" -FilePath msiexec.exe -ArgumentList "/i", $tmp, "/qn", "/norestart" -WatchProcess msiexec
+>>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name (msi)" -FilePath msiexec.exe -ArgumentList "/i", $tmp, "/qn", "/norestart" -WatchProcess msiexec -WatchService msiserver
 >>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
@@ -197,7 +197,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if ($asset) {
 >>"%SCRIPT%" echo             $dokanMsi = "$env:TEMP\DokanSetup.msi"
 >>"%SCRIPT%" echo             ^& curl.exe -fL -o $dokanMsi $asset.browser_download_url --silent --show-error
->>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing Dokan (msi)" -FilePath msiexec.exe -ArgumentList "/i", $dokanMsi, "/qn", "/norestart" -WatchProcess msiexec
+>>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing Dokan (msi)" -FilePath msiexec.exe -ArgumentList "/i", $dokanMsi, "/qn", "/norestart" -WatchProcess msiexec -WatchService msiserver
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     } catch { }
 >>"%SCRIPT%" echo     if (Test-DokanInstalled) { return $true }

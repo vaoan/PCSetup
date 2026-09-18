@@ -114,6 +114,10 @@ Describe "0-init-prereqs" {
         $script | Should -Match 'function Enable-WindowsFeature'
         $script | Should -Match "Enable-WindowsFeature -FeatureName 'NetFx3'"
         $script | Should -Match "-WatchProcess @\('TiWorker', 'TrustedInstaller'\)"
+        # The download half of a DISM enable runs in svchost-hosted services; they are resolved
+        # to PIDs through Win32_Service so the CPU figure moves during that phase too.
+        $script | Should -Match "-WatchService @\('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller'\)"
+        $helper | Should -Match 'Win32_Service'
         # No bare dism call may remain: it draws its own bar, which cannot tell "downloading
         # from Windows Update" from "hung", and nothing verified the feature afterwards.
         $script | Should -Not -Match '& dism\.exe'
@@ -143,7 +147,7 @@ exit 7
         try {
             # An empty element in -ArgumentList used to be a Start-Process binding error; a caller
             # that builds arguments from variables can hand one over.
-            $r = Invoke-CommandWithStatus -Label 'Fake install' -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '', '-ExecutionPolicy', 'Bypass', '-File', $fake) -WatchProcess @('powershell')
+            $r = Invoke-CommandWithStatus -Label 'Fake install' -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '', '-ExecutionPolicy', 'Bypass', '-File', $fake) -WatchProcess @('powershell') -WatchService @('Dnscache', 'no-such-service')
             $r.ExitCode | Should -Be 7
             Get-ProgressPercent $r.Output | Should -Be 100
             $r.Output | Should -Match 'completed successfully'
@@ -212,7 +216,7 @@ Describe "2-setup-windows" {
         $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
         $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$name" -FilePath \$tmp'
-        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing Dokan \(msi\)"[^\r\n]*-WatchProcess msiexec'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing Dokan \(msi\)"[^\r\n]*-WatchProcess msiexec -WatchService msiserver'
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing IceDrive"'
     }
     It "Python installed" {

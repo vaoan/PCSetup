@@ -63,17 +63,42 @@ function Get-NetworkBytesReceived {
     return $total
 }
 
+function Get-ServiceProcessIds {
+    # PIDs of the processes hosting the named services (Win32_Service). Costs ~220 ms even when
+    # warm, so Invoke-CommandWithStatus refreshes it every 5 s rather than on every sample -
+    # a service restarting mid-install is picked up on the next refresh.
+    param([string[]]$Services)
+    $ids = @()
+    if (-not $Services) { return $ids }
+    $filter = (@($Services | ForEach-Object { "Name='$_'" })) -join ' OR '
+    try {
+        foreach ($svc in @(Get-CimInstance -ClassName Win32_Service -Filter $filter -ErrorAction Stop)) {
+            if ($svc.ProcessId) { $ids += [int]$svc.ProcessId }
+        }
+    }
+    catch { }
+    return $ids
+}
+
 function Get-WatchedCpuSeconds {
-    # Total CPU seconds burned so far by the launched process plus any named helper processes
-    # (TiWorker/TrustedInstaller for DISM, msiexec's service for an MSI). Processes come and go
-    # during an install, so a negative delta is clamped to 0 by the caller.
-    param([int]$ProcessId, [string[]]$Names)
+    # Total CPU seconds burned so far by the launched process, any named helper processes
+    # (TiWorker/TrustedInstaller for DISM, msiexec for an MSI) and the processes hosting the
+    # named services. Services matter because the download half of a DISM enable happens in
+    # Windows Update / Delivery Optimization / BITS, which live in svchost.exe and cannot be
+    # picked by process name - without them "cpu 0%" showed while the payload was streaming in.
+    # Service PIDs come from Get-ServiceProcessIds; the caller passes them as -ExtraIds.
+    # Processes come and go during an install, so a negative delta is clamped to 0 by the caller.
+    param([int]$ProcessId, [string[]]$Names, [int[]]$ExtraIds)
+    $ids = New-Object System.Collections.Generic.HashSet[int]
+    if ($ProcessId) { [void]$ids.Add($ProcessId) }
+    if ($Names) {
+        foreach ($p in @(Get-Process -Name $Names -ErrorAction SilentlyContinue)) { [void]$ids.Add($p.Id) }
+    }
+    foreach ($id in @($ExtraIds)) { if ($id) { [void]$ids.Add([int]$id) } }
     $secs = 0.0
-    $procs = @()
-    if ($ProcessId) { $procs += @(Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) }
-    if ($Names) { $procs += @(Get-Process -Name $Names -ErrorAction SilentlyContinue) }
-    foreach ($p in $procs) {
-        try { $secs += $p.TotalProcessorTime.TotalSeconds } catch { }
+    foreach ($id in $ids) {
+        $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+        if ($p) { try { $secs += $p.TotalProcessorTime.TotalSeconds } catch { } }
     }
     return $secs
 }
@@ -93,8 +118,9 @@ function Invoke-CommandWithStatus {
     #   - elapsed time;
     #   - network receive rate and total since the step began - the one thing that moves while
     #     DISM sits at 37.8 % fetching .NET 3.5 from Windows Update, or wsl --install downloads;
-    #   - CPU of the launched process plus -WatchProcess names (TiWorker, msiexec): idle while a
-    #     download runs, busy while it installs, so the two together say which phase this is;
+    #   - CPU of the launched process plus -WatchProcess names (TiWorker, msiexec) plus the
+    #     svchost processes hosting -WatchService names (wuauserv, DoSvc, BITS): together with
+    #     the network figure this says which phase the step is in;
     #   - growth of -GrowthLog (CBS.log grows the whole time servicing works);
     #   - the last real message in -ActivityLog (dism.log).
     #
@@ -106,6 +132,7 @@ function Invoke-CommandWithStatus {
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$ArgumentList = @(),
         [string[]]$WatchProcess = @(),
+        [string[]]$WatchService = @(),
         [string]$ActivityLog = '',
         [string]$GrowthLog = '',
         [double]$QuietSeconds = 1.0
@@ -162,7 +189,9 @@ function Invoke-CommandWithStatus {
     # Touch the handle now, or .ExitCode is $null after the process exits (PowerShell only
     # caches the handle on first access; without this DISM's 3010 "reboot required" is lost).
     $null = $proc.Handle
-    $cpuLast = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess
+    $svcIds = @(Get-ServiceProcessIds $WatchService)
+    $svcIdsAt = 0.0
+    $cpuLast = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess -ExtraIds $svcIds
     try {
         while (-not $proc.HasExited) {
             Start-Sleep -Milliseconds 500
@@ -191,7 +220,11 @@ function Invoke-CommandWithStatus {
             $parts.Add(('net {0:0.0} MB/s ({1})' -f ($netRate / 1MB), (& $fmtBytes ([Math]::Max(0, $netNow - $netStart)))))
 
             if (($now - $cpuLastAt) -ge 1.0) {
-                $cpuNow = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess
+                if ($WatchService -and ($now - $svcIdsAt) -ge 5.0) {
+                    $svcIds = @(Get-ServiceProcessIds $WatchService)
+                    $svcIdsAt = $now
+                }
+                $cpuNow = Get-WatchedCpuSeconds -ProcessId $proc.Id -Names $WatchProcess -ExtraIds $svcIds
                 $cpuPct = [Math]::Min(100.0, [Math]::Max(0.0, ($cpuNow - $cpuLast) / ($now - $cpuLastAt) / $cores * 100.0))
                 $cpuLast = $cpuNow
                 $cpuLastAt = $now

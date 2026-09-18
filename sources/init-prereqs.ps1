@@ -588,6 +588,7 @@ function Enable-WindowsFeature {
     $r = Invoke-CommandWithStatus -Label "Enabling $DisplayName" -FilePath 'dism.exe' `
         -ArgumentList @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') `
         -WatchProcess @('TiWorker', 'TrustedInstaller') `
+        -WatchService @('wuauserv', 'DoSvc', 'BITS', 'TrustedInstaller') `
         -ActivityLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') `
         -GrowthLog (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
     $elapsed = '{0:0}s' -f $r.Elapsed.TotalSeconds

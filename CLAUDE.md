@@ -467,9 +467,12 @@ prerequisites.
 > (DISM keeps printing its bar when redirected, verified; installers print none), a **spinner that
 > ticks every redraw** so the line moves even when every number is flat, elapsed time, **network
 > receive rate + total since the step began** (the one thing that moves while DISM sits at 37.8 %
-> or `wsl --install` downloads), **CPU of the launched process plus `-WatchProcess` names**
-> (`TiWorker`/`TrustedInstaller` for DISM, `msiexec` for an MSI — idle while downloading, busy
-> while installing, so the two together say which phase it is), `CBS.log` growth, and the last
+> or `wsl --install` downloads), **CPU of the launched process plus `-WatchProcess` names plus
+> the `svchost` processes hosting `-WatchService` names** (`TiWorker`/`TrustedInstaller` and the
+> `wuauserv`/`DoSvc`/`BITS` services for DISM, `msiexec` + `msiserver` for an MSI — the download
+> half of a feature enable runs inside those services, and without them the line showed
+> `cpu 0%` while the payload streamed in; service → PID comes from `Win32_Service`, sampled once
+> a second), `CBS.log` growth, and the last
 > real message in `dism.log` (CSI lines, PID/TID and `- CClass::Method` suffixes and the bare
 > `DISM.EXE:` footer are skipped). Nothing is drawn for the first second, so quick queries
 > (`wsl -l -q`) stay silent. Redirected output (CI) gets a plain line only when the whole
