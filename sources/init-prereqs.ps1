@@ -566,6 +566,41 @@ namespace PCSetup {
     return $false
 }
 
+function Set-DeliveryOptimizationHttpOnly {
+    # Delivery Optimization download mode 0 = plain HTTP from Microsoft, no peer lookup. Every
+    # store-backed download in this setup goes through DO (the Ubuntu distro from wsl --install,
+    # msstore winget packages such as the NVIDIA App, Windows Update payloads), and in "LAN"
+    # mode DO first looks for peers - on a NAT VM or a home network that finds nothing and only
+    # delays the start of each download. The policy value outranks the Settings toggle, is
+    # machine-wide, and is simply "no peer sharing" - fine to leave on a personal PC.
+    # Check -> act -> verify (read back); DoSvc is restarted so it picks the policy up now.
+    $keyPath = 'SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization'
+    $hklm = [Microsoft.Win32.Registry]::LocalMachine
+    $read = {
+        $k = $hklm.OpenSubKey($keyPath)
+        if (-not $k) { return $null }
+        try { return $k.GetValue('DODownloadMode', $null) } finally { $k.Close() }
+    }
+    if ((& $read) -eq 0) {
+        Write-Host "Delivery Optimization already HTTP-only (DODownloadMode=0), skipping..." -ForegroundColor Yellow
+        return $true
+    }
+    $k = $hklm.CreateSubKey($keyPath)
+    if (-not $k) { throw "CreateSubKey returned null for HKLM\$keyPath" }
+    try { $k.SetValue('DODownloadMode', 0, [Microsoft.Win32.RegistryValueKind]::DWord) } finally { $k.Close() }
+    if ((& $read) -ne 0) {
+        Write-Host "DODownloadMode did not read back as 0." -ForegroundColor Red
+        return $false
+    }
+    $svc = Get-Service -Name DoSvc -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {
+        try { Restart-Service -Name DoSvc -Force -ErrorAction Stop } catch { Write-Host "DoSvc restart skipped: $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
+    $effective = try { (Get-DOConfig -ErrorAction Stop).DownloadMode } catch { 'n/a' }
+    Write-Host "Delivery Optimization set to HTTP-only (DODownloadMode=0, effective mode: $effective)." -ForegroundColor Green
+    return $true
+}
+
 function Test-WindowsFeatureEnabled {
     param([string]$FeatureName)
 
@@ -727,6 +762,16 @@ if ($env:PCSETUP_CI -eq '1') {
 elseif (-not (Invoke-Logged 'Dark mode' { Set-DarkMode })) {
     $script:Failures.Add('Dark mode could not be turned on (see above)')
 }
+
+# Before the first download: stop Delivery Optimization from hunting for peers ahead of every
+# store-backed download. Tuning, not a prerequisite - a machine that refuses the policy write
+# gets a warning, not a failed step 0.
+if ($env:PCSETUP_CI -eq '1') {
+    Write-Host "SKIP: CI mode - skipping Delivery Optimization tuning (no DoSvc on Server Core)." -ForegroundColor Yellow
+}
+elseif (-not (Invoke-Logged 'Delivery Optimization' { Set-DeliveryOptimizationHttpOnly })) {
+    Write-Host "Delivery Optimization could not be set to HTTP-only; continuing (downloads may start slower)." -ForegroundColor Yellow
+}
 Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
 Refresh-SetupEnvironment
@@ -878,9 +923,14 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     throw 'node is not available after nvm use lts.'
 }
 
-if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+# nvm 2.0 (scoop main bucket since September 2026) is shim-based: node/npm/npx are Zig-built
+# npm.exe-style shims in scoop\persist\nvm\.nodejs, and there is no npm.cmd anywhere on PATH.
+# nvm 1.x had npm.cmd inside the NVM_SYMLINK folder. Asking for "npm" lets PATHEXT pick either;
+# asking for npm.cmd failed every fresh install the day the bucket moved to 2.0.
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw 'npm is not available after nvm use lts.'
 }
+Write-Host ("npm resolved to {0}" -f (Get-Command npm).Source) -ForegroundColor Green
 
 if ($env:PCSETUP_CI -eq '1') {
     # A Server Core container has no hypervisor, no Appx surface and no winget, so every step

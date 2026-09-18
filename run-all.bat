@@ -39,8 +39,11 @@ echo.
 
 set "SCRIPT_LIST=%TEMP%\pcsetup-scripts-%RANDOM%%RANDOM%.txt"
 set "FAIL_LIST=%TEMP%\pcsetup-failures-%RANDOM%%RANDOM%.txt"
+set "TIME_LIST=%TEMP%\pcsetup-times-%RANDOM%%RANDOM%.txt"
 del "%SCRIPT_LIST%" >nul 2>&1
 del "%FAIL_LIST%" >nul 2>&1
+del "%TIME_LIST%" >nul 2>&1
+set "TOTAL_SECONDS=0"
 
 :: The digit filter is load-bearing: '*-*.bat' alone also matches run-all.bat (which would
 :: then call itself, recursively) and test-local.bat (which launches the Docker suite in the
@@ -89,20 +92,55 @@ echo ========================================
 :: "is not recognized" and the whole run silently accomplishes nothing. Restoring the
 :: cwd also covers a script that cd's away without a setlocal to unwind it.
 cd /d "%ROOT%"
+set "T_START=%TIME%"
 call "%ROOT%%SCRIPT%"
 :: Captured on its own line: %errorlevel% inside the if-block below would otherwise expand
 :: when the block is parsed, reporting a stale code (the bug this file used to have).
 set "RC=%errorlevel%"
+set "T_END=%TIME%"
+call :elapsed "%T_START%" "%T_END%"
+set /a TOTAL_SECONDS+=ELAPSED_SECONDS
+>>"%TIME_LIST%" echo   %ELAPSED%  %SCRIPT%  (exit %RC%)
+echo.
+echo Finished: %SCRIPT% in %ELAPSED% (exit %RC%)
 if not "%RC%"=="0" (
     echo.
     echo WARNING: %SCRIPT% exited with code %RC%
     echo.
-    >>"%FAIL_LIST%" echo %SCRIPT% - exit %RC%
+    >>"%FAIL_LIST%" echo %SCRIPT% - exit %RC% after %ELAPSED%
 )
+goto :eof
+
+:elapsed
+:: Wall-clock seconds between two %TIME% stamps, as ELAPSED ("4m 07s") and ELAPSED_SECONDS.
+:: %TIME% is "H:MM:SS.cc" with a leading space before 10:00, which the : =0 substitution turns
+:: into a zero; the decimal separator is "." or "," by locale, so both are delimiters. Each
+:: field is read as 1xx-100 so "08" and "09" are not parsed as (invalid) octal by set /a.
+:: A run that crosses midnight goes negative and gets a day added back.
+set "T_A=%~1"
+set "T_B=%~2"
+set "T_A=%T_A: =0%"
+set "T_B=%T_B: =0%"
+for /f "tokens=1-3 delims=:.," %%a in ("%T_A%") do set /a "T_SA=(1%%a-100)*3600+(1%%b-100)*60+(1%%c-100)"
+for /f "tokens=1-3 delims=:.," %%a in ("%T_B%") do set /a "T_SB=(1%%a-100)*3600+(1%%b-100)*60+(1%%c-100)"
+set /a "ELAPSED_SECONDS=T_SB-T_SA"
+if %ELAPSED_SECONDS% lss 0 set /a "ELAPSED_SECONDS+=86400"
+set /a "T_M=ELAPSED_SECONDS/60, T_S=ELAPSED_SECONDS%%60"
+if %T_S% lss 10 (set "ELAPSED=%T_M%m 0%T_S%s") else (set "ELAPSED=%T_M%m %T_S%s")
 goto :eof
 
 :summary
 del "%SCRIPT_LIST%" >nul 2>&1
+
+:: Per-script wall-clock times, so the next slow step is found by reading, not by guessing.
+set /a "TOTAL_M=TOTAL_SECONDS/60, TOTAL_S=TOTAL_SECONDS%%60"
+if %TOTAL_S% lss 10 (set "TOTAL_FMT=%TOTAL_M%m 0%TOTAL_S%s") else (set "TOTAL_FMT=%TOTAL_M%m %TOTAL_S%s")
+echo.
+echo ========================================
+echo   Time per script (total %TOTAL_FMT%):
+echo ========================================
+if exist "%TIME_LIST%" type "%TIME_LIST%"
+del "%TIME_LIST%" >nul 2>&1
 
 echo.
 echo ========================================

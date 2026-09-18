@@ -38,7 +38,7 @@ function Ensure-Pnpm {
     }
 
     Write-Log "pnpm not found; installing globally with npm..."
-    & npm.cmd install -g pnpm | ForEach-Object { Write-Host $_ }
+    & npm install -g pnpm | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         Fail "Failed to install pnpm via npm."
     }

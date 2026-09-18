@@ -1,4 +1,4 @@
-param([string]$Branch = "main")
+﻿param([string]$Branch = "main")
 
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -222,8 +222,9 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 $versionDir = Join-Path $env:NVM_HOME ("v{0}" -f $nodeVersion)
                 $nodeExePath = Join-Path $versionDir 'node.exe'
+                # nvm 1.x keeps npm.cmd next to node.exe; nvm 2.x has no npm.cmd (npm is an .exe shim).
                 $npmCmdPath = Join-Path $versionDir 'npm.cmd'
-                if (-not (Test-Path $nodeExePath) -or -not (Test-Path $npmCmdPath)) {
+                if (-not (Test-Path $nodeExePath) -or -not ((Test-Path $npmCmdPath) -or (Get-Command npm -ErrorAction SilentlyContinue))) {
                     throw "nvm use $nodeVersion failed with exit code $LASTEXITCODE."
                 }
 

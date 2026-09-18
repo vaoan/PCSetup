@@ -134,6 +134,30 @@ Describe "0-init-prereqs" {
         $helper | Should -Match 'GetAllNetworkInterfaces'
         $helper | Should -Match 'TotalProcessorTime'
     }
+    It "Delivery Optimization is set to HTTP-only before the first download, as tuning not a prerequisite" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match 'function Set-DeliveryOptimizationHttpOnly'
+        $script | Should -Match "SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows\\\\DeliveryOptimization"
+        $script | Should -Match "SetValue\('DODownloadMode', 0"
+        # Runs before the git bootstrap (the first download) and after dark mode.
+        $script.IndexOf("Invoke-Logged 'Delivery Optimization'") | Should -BeGreaterThan $script.IndexOf("Invoke-Logged 'Dark mode'")
+        $script.IndexOf("Invoke-Logged 'Delivery Optimization'") | Should -BeLessThan $script.IndexOf("Install-BootstrapTool -Name 'git'")
+        # A refused policy write is a warning, never a recorded failure.
+        $script | Should -Match 'Delivery Optimization could not be set to HTTP-only; continuing'
+        $script | Should -Match "PCSETUP_CI -eq '1'\) \{[^}]*skipping Delivery Optimization"
+    }
+    It "npm is resolved as npm, never npm.cmd (nvm 2.x ships an .exe shim)" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match 'Get-Command npm -ErrorAction SilentlyContinue'
+        $script | Should -Not -Match 'Get-Command npm\.cmd'
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\3-setup-node.bat") -Raw
+        $bat | Should -Match "foreach \(\`$tool in 'nvm', 'node', 'npm'\)"
+        $bat | Should -Match '"/c npm install -g \$package'
+        $bat | Should -Match '"npm prefix -g"'
+        ($bat -split "`r?`n" | Where-Object { $_ -notmatch 'echo #' }) -join "`n" | Should -Not -Match 'npm\.cmd'
+        # nvm 2.x's global prefix (the version folder) is not on PATH; script 3 puts it there once.
+        $bat | Should -Match "SetEnvironmentVariable\('Path', \(@\(\$npmPrefix\) \+ \$userPathParts -join ';'\), 'User'\)"
+    }
     It "NetFx3 is enabled from install media when sources\sxs is reachable, else Windows Update" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
         $script | Should -Match "Find-FeaturePayloadSource -Pattern '\*netfx3\*\.cab'"
@@ -590,6 +614,35 @@ Describe "99-remove-windows-ai" {
 # -----------------------------
 # update-all (utility, no number prefix)
 # -----------------------------
+Describe "run-all" {
+    It "prints wall-clock time per script and a total in the summary" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\run-all.bat") -Raw
+        $bat | Should -Match ':elapsed'
+        $bat | Should -Match 'Time per script'
+        # Fake scripts: one sleeps ~2 s and succeeds, one fails with 3. PCSETUP_REMOTE_CALL keeps
+        # the runner from opening Explorer at the end.
+        $dir = Join-Path $env:TEMP "pcsetup-test-runall-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        try {
+            Copy-Item (Join-Path $PSScriptRoot "..\run-all.bat") $dir
+            [IO.File]::WriteAllText((Join-Path $dir '0-fast.bat'), "@echo off`r`nping -n 3 127.0.0.1 >nul`r`nexit /b 0`r`n")
+            [IO.File]::WriteAllText((Join-Path $dir '1-fails.bat'), "@echo off`r`nexit /b 3`r`n")
+            $env:PCSETUP_REMOTE_CALL = '1'
+            $out = & cmd.exe /c "`"$(Join-Path $dir 'run-all.bat')`"" 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            $code | Should -Be 1
+            $out | Should -Match 'Time per script \(total 0m 0[1-9]s\)'
+            $out | Should -Match '0m 0[1-9]s  0-fast\.bat  \(exit 0\)'
+            $out | Should -Match '0m 0\ds  1-fails\.bat  \(exit 3\)'
+            $out | Should -Match '1-fails\.bat - exit 3 after 0m 0\ds'
+        }
+        finally {
+            $env:PCSETUP_REMOTE_CALL = $null
+            Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe "update-all" {
     BeforeAll {
         $script:updateAllBat = Join-Path $PSScriptRoot "..\update-all.bat"
@@ -610,7 +663,9 @@ Describe "update-all" {
         $script:updateAllText | Should -Match 'scoop update \*'
         $script:updateAllText | Should -Match 'winget upgrade'
         $script:updateAllText | Should -Match 'choco upgrade all'
-        $script:updateAllText | Should -Match 'npm\.cmd install -g \$name@latest'
+        # npm, never npm.cmd: nvm 2.x has no npm.cmd on PATH (npm is an .exe shim).
+        $script:updateAllText | Should -Match 'npm install -g \$name@latest'
+        $script:updateAllText | Should -Not -Match 'npm\.cmd'
     }
     It "runs Patch My PC silently as the final sweep" {
         $script:updateAllText | Should -Match 'PatchMyPC-HomeUpdater\.exe'
@@ -847,7 +902,7 @@ Describe "cloudflared staging recovery" {
     It "public route verifier bootstraps pnpm and Chromium" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.ps1") -Raw
         $script | Should -Match 'Ensure-Pnpm'
-        $script | Should -Match 'npm\.cmd install -g pnpm'
+        $script | Should -Match 'npm install -g pnpm'
         $script | Should -Match 'pnpm install'
         $script | Should -Match "PNPM_CONFIG_CONFIRM_MODULES_PURGE = 'false'"
         $script | Should -Match "\$env:CI = 'true'"

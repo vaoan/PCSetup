@@ -53,7 +53,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo             if (-not [string]::IsNullOrWhiteSpace($value)) { Set-Item -Path "Env:$name" -Value $value }
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     }
->>"%SCRIPT%" echo     $npmPrefix = ^& cmd.exe /c "npm.cmd prefix -g" 2^>$null
+>>"%SCRIPT%" echo     $npmPrefix = ^& cmd.exe /c "npm prefix -g" 2^>$null
 >>"%SCRIPT%" echo     if ($npmPrefix -and (Test-Path $npmPrefix)) { $env:Path = "$npmPrefix;$env:Path" }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo function Add-Failure([string]$text) { Write-Host "FAILED: $text" -ForegroundColor Red; $null = $failures.Add($text) }
@@ -174,21 +174,21 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # `npm update -g` stays inside the semver range recorded at install time, so a new major
 >>"%SCRIPT%" echo # of a CLI would never arrive. Each outdated package is reinstalled at @latest instead.
 >>"%SCRIPT%" echo function Get-NpmOutdated {
->>"%SCRIPT%" echo     $json = (^& cmd.exe /c "npm.cmd outdated -g --json" 2^>$null ^| Out-String).Trim()
+>>"%SCRIPT%" echo     $json = (^& cmd.exe /c "npm outdated -g --json" 2^>$null ^| Out-String).Trim()
 >>"%SCRIPT%" echo     if (-not $json) { return @() }
 >>"%SCRIPT%" echo     try { $obj = $json ^| ConvertFrom-Json } catch { return @() }
 >>"%SCRIPT%" echo     @($obj.PSObject.Properties ^| Where-Object { $_.Value.current -ne $_.Value.latest } ^| ForEach-Object { $_.Name })
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo Write-Section "npm global packages"
 >>"%SCRIPT%" echo Refresh-SetupEnvironment
->>"%SCRIPT%" echo if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { Add-Note "npm not installed; skipping (0-init-prereqs.bat installs nvm and Node)." }
+>>"%SCRIPT%" echo if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Add-Note "npm not installed; skipping (0-init-prereqs.bat installs nvm and Node)." }
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     try {
 >>"%SCRIPT%" echo         $before = Get-NpmOutdated
 >>"%SCRIPT%" echo         if ($before.Count -eq 0) { Write-Host "npm: everything up to date." -ForegroundColor Green }
 >>"%SCRIPT%" echo         else {
 >>"%SCRIPT%" echo             Write-Host "npm: $($before.Count) outdated: $($before -join ', ')" -ForegroundColor Cyan
->>"%SCRIPT%" echo             foreach ($name in $before) { ^& cmd.exe /c "npm.cmd install -g $name@latest --no-fund --no-audit" 2^>^&1 ^| Out-Host }
+>>"%SCRIPT%" echo             foreach ($name in $before) { ^& cmd.exe /c "npm install -g $name@latest --no-fund --no-audit" 2^>^&1 ^| Out-Host }
 >>"%SCRIPT%" echo             $after = Get-NpmOutdated
 >>"%SCRIPT%" echo             foreach ($name in $after) { Add-Failure "npm: $name still outdated" }
 >>"%SCRIPT%" echo             Write-Host "npm: updated $($before.Count - $after.Count) of $($before.Count)." -ForegroundColor Green

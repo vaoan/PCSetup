@@ -40,10 +40,21 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo             if (-not [string]::IsNullOrWhiteSpace($value)) { Set-Item -Path "Env:$name" -Value $value }
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     }
->>"%SCRIPT%" echo     # npm puts global .cmd shims in the active Node directory, so it has to be on PATH
->>"%SCRIPT%" echo     # for the post-install verification to see what was just installed.
->>"%SCRIPT%" echo     $npmPrefix = ^& cmd.exe /c "npm.cmd prefix -g" 2^>$null
->>"%SCRIPT%" echo     if ($npmPrefix -and (Test-Path $npmPrefix)) { $env:Path = "$npmPrefix;$env:Path" }
+>>"%SCRIPT%" echo     # npm puts global .cmd shims in its prefix directory. With nvm 1.x that is the NVM_SYMLINK
+>>"%SCRIPT%" echo     # folder, which is already on PATH; with nvm 2.x (shim mode) it is the version folder
+>>"%SCRIPT%" echo     # (scoop\persist\nvm\nodejs\v24.21.0), which is NOT on PATH - only the .nodejs shim
+>>"%SCRIPT%" echo     # folder is, and that holds node/npm/npx alone. So codex and copilot installed fine and
+>>"%SCRIPT%" echo     # were unreachable from every new terminal. The prefix goes on the User PATH once,
+>>"%SCRIPT%" echo     # persistently (no-op when already there), and on this process PATH for the verification.
+>>"%SCRIPT%" echo     $npmPrefix = ^& cmd.exe /c "npm prefix -g" 2^>$null
+>>"%SCRIPT%" echo     if ($npmPrefix -and (Test-Path $npmPrefix)) {
+>>"%SCRIPT%" echo         $env:Path = "$npmPrefix;$env:Path"
+>>"%SCRIPT%" echo         $userPathParts = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';')
+>>"%SCRIPT%" echo         if ($userPathParts -notcontains $npmPrefix) {
+>>"%SCRIPT%" echo             [Environment]::SetEnvironmentVariable('Path', (@($npmPrefix) + $userPathParts -join ';'), 'User')
+>>"%SCRIPT%" echo             Write-Host "Added npm global prefix to the user PATH: $npmPrefix" -ForegroundColor Cyan
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Same shape as Install-ScoopPackage in sources\init-prereqs.ps1: the installed-check
@@ -59,7 +70,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     $maxAttempts = 3
 >>"%SCRIPT%" echo     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
 >>"%SCRIPT%" echo         Write-Host "Installing $displayName (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
->>"%SCRIPT%" echo         $proc = Invoke-CommandWithStatus -Label "Installing $displayName (npm)" -FilePath "cmd.exe" -ArgumentList "/c npm.cmd install -g $package --no-fund --no-audit"
+>>"%SCRIPT%" echo         $proc = Invoke-CommandWithStatus -Label "Installing $displayName (npm)" -FilePath "cmd.exe" -ArgumentList "/c npm install -g $package --no-fund --no-audit"
 >>"%SCRIPT%" echo         Refresh-SetupEnvironment
 >>"%SCRIPT%" echo         # Verify the shim exists rather than trusting the exit code: npm can report 0
 >>"%SCRIPT%" echo         # after a partial install, and a nonzero code sometimes still leaves a usable CLI.
@@ -81,7 +92,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo Write-Host "Starting Node CLI setup..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo Refresh-SetupEnvironment
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo foreach ($tool in 'nvm', 'node', 'npm.cmd') {
+>>"%SCRIPT%" echo # npm, not npm.cmd: nvm 2.x ships npm as an .exe shim and has no npm.cmd on PATH.
+>>"%SCRIPT%" echo foreach ($tool in 'nvm', 'node', 'npm') {
 >>"%SCRIPT%" echo     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
 >>"%SCRIPT%" echo         Write-Host "$tool is not available. Run 0-init-prereqs.bat first." -ForegroundColor Red
 >>"%SCRIPT%" echo         exit 1

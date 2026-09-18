@@ -220,6 +220,16 @@ exits 1 rather than fetching a ZIP over the top of the folder it is sitting in.
 > expands when the block is parsed and reports a stale code. That was a live bug: every failure
 > printed the same wrong number.
 
+> **The summary lists wall-clock time per script and a total.** Each `:run_one` stamps `%TIME%`
+> before and after the `call` and `:elapsed` turns the pair into seconds: the leading space
+> before 10:00 becomes a zero via `: =0`, `.` and `,` are both accepted as the decimal separator
+> (locale), each field is read as `1xx-100` so `08`/`09` are not parsed as octal by `set /a`, and a
+> run that crosses midnight gets a day added back. The failure list carries the duration too
+> (`3-setup-node.bat - exit 1 after 4m 07s`). Tested by running the runner against two fake
+> numbered scripts in a temp folder (`setup.tests.ps1`, `run-all` block). This exists so the
+> next slow step is found by reading, not guessing — the status line shows time *within* a step,
+> this shows time *per* step.
+
 > **Scripts are called by absolute path (`call "%ROOT%%SCRIPT%"`), with the cwd restored first.**
 > A bare `call %SCRIPT%` needs CMD to search the current directory, which it refuses to do when
 > `NoDefaultCurrentDirectoryInExePath=1` — every script then fails with `is not recognized` and the
@@ -477,6 +487,31 @@ prerequisites.
 > `DISM.EXE:` footer are skipped). Nothing is drawn for the first second, so quick queries
 > (`wsl -l -q`) stay silent. Redirected output (CI) gets a plain line only when the whole
 > percentage changes or every 30 s.
+>
+> **nvm 2.0 has no `npm.cmd`, and step 0 checked for exactly that.** The scoop `main` bucket moved
+> `nvm` to 2.0.0 (an Inno Setup build, extracted by scoop) in September 2026. v2 runs in *shim
+> mode*: `scoop\persist\nvm\.nodejs` holds Zig-built `node.exe`, `npm.exe`, `npx.exe`,
+> `corepack.exe`, `pnpm.exe` and is what goes on PATH; `NVM_HOME`/`NVM_SYMLINK` are not set, and
+> `nvm root` no longer exists (`nvm env`/`nvm config` instead). The real `npm.cmd` sits inside the
+> version folder (`persist\nvm\nodejs\v24.21.0`), which is **not** on PATH. So `Get-Command npm.cmd`
+> failed on every fresh install, step 0 threw `npm is not available after nvm use lts`, and the
+> scoop install itself had already printed `shim maintenance skipped: reshim failed` (harmless —
+> `nvm install` writes the shims). Every call site now says `npm`, never `npm.cmd`, and PATHEXT
+> resolves the .cmd on 1.x or the .exe shim on 2.x (asserted for step 0, script 3, `update-all`,
+> `verify-public-routes` and the remote-call CI bootstrap). Second consequence: `npm prefix -g`
+> is that version folder, so `npm install -g` put `codex.cmd`/`copilot.cmd` somewhere no new
+> terminal could see — script 3 now adds the prefix to the **User** PATH once (a no-op on 1.x,
+> where the prefix is the `NVM_SYMLINK` folder that is already there). `versions/nvm1` is the
+> bucket's escape hatch back to 1.x; the scripts do not use it.
+>
+> **Delivery Optimization is switched to HTTP-only (policy `DODownloadMode=0`) before the first
+> download.** Every store-backed download here goes through DO — the Ubuntu distro from
+> `wsl --install`, msstore winget packages such as the NVIDIA App, Windows Update payloads — and
+> in the default "LAN" mode DO looks for peers before each one, which on a NAT VM or a home
+> network finds nothing and only delays the start. The policy value outranks the Settings toggle,
+> is machine-wide and just means "no peer sharing", so it is left in place. Check → act → verify
+> (read back, `DoSvc` restarted so it applies now, `Get-DOConfig` reports `CdnOnly`); a refused
+> write is a warning, not a failure. Verified on this host and reverted afterwards.
 >
 > **.NET 3.5 is enabled from install media when any is reachable.** The 37.8 % stall is DISM
 > asking Windows Update for the 68 MB payload, and on a fresh install that request queues behind
