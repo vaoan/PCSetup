@@ -126,6 +126,18 @@ Describe 'Recovery scripts - syntax' {
     #
     # So the rule is per-file and cheap to satisfy: stay ASCII, or carry a BOM.
     # Note the failure is invisible in pwsh, which assumes UTF-8 either way.
+    # remote-call.ps1 is the exception in the other direction: it is delivered by
+    # `irm i.ffxiv.be | iex`, Invoke-RestMethod keeps a UTF-8 BOM as a leading U+FEFF
+    # character, and iex then fails on the very first statement ("p aram : The term
+    # ' param' is not recognized") while the rest of the script still runs with $Branch
+    # unset. A patch that read the file with utf-8-sig and wrote it back with utf-8-sig
+    # added exactly that BOM on 2026-09-18; the worker's cached copy hid it locally.
+    It 'remote-call.ps1 is ASCII with no BOM, because it is executed through irm | iex' {
+        $bytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..emote-call.ps1'))
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+
     It 'every PowerShell script is ASCII-only or carries a UTF-8 BOM' {
         $offenders = @()
         foreach ($f in Get-RepoPowerShellFile) {

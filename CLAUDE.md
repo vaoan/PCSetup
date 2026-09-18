@@ -175,6 +175,16 @@ Downloads the repo ZIP into memory, materializes the top-level `.bat`, `.config`
 > either way. `remote-call.ps1` now also fails immediately if the allowlist materializes **no**
 > files, so the error names the real problem instead of surfacing four steps later.
 
+> **`remote-call.ps1` must stay ASCII with NO BOM — it is the one file delivered by `irm | iex`.**
+> `Invoke-RestMethod` decodes the body as UTF-8 and keeps a BOM as a leading U+FEFF character,
+> and `iex` then fails on the first statement (`p aram : The term ' param' is not recognized`)
+> while the rest of the script still runs with `$Branch` unset. This shipped on 2026-09-18: a
+> patch script read the file with `utf-8-sig` and wrote it back with `utf-8-sig`, which *adds*
+> a BOM to a file that never had one; it looked fine locally because the Cloudflare worker's
+> cached copy was still the old bytes, and only the VM's fresh fetch got the BOM. The general
+> "ASCII or BOM" rule in `recovery.tests.ps1` allows a BOM, so a second test there pins this
+> file to no-BOM specifically. Every other `.ps1` may carry one; this one may not.
+
 > **Anything a numbered script reads at runtime must be on the allowlist**, or the temp workspace
 > is missing it and the script fails in a way that looks like a broken download. `sources\` is
 > there because `0-init-prereqs.bat` runs `sources\init-prereqs.ps1`. Add a new folder by adding it

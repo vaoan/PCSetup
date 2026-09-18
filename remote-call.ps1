@@ -1,4 +1,4 @@
-﻿param([string]$Branch = "main")
+param([string]$Branch = "main")
 
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
