@@ -419,9 +419,83 @@ without it. All other checks are offline.
 ## Setup Scripts (Run in Order)
 
 ### 0-init-prereqs.bat
-Runs `sources\init-prereqs.ps1`. Lays down the toolchain every later script assumes: **portable git
-and gh first**, then Chocolatey, Scoop + buckets, 7-Zip, Python, VC++ redistributables, .NET
-runtimes, Temurin JDK 17/8, nvm + Node LTS, and the WSL2 prerequisites.
+Runs `sources\init-prereqs.ps1`. Turns on **dark mode** first, then lays down the toolchain every
+later script assumes: **portable git and gh first**, then Chocolatey, Scoop + buckets, 7-Zip,
+Python, VC++ redistributables, .NET runtimes, Temurin JDK 17/8, nvm + Node LTS, and the WSL2
+prerequisites.
+
+> **Dark mode works on unactivated Windows, and it is the first thing the script does.**
+> Activation only greys out Settings > Personalization; the page itself just writes
+> `AppsUseLightTheme` and `SystemUsesLightTheme` under
+> `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`. `Set-DarkMode` applies
+> `%SystemRoot%\Resources\Themes\dark.theme` so the whole desktop flips at once (taskbar, Start,
+> Explorer, accent, wallpaper), then writes both values with the .NET registry API, broadcasts
+> `WM_SETTINGCHANGE "ImmersiveColorSet"`, and **reads the values back** — a failure lands in
+> `$script:Failures` and the script exits 1 at the end, but the toolchain still installs. It is
+> skipped when both values already say dark, because `dark.theme` carries its own wallpaper and
+> re-applying it would replace whatever was picked since. Skipped in CI (no theme engine on
+> Server Core). The activation lock itself is **not** a registry setting — the step removes the
+> known policy locks (`NoChangingWallPaper`, `NoThemesTab`, `NoChangingColor`, ...) if any exist,
+> but the Settings page stays greyed out until Windows is activated; dark mode is on regardless.
+>
+> **The `.theme` file is applied through COM, not by opening it.** `Start-Process dark.theme`,
+> `explorer.exe dark.theme` and the handler behind them
+> (`rundll32 themecpl.dll,OpenThemeAction`) all exit 0 after ~100 ms on this build (26200,
+> themecpl 26100.8117) **without applying anything** — verified from an elevated shell, from
+> Explorer and from an interactive scheduled task, with a logged exit code each time. The
+> coclass that handler is supposed to drive, "Windows Theme Manager 2 API"
+> (`{9324DA94-50EC-4A14-A770-E90CA03E7C8F}`, `themeui.dll`), works when called directly:
+> `IThemeManager2` (`{C1E8C83E-845D-4D95-81DB-E283FDFFC000}`) `Init(0)` then
+> `AddAndSelectTheme(0, path, 0, 0)` switches `CurrentTheme` and the wallpaper in ~300 ms and
+> opens no Settings window, so nothing has to be closed to keep the run unattended. The
+> interface is undocumented; the vtable in the script is the ThemeTool/SecureUxTheme layout and
+> every slot before `AddAndSelectTheme` has to stay put. The registry write still runs
+> afterwards, so a session with no desktop (PowerShell Direct in the VM test) ends up dark too.
+>
+> **Every long native command runs behind one live status line (`sources\status-line.ps1`), and
+> the DISM ones are verified afterwards.** Seen in the VirtualBox run: `Enabling feature(s) 37.8%`
+> sat still for minutes. That is DISM fetching the .NET 3.5 payload from Windows Update (a fresh
+> install has none locally), and DISM's own bar cannot tell that from a hang; `Start-Process
+> -Wait` on `wsl --install` or an installer showed nothing at all. (The screenshot's real freeze
+> was something else: the console title read *Select Administrator: Windows PowerShell* — a click
+> inside the window had started a QuickEdit selection, and conhost blocks every write until
+> Esc/Enter ends it. Nothing the script does can be seen while that is on.)
+> `Invoke-CommandWithStatus` captures the tool's stdout/stderr to temp files and redraws a single
+> line in place every 500 ms, cut to the window width, so a 20-minute step still costs one row:
+> `Enabling .NET Framework 3.5 [#######-------------]  37.8% / | 4m 12s | net 2.4 MB/s (61 MB) | cpu 43% | CBS.log +18.3 MB | DISM Package Manager: ...`
+> Most important first, because the tail is what a narrow window cuts: the tool's own percentage
+> (DISM keeps printing its bar when redirected, verified; installers print none), a **spinner that
+> ticks every redraw** so the line moves even when every number is flat, elapsed time, **network
+> receive rate + total since the step began** (the one thing that moves while DISM sits at 37.8 %
+> or `wsl --install` downloads), **CPU of the launched process plus `-WatchProcess` names**
+> (`TiWorker`/`TrustedInstaller` for DISM, `msiexec` for an MSI — idle while downloading, busy
+> while installing, so the two together say which phase it is), `CBS.log` growth, and the last
+> real message in `dism.log` (CSI lines, PID/TID and `- CClass::Method` suffixes and the bare
+> `DISM.EXE:` footer are skipped). Nothing is drawn for the first second, so quick queries
+> (`wsl -l -q`) stay silent. Redirected output (CI) gets a plain line only when the whole
+> percentage changes or every 30 s.
+>
+> Where it is used: step 0's `Enable-WindowsFeature` (NetFx3 + the four WSL features: check →
+> act → verify with `Get-WindowsOptionalFeature`, never the exit code) and `Invoke-ProcessCapture`
+> (`wsl --install`, the Ubuntu registration — same return contract as before, with a `-Label`);
+> the generated scripts of **2** (Discord Canary / Chrome Remote Desktop EXEs, the MSIs, Dokan,
+> IceDrive), **3** (each `npm install -g`, whose output is now captured — the last 5 lines are
+> printed on a failed attempt) and **6** (TexTools, FFLogs) dot-source the same file with
+> `. "%~dp0sources\status-line.ps1"`, which is why it lives under `sources\` — already on
+> `remote-call.ps1`'s allowlist, so the temp workspace has it. Traps inside: `.ExitCode` is
+> `$null` after the process exits unless `.Handle` was touched first (DISM's 3010 would be lost);
+> the temp stdout file must be opened with `FileShare.ReadWrite` while the tool holds it;
+> `Start-Process` rejects an empty string inside `-ArgumentList`, so blanks are filtered; `wsl.exe`
+> writes UTF-16, so NULs are stripped from the captured output. Verified in a real console via a
+> buffer dump (one line remains where the bar ran) and with a fake tool that prints percentages
+> and exits 7. NetFx3 stays a **warning** when it cannot be enabled — nothing later depends on it
+> and a machine without Windows Update access should not fail step 0 over an optional runtime.
+>
+> Gotcha met while testing: flipping the two values by hand makes Windows **rewrite
+> `%LOCALAPPDATA%\Microsoft\Windows\Themes\Custom.theme`** with `SystemMode=Light`, and
+> re-applying that file (as the same-path current theme) is a no-op — so "restore the previous
+> theme" after a light/dark round-trip does not bring dark back on its own. The setup script
+> never restores anything, so this only matters for tests that toggle the values.
 
 > **git is bootstrapped from a zip before any package manager exists, and the order is the whole
 > point.** Scoop cannot function without git — `scoop update` and every `scoop bucket add` are git

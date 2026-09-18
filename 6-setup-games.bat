@@ -26,6 +26,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
 >"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
+>>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
+>>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.
+>>"%SCRIPT%" echo . "%~dp0sources\status-line.ps1"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo Write-Host "Installing game-related applications..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo Write-Host ""
@@ -102,7 +105,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if ($ttInst) {
 >>"%SCRIPT%" echo             $ttFile = "$env:TEMP\Install_TexTools.exe"
 >>"%SCRIPT%" echo             curl.exe -L --progress-bar -o $ttFile $ttInst.browser_download_url
->>"%SCRIPT%" echo             Start-Process $ttFile -ArgumentList "/S" -Wait
+>>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing TexTools" -FilePath $ttFile -ArgumentList "/S"
 >>"%SCRIPT%" echo         } else {
 >>"%SCRIPT%" echo             $ttZipAsset = $ttRel.assets ^| Where-Object { $_.name -like "*.zip" } ^| Select-Object -First 1
 >>"%SCRIPT%" echo             if (-not $ttZipAsset) { throw "No TexTools installer or zip asset in release $($ttRel.tag_name)" }
@@ -129,7 +132,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if (-not $ffAsset) { throw "No FFLogs installer asset in release $($ffRel.tag_name)" }
 >>"%SCRIPT%" echo         $ffFile = "$env:TEMP\FFLogs-Setup.exe"
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $ffFile $ffAsset.browser_download_url
->>"%SCRIPT%" echo         Start-Process $ffFile -ArgumentList "/S" -Wait
+>>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing FFLogs Uploader" -FilePath $ffFile -ArgumentList "/S"
 >>"%SCRIPT%" echo     } catch { Write-Host "FFLogs install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if ($ffDirs ^| Where-Object { Test-Path $_ }) { Write-Host "FFLogs Uploader installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "FFLogs Uploader FAILED to install." -ForegroundColor Red; $null = $failures.Add("FFLogs Uploader") }

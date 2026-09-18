@@ -25,6 +25,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 :: attempt - so no npm package was ever installed while the script reported success.
 >"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
+>>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
+>>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.
+>>"%SCRIPT%" echo . "%~dp0sources\status-line.ps1"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Refresh-SetupEnvironment {
 >>"%SCRIPT%" echo     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -56,7 +59,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     $maxAttempts = 3
 >>"%SCRIPT%" echo     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
 >>"%SCRIPT%" echo         Write-Host "Installing $displayName (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
->>"%SCRIPT%" echo         $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm.cmd install -g $package --no-fund --no-audit" -Wait -NoNewWindow -PassThru
+>>"%SCRIPT%" echo         $proc = Invoke-CommandWithStatus -Label "Installing $displayName (npm)" -FilePath "cmd.exe" -ArgumentList "/c npm.cmd install -g $package --no-fund --no-audit"
 >>"%SCRIPT%" echo         Refresh-SetupEnvironment
 >>"%SCRIPT%" echo         # Verify the shim exists rather than trusting the exit code: npm can report 0
 >>"%SCRIPT%" echo         # after a partial install, and a nonzero code sometimes still leaves a usable CLI.
@@ -65,6 +68,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo             return $true
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo         Write-Host "$displayName attempt $attempt failed with exit code $($proc.ExitCode)." -ForegroundColor Yellow
+>>"%SCRIPT%" echo         # npm output is captured by the status line now, so show its tail on failure.
+>>"%SCRIPT%" echo         $tail = @(($proc.Output + $proc.Error) -split "`n") ^| Where-Object { $_ -match '\S' } ^| Select-Object -Last 5
+>>"%SCRIPT%" echo         if ($tail) { Write-Host ($tail -join "`n") -ForegroundColor DarkGray }
 >>"%SCRIPT%" echo         if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds (4 * $attempt) }
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo     Write-Host "$displayName FAILED after $maxAttempts attempts." -ForegroundColor Red

@@ -6,6 +6,10 @@
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+# One-line live status for long native commands (DISM, wsl --install, installers). Shared
+# with the generated scripts of 2/3/6, so it lives in its own file.
+. (Join-Path $PSScriptRoot 'status-line.ps1')
+
 # Portable git/gh live here. Nothing else on the machine is assumed to exist yet.
 $script:BootstrapRoot = Join-Path $env:ProgramData 'PCSetup\bootstrap'
 $script:BootstrapPaths = New-Object System.Collections.Generic.List[string]
@@ -310,7 +314,7 @@ function Register-UbuntuDistro {
     }
 
     Write-Host "Registering Ubuntu-24.04 WSL distro..." -ForegroundColor Cyan
-    $registration = Invoke-ProcessCapture -FilePath 'ubuntu2404.exe' -ArgumentList @('install', '--root')
+    $registration = Invoke-ProcessCapture -FilePath 'ubuntu2404.exe' -ArgumentList @('install', '--root') -Label "Registering $DistroName (ubuntu2404 install --root)"
     if ($registration.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($registration.Output)) {
         Write-Host $registration.Output.Trim() -ForegroundColor Yellow
     }
@@ -327,12 +331,12 @@ function Install-WslDistro {
     }
 
     Write-Host "Installing/checking WSL distro: $DistroName" -ForegroundColor Cyan
-    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch')
+    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '-d', $DistroName, '--no-launch') -Label "Installing $DistroName (wsl --install)"
     if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
         return $true
     }
 
-    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', $DistroName)
+    $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', $DistroName) -Label "Installing $DistroName (wsl --install, legacy syntax)"
     if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
         return $true
     }
@@ -354,27 +358,212 @@ function Install-WslDistro {
 }
 
 function Invoke-ProcessCapture {
+    # Runs a native command with its output captured, and a one-line live status while it runs
+    # (nothing is drawn for the first second, so quick queries like `wsl -l -q` stay silent).
+    # Before this it was Start-Process -Wait with redirected output: `wsl --install` and the
+    # Ubuntu registration showed nothing at all for the minutes they take.
     param(
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
-        [string[]]$ArgumentList = @()
+        [string[]]$ArgumentList = @(),
+        [string]$Label = ''
     )
 
-    $stdoutPath = Join-Path $env:TEMP ("pcsetup-capture-{0}.out" -f [Guid]::NewGuid().ToString('N'))
-    $stderrPath = Join-Path $env:TEMP ("pcsetup-capture-{0}.err" -f [Guid]::NewGuid().ToString('N'))
-    try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
-        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
-        $combinedOutput = "$stdout`n$stderr" -replace "`0", ''
-        return [pscustomobject]@{
-            ExitCode = $process.ExitCode
-            Output   = $combinedOutput
+    if (-not $Label) {
+        $Label = ('Running {0} {1}' -f (Split-Path -Leaf $FilePath), ($ArgumentList -join ' ')).Trim()
+        if ($Label.Length -gt 48) { $Label = $Label.Substring(0, 45) + '...' }
+    }
+    $r = Invoke-CommandWithStatus -Label $Label -FilePath $FilePath -ArgumentList $ArgumentList
+    return [pscustomobject]@{
+        ExitCode = $r.ExitCode
+        Output   = "$($r.Output)`n$($r.Error)"
+    }
+}
+
+function Set-DarkMode {
+    # Turns Windows dark mode on for the current user without the Settings app.
+    #
+    # Unactivated Windows greys out Settings > Personalization, but the page only ever writes
+    # two registry values, and nothing stops a script from writing them. The shipped dark.theme
+    # is applied first through the Theme Manager COM API (the engine behind the Settings page
+    # and behind double-clicking a .theme file), which repaints the desktop instantly - taskbar,
+    # Start, Explorer, accent and wallpaper - and then the two values are written and re-read
+    # explicitly, so a session with no desktop (PowerShell Direct, a service) still ends up dark
+    # even when the theme engine could not run.
+    #
+    # Not `Start-Process dark.theme` / `rundll32 themecpl.dll,OpenThemeAction`: on this build
+    # (26200, themecpl 26100.8117) that handler exits 0 after ~100 ms without applying anything,
+    # from an elevated shell, from Explorer and from a scheduled task alike. The COM call is what
+    # it was supposed to do, and it needs no Settings window closed afterwards.
+    #
+    # Check -> act -> verify: skipped entirely when both values already say dark, because
+    # dark.theme carries its own wallpaper and re-applying it on an already-dark machine would
+    # replace whatever the user picked since. Returns $true when dark mode is on afterwards.
+    $personalizePath = 'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+    $themesPath = 'Software\Microsoft\Windows\CurrentVersion\Themes'
+    $themeFile = Join-Path $env:SystemRoot 'Resources\Themes\dark.theme'
+    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
+
+    function Get-DarkModeState {
+        $k = $hkcu.OpenSubKey($personalizePath)
+        if (-not $k) { return @{ Apps = $null; System = $null } }
+        try {
+            return @{
+                Apps   = $k.GetValue('AppsUseLightTheme', $null)
+                System = $k.GetValue('SystemUsesLightTheme', $null)
+            }
+        }
+        finally { $k.Close() }
+    }
+
+    $state = Get-DarkModeState
+    if ($state.Apps -eq 0 -and $state.System -eq 0) {
+        Write-Host "Dark mode already on, skipping (theme file left alone)." -ForegroundColor Yellow
+        return $true
+    }
+
+    # Policies that lock the Personalization pages independently of activation. None exist on a
+    # fresh install; if one does, it is removed so the pages are as unlocked as the registry can
+    # make them. The activation lock itself is not a registry setting and is not touched.
+    $policyLocks = @(
+        @{ Hive = 'HKCU'; Key = 'Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop'; Value = 'NoChangingWallPaper' },
+        @{ Hive = 'HKLM'; Key = 'Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop'; Value = 'NoChangingWallPaper' },
+        @{ Hive = 'HKCU'; Key = 'Software\Microsoft\Windows\CurrentVersion\Policies\System';        Value = 'NoDispBackgroundPage' },
+        @{ Hive = 'HKCU'; Key = 'Software\Microsoft\Windows\CurrentVersion\Policies\System';        Value = 'NoDispAppearancePage' },
+        @{ Hive = 'HKCU'; Key = 'Software\Microsoft\Windows\CurrentVersion\Policies\Explorer';      Value = 'NoThemesTab' },
+        @{ Hive = 'HKCU'; Key = 'Software\Policies\Microsoft\Windows\Personalization';               Value = 'NoChangingColor' },
+        @{ Hive = 'HKLM'; Key = 'Software\Policies\Microsoft\Windows\Personalization';               Value = 'NoChangingColor' }
+    )
+    foreach ($lock in $policyLocks) {
+        $root = if ($lock.Hive -eq 'HKLM') { [Microsoft.Win32.Registry]::LocalMachine } else { $hkcu }
+        $k = $root.OpenSubKey($lock.Key, $true)
+        if (-not $k) { continue }
+        try {
+            if ($null -ne $k.GetValue($lock.Value, $null)) {
+                $k.DeleteValue($lock.Value, $false)
+                Write-Host "Removed personalization lock $($lock.Hive)\$($lock.Key)\$($lock.Value)" -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Host "Could not remove $($lock.Hive)\$($lock.Key)\$($lock.Value): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        finally { $k.Close() }
+    }
+
+    # IThemeManager2 ({C1E8C83E-...}) on the "Windows Theme Manager 2 API" coclass in themeui.dll.
+    # Undocumented; the vtable below is the layout ThemeTool/SecureUxTheme use, and every slot
+    # before AddAndSelectTheme must stay in place for the call to land on the right method.
+    # Verified on 26200: Init and GetThemeCount return 0 with a sane count, AddAndSelectTheme
+    # switches CurrentTheme and the wallpaper within ~300 ms.
+    if (-not ('PCSetup.ThemeManager' -as [type])) {
+        Add-Type -Language CSharp -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace PCSetup {
+    [ComImport, Guid("C1E8C83E-845D-4D95-81DB-E283FDFFC000"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IThemeManager2 {
+        [PreserveSig] int Init(int flags);
+        [PreserveSig] int InitAsync(IntPtr hwnd, int unk);
+        [PreserveSig] int Refresh();
+        [PreserveSig] int RefreshAsync(IntPtr hwnd, int unk);
+        [PreserveSig] int RefreshComplete();
+        [PreserveSig] int GetThemeCount(out int count);
+        [PreserveSig] int GetTheme(int index, [MarshalAs(UnmanagedType.IUnknown)] out object theme);
+        [PreserveSig] int IsThemeDisabled(int index, out int disabled);
+        [PreserveSig] int GetCurrentTheme(out int index);
+        [PreserveSig] int SetCurrentTheme(IntPtr hwnd, int index, int applyNow, int applyFlags, int packFlags);
+        [PreserveSig] int GetCustomTheme(out int index);
+        [PreserveSig] int GetDefaultTheme(out int index);
+        [PreserveSig] int CreateThemePack(IntPtr hwnd, [MarshalAs(UnmanagedType.LPWStr)] string path, int packFlags);
+        [PreserveSig] int CloneAndSetCurrentTheme(IntPtr hwnd, [MarshalAs(UnmanagedType.LPWStr)] string path, [MarshalAs(UnmanagedType.LPWStr)] out string newPath);
+        [PreserveSig] int InstallThemePack(IntPtr hwnd, [MarshalAs(UnmanagedType.LPWStr)] string path, int unk, int packFlags, [MarshalAs(UnmanagedType.LPWStr)] out string newPath, [MarshalAs(UnmanagedType.IUnknown)] out object theme);
+        [PreserveSig] int DeleteTheme([MarshalAs(UnmanagedType.LPWStr)] string path);
+        [PreserveSig] int OpenTheme(IntPtr hwnd, [MarshalAs(UnmanagedType.LPWStr)] string path, int packFlags);
+        [PreserveSig] int AddAndSelectTheme(IntPtr hwnd, [MarshalAs(UnmanagedType.LPWStr)] string path, int applyFlags, int packFlags);
+    }
+    [ComImport, Guid("9324DA94-50EC-4A14-A770-E90CA03E7C8F")]
+    public class ThemeManagerClass {}
+    public static class ThemeManager {
+        // Returns the HRESULT; 0 means the theme engine accepted and applied the file.
+        public static int ApplyThemeFile(string path) {
+            IThemeManager2 m = (IThemeManager2)new ThemeManagerClass();
+            int hr = m.Init(0);
+            if (hr != 0) return hr;
+            return m.AddAndSelectTheme(IntPtr.Zero, path, 0, 0);
+        }
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+    }
+}
+'@
+    }
+
+    # Act 1: apply the theme file. Verified by reading CurrentTheme back, not by the HRESULT.
+    if (Test-Path -LiteralPath $themeFile) {
+        Write-Host "Applying $themeFile..." -ForegroundColor Cyan
+        try {
+            $hr = [PCSetup.ThemeManager]::ApplyThemeFile($themeFile)
+            if ($hr -ne 0) {
+                Write-Host ("Theme engine refused the file (HRESULT 0x{0:X8}); falling back to the registry values." -f $hr) -ForegroundColor Yellow
+            }
+            $applied = $false
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $deadline) {
+                $current = ''
+                $k = $hkcu.OpenSubKey($themesPath)
+                if ($k) {
+                    try { $current = [string]$k.GetValue('CurrentTheme', '') } finally { $k.Close() }
+                }
+                $state = Get-DarkModeState
+                if ($current -and $current -ieq $themeFile -and $state.Apps -eq 0 -and $state.System -eq 0) {
+                    $applied = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 250
+            }
+            if ($applied) {
+                Write-Host "Theme applied; desktop switched to dark." -ForegroundColor Green
+            }
+            elseif ($hr -eq 0) {
+                Write-Host "Theme engine returned OK but CurrentTheme did not change within 10s; falling back to the registry values." -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Host "Theme engine unavailable ($($_.Exception.Message)); falling back to the registry values." -ForegroundColor Yellow
         }
     }
-    finally {
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    else {
+        Write-Host "$themeFile not found; setting dark mode through the registry only." -ForegroundColor Yellow
     }
+
+    # Act 2: write the two values the Settings page would have written. Harmless when the theme
+    # already did it; decisive when it could not run.
+    $k = $hkcu.CreateSubKey($personalizePath)
+    if (-not $k) { throw "CreateSubKey returned null for HKCU\$personalizePath" }
+    try {
+        $k.SetValue('AppsUseLightTheme', 0, [Microsoft.Win32.RegistryValueKind]::DWord)
+        $k.SetValue('SystemUsesLightTheme', 0, [Microsoft.Win32.RegistryValueKind]::DWord)
+    }
+    finally { $k.Close() }
+
+    # Tell running apps the colour set changed (this is what Settings broadcasts); without it the
+    # taskbar and open Explorer windows keep their old colours until they restart.
+    try {
+        $result = [UIntPtr]::Zero
+        [void][PCSetup.ThemeManager]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 5000, [ref]$result)
+    }
+    catch {
+        Write-Host "WM_SETTINGCHANGE broadcast failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    # Verify by reading back, not by trusting the calls above.
+    $state = Get-DarkModeState
+    if ($state.Apps -eq 0 -and $state.System -eq 0) {
+        Write-Host "Dark mode on: AppsUseLightTheme=0, SystemUsesLightTheme=0." -ForegroundColor Green
+        return $true
+    }
+    Write-Host "Dark mode NOT on after writing: AppsUseLightTheme=$($state.Apps), SystemUsesLightTheme=$($state.System)." -ForegroundColor Red
+    return $false
 }
 
 function Test-WindowsFeatureEnabled {
@@ -384,6 +573,38 @@ function Test-WindowsFeatureEnabled {
     return ($feature -and $feature.State -eq 'Enabled')
 }
 
+function Enable-WindowsFeature {
+    # Check -> act (with a live status line) -> verify. Returns 'AlreadyEnabled', 'Enabled',
+    # 'RebootRequired' or 'Failed'; the caller decides how bad 'Failed' is.
+    param(
+        [Parameter(Mandatory)][string]$FeatureName,
+        [string]$DisplayName = $FeatureName
+    )
+    if (Test-WindowsFeatureEnabled $FeatureName) {
+        Write-Host "$DisplayName already enabled, skipping..." -ForegroundColor Yellow
+        return 'AlreadyEnabled'
+    }
+    Write-Host "Enabling Windows feature: $DisplayName ($FeatureName)" -ForegroundColor Cyan
+    $r = Invoke-CommandWithStatus -Label "Enabling $DisplayName" -FilePath 'dism.exe' `
+        -ArgumentList @('/Online', '/Enable-Feature', "/FeatureName:$FeatureName", '/All', '/NoRestart') `
+        -WatchProcess @('TiWorker', 'TrustedInstaller') `
+        -ActivityLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') `
+        -GrowthLog (Join-Path $env:SystemRoot 'Logs\CBS\CBS.log')
+    $elapsed = '{0:0}s' -f $r.Elapsed.TotalSeconds
+    if (Test-WindowsFeatureEnabled $FeatureName) {
+        Write-Host "$DisplayName enabled (verified, $elapsed)." -ForegroundColor Green
+        return 'Enabled'
+    }
+    $state = (Get-WindowsOptionalFeature -Online -FeatureName $FeatureName -ErrorAction SilentlyContinue).State
+    if ($r.ExitCode -eq 3010 -or "$state" -match 'Pending') {
+        Write-Host "$DisplayName enabled, reboot required (state: $state, $elapsed)." -ForegroundColor Yellow
+        return 'RebootRequired'
+    }
+    $lastLine = ($r.Output -split "`r?`n" | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*\[' } | Select-Object -Last 1)
+    Write-Host "$DisplayName NOT enabled: dism exit $($r.ExitCode), state '$state', $elapsed. $lastLine $($r.Error)".Trim() -ForegroundColor Red
+    return 'Failed'
+}
+
 function Enable-WslPrerequisites {
     param([string]$DistroName = 'Ubuntu-24.04')
 
@@ -391,14 +612,9 @@ function Enable-WslPrerequisites {
     $requiresReboot = $false
 
     foreach ($featureName in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'HypervisorPlatform', 'Microsoft-Hyper-V-All')) {
-        if (Test-WindowsFeatureEnabled $featureName) {
-            Write-Host "$featureName already enabled, skipping..." -ForegroundColor Yellow
-            continue
-        }
-
-        Write-Host "Enabling Windows feature: $featureName" -ForegroundColor Cyan
-        & dism.exe /Online /Enable-Feature "/FeatureName:$featureName" /All /NoRestart
-        if ($LASTEXITCODE -ne 0) {
+        $result = Enable-WindowsFeature -FeatureName $featureName
+        if ($result -eq 'AlreadyEnabled') { continue }
+        if ($result -eq 'Failed') {
             Write-Host "Failed to enable $featureName. Enable it manually, reboot, then rerun 0-init-prereqs.bat." -ForegroundColor Yellow
             continue
         }
@@ -417,10 +633,10 @@ function Enable-WslPrerequisites {
         Ensure-HypervisorBoot
 
         Write-Host "Installing WSL platform files..." -ForegroundColor Cyan
-        $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution')
+        $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', '--no-distribution') -Label 'Installing WSL (wsl --install --no-distribution)'
         if ($wslInstall.ExitCode -ne 0) {
             Write-Host "WSL --no-distribution install did not finish; trying default WSL install..." -ForegroundColor Yellow
-            $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install')
+            $wslInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install') -Label 'Installing WSL (wsl --install)'
             if ($wslInstall.ExitCode -ne 0) {
                 Write-Host "WSL platform install did not finish. Reboot Windows, then run: wsl --install" -ForegroundColor Yellow
                 if (-not [string]::IsNullOrWhiteSpace($wslInstall.Output)) {
@@ -447,8 +663,20 @@ function Enable-WslPrerequisites {
     }
 }
 
+$script:Failures = New-Object System.Collections.Generic.List[string]
+
 Write-Host "Starting PCSetup prerequisite initialization..." -ForegroundColor Cyan
 Ensure-GetFileHashCommand
+
+# Dark mode first, before anything downloads: it is instant and the rest of the run then
+# happens on a dark desktop. Not a throw - a cosmetic failure must not stop the toolchain,
+# but it is recorded and the script exits 1 at the end so run-all reports it.
+if ($env:PCSETUP_CI -eq '1') {
+    Write-Host "SKIP: CI mode - skipping dark mode (Server Core has no theme engine or desktop)." -ForegroundColor Yellow
+}
+elseif (-not (Invoke-Logged 'Dark mode' { Set-DarkMode })) {
+    $script:Failures.Add('Dark mode could not be turned on (see above)')
+}
 Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
 Refresh-SetupEnvironment
@@ -541,9 +769,16 @@ if (-not (Install-FirstAvailableScoopPackage 'Visual C++ redistributables' @('vc
     Install-WingetPackage 'Microsoft.VCRedist.2015+.x86' 'Visual C++ Redistributable x86' | Out-Null
 }
 
-Write-Host "Enabling .NET Framework 3.5 feature if available..." -ForegroundColor Cyan
+# .NET Framework 3.5 has no local payload on a fresh install, so DISM fetches it from Windows
+# Update and its own bar sits at ~37 % for minutes. Enable-WindowsFeature keeps one live status
+# line going (elapsed, CBS.log growth, last dism.log message) so that wait is visibly alive.
+# Still a warning rather than a failure when it cannot be enabled, as before: nothing later in
+# the run depends on 3.5, and a machine without Windows Update access would otherwise fail
+# step 0 over an optional runtime.
 try {
-    & dism.exe /Online /Enable-Feature /FeatureName:NetFx3 /All /NoRestart
+    if ((Enable-WindowsFeature -FeatureName 'NetFx3' -DisplayName '.NET Framework 3.5') -eq 'Failed') {
+        Write-Host ".NET Framework 3.5 could not be enabled; continuing (optional)." -ForegroundColor Yellow
+    }
 }
 catch {
     Write-Host ".NET Framework 3.5 enablement skipped: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -596,6 +831,12 @@ if ($env:PCSETUP_CI -eq '1') {
 }
 else {
     Enable-WslPrerequisites
+}
+
+if ($script:Failures.Count -gt 0) {
+    Write-Host "Prerequisite initialization finished with $($script:Failures.Count) failure(s):" -ForegroundColor Red
+    foreach ($f in $script:Failures) { Write-Host "  - $f" -ForegroundColor Red }
+    exit 1
 }
 
 Write-Host "Prerequisite initialization complete." -ForegroundColor Green

@@ -89,6 +89,100 @@ Describe "0-init-prereqs" {
         $script | Should -Match "--install', '--no-distribution"
         $script | Should -Match "--install'\)"
     }
+    It "turns dark mode on first, before any package manager work" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $script | Should -Match 'function Set-DarkMode'
+        # Applies the shipped theme (instant, same as double-clicking it) and writes the two
+        # Personalize values the locked Settings page would have written.
+        $script | Should -Match 'Resources\\Themes\\dark\.theme'
+        $script | Should -Match 'AppsUseLightTheme'
+        $script | Should -Match 'SystemUsesLightTheme'
+        $script | Should -Match 'ImmersiveColorSet'
+        # It must run before the git bootstrap so the desktop is dark while the rest installs.
+        $script.IndexOf('Set-DarkMode') | Should -BeLessThan $script.IndexOf("Install-BootstrapTool -Name 'git'")
+        # Server Core has no theme engine or desktop session; the step skips there.
+        $script | Should -Match "PCSETUP_CI -eq '1'\) \{[^}]*skipping dark mode"
+    }
+    It "DISM feature enables run behind the shared live status line and are verified" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $helper = Get-Content (Join-Path $PSScriptRoot "..\sources\status-line.ps1") -Raw
+        # The helper is shared with the generated scripts of 2/3/6, so it lives in sources\
+        # (already on remote-call.ps1's allowlist) and step 0 dot-sources it.
+        $script | Should -Match "\. \(Join-Path \`$PSScriptRoot 'status-line\.ps1'\)"
+        $script | Should -Not -Match 'function Invoke-CommandWithStatus'
+        $helper | Should -Match 'function Invoke-CommandWithStatus'
+        $script | Should -Match 'function Enable-WindowsFeature'
+        $script | Should -Match "Enable-WindowsFeature -FeatureName 'NetFx3'"
+        $script | Should -Match "-WatchProcess @\('TiWorker', 'TrustedInstaller'\)"
+        # No bare dism call may remain: it draws its own bar, which cannot tell "downloading
+        # from Windows Update" from "hung", and nothing verified the feature afterwards.
+        $script | Should -Not -Match '& dism\.exe'
+        # The silent capture wrapper (wsl --install, distro registration) goes through the
+        # status line too, and no Start-Process -Wait is left in step 0.
+        $script | Should -Match 'function Invoke-ProcessCapture[\s\S]*Invoke-CommandWithStatus -Label'
+        $code = (($script -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $code | Should -Not -Match 'Start-Process[^\n]*-Wait'
+        $helper | Should -Match 'RedirectStandardOutput\s*=\s*\$stdout'
+        # Without touching .Handle, .ExitCode is $null once the process has exited (5.1 quirk),
+        # and DISM's 3010 "reboot required" would be lost.
+        $helper | Should -Match '\$null = \$proc\.Handle'
+        # The signals that move while DISM's own percentage sits still.
+        $helper | Should -Match 'GetAllNetworkInterfaces'
+        $helper | Should -Match 'TotalProcessorTime'
+    }
+    It "status line runs a command to completion with exit code, output and empty args dropped" {
+        . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")
+        $fake = Join-Path $env:TEMP "pcsetup-test-fake-$([guid]::NewGuid().ToString('N')).ps1"
+        Set-Content $fake -Value @'
+foreach ($p in 5, 37.8, 100) { [Console]::Out.Write("`r[=== $p% ===] "); Start-Sleep -Milliseconds 400 }
+[Console]::Out.WriteLine()
+'The operation completed successfully.'
+[Console]::Error.WriteLine('warning on stderr')
+exit 7
+'@
+        try {
+            # An empty element in -ArgumentList used to be a Start-Process binding error; a caller
+            # that builds arguments from variables can hand one over.
+            $r = Invoke-CommandWithStatus -Label 'Fake install' -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '', '-ExecutionPolicy', 'Bypass', '-File', $fake) -WatchProcess @('powershell')
+            $r.ExitCode | Should -Be 7
+            Get-ProgressPercent $r.Output | Should -Be 100
+            $r.Output | Should -Match 'completed successfully'
+            $r.Error | Should -Match 'warning on stderr'
+            $r.Elapsed.TotalSeconds | Should -BeGreaterThan 1
+        }
+        finally { Remove-Item $fake -Force -ErrorAction SilentlyContinue }
+    }
+    It "status helpers parse DISM's redirected output and dism.log" {
+        . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")
+        # Captured from `dism /Online /Enable-Feature /FeatureName:NetFx3` with stdout redirected:
+        # the bar keeps coming, one CR-prefixed line per refresh.
+        $dism = "Enabling feature(s)`r`n`r[           0.1%           ] `r`n`r[=====   35.0%       ] `r`n`r[=========70.5%===   ] `r`n"
+        Get-ProgressPercent $dism | Should -Be 70.5
+        Get-ProgressPercent "Deployment Image Servicing and Management tool`r`nVersion: 10.0.26100" | Should -BeNullOrEmpty
+        Get-ProgressPercent '' | Should -BeNullOrEmpty
+
+        # Real dism.log tail: CSI noise, PID/TID and "- CClass::Method" suffixes, and the bare
+        # "DISM.EXE:" footer lines that must be skipped in favour of the last real message.
+        $log = Join-Path $env:TEMP "pcsetup-test-dism-$([guid]::NewGuid().ToString('N')).log"
+        @(
+            "2026-09-18 02:57:08, Info                  DISM   DISM Package Manager: PID=33208 TID=42832 Loaded servicing stack for online use. - CDISMPackageManager::CreateCbsSession",
+            "2026-09-18 02:57:08, Info                  CSI    00000001 Shim considered [l:123]'\??\C:\WINDOWS\WinSxS\amd64_microsoft-windows-servicingstack'",
+            "2026-09-18 02:57:08, Info                  DISM   DISM.EXE: Image session has been closed. Reboot required=no.",
+            "2026-09-18 02:57:08, Info                  DISM   DISM.EXE: "
+        ) | Set-Content $log
+        try {
+            Get-DismLogMessage $log | Should -Be 'DISM.EXE: Image session has been closed. Reboot required=no.'
+            Set-Content $log "2026-09-18 02:57:08, Info                  DISM   DISM Package Manager: PID=1 TID=2 Finalizing CBS core. - CDISMPackageManager::Finalize"
+            Get-DismLogMessage $log | Should -Be 'DISM Package Manager: Finalizing CBS core.'
+            Get-DismLogMessage (Join-Path $env:TEMP 'does-not-exist-pcsetup.log') | Should -Be ''
+        }
+        finally { Remove-Item $log -Force -ErrorAction SilentlyContinue }
+    }
+    It "dark mode is on for the current user" -Skip:($IsCI) {
+        $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+        (Get-ItemProperty $k).AppsUseLightTheme   | Should -Be 0
+        (Get-ItemProperty $k).SystemUsesLightTheme | Should -Be 0
+    }
     It ".NET 6 desktop runtime installed" -Skip:($IsCI) {
         (dotnet --list-runtimes 2>&1 | Out-String) | Should -Match 'Microsoft\.WindowsDesktop\.App 6\.'
     }
@@ -113,6 +207,14 @@ Describe "1-delete-node-modules" {
 # 2 - setup-windows
 # -----------------------------
 Describe "2-setup-windows" {
+    It "direct installers run behind the shared status line, never a silent Start-Process -Wait" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
+        $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$name" -FilePath \$tmp'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing Dokan \(msi\)"[^\r\n]*-WatchProcess msiexec'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing IceDrive"'
+    }
     It "Python installed" {
         (python --version 2>&1) | Should -Match 'Python \d+\.\d+'
     }
@@ -228,6 +330,14 @@ Describe "2-setup-windows" {
 # 3 — setup-node
 # ─────────────────────────────────────────────
 Describe "3-setup-node" {
+    It "npm installs run behind the shared status line and show their output tail on failure" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\3-setup-node.bat") -Raw
+        $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
+        $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
+        $bat | Should -Match '\$proc = Invoke-CommandWithStatus -Label "Installing \$displayName \(npm\)"'
+        # The output is captured now, so a failed attempt must still show what npm said.
+        $bat | Should -Match '\$tail = @\(\(\$proc\.Output \+ \$proc\.Error\)'
+    }
     It "nvm installed" {
         $onPath = (Get-Command nvm -ErrorAction SilentlyContinue) -ne $null
         $atPath = Test-Path "$env:APPDATA\nvm\nvm.exe"
@@ -342,6 +452,13 @@ Describe "5-move-profile-folders" {
 # 6 — setup-games (skipped in CI)
 # ─────────────────────────────────────────────
 Describe "6-setup-games" {
+    It "TexTools and FFLogs installers run behind the shared status line" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
+        $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
+        $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing TexTools"'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing FFLogs Uploader"'
+    }
     It "Steam installed" -Skip:($IsCI) {
         $installed = (Get-Command steam -ErrorAction SilentlyContinue) -or (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
         $installed | Should -BeTrue

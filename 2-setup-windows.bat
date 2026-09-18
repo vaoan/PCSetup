@@ -31,6 +31,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 :: file-handle redirect (that silently ate `$maxAttempts = 3` in 3-setup-node.bat).
 >"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
+>>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
+>>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.
+>>"%SCRIPT%" echo . "%~dp0sources\status-line.ps1"
 >>"%SCRIPT%" echo function Add-Failure([string]$name) { if (-not $failures.Contains($name)) { $null = $failures.Add($name) } }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo try { Set-ExecutionPolicy Bypass -Scope CurrentUser -Force -ErrorAction Stop } catch { Write-Host "Unable to set CurrentUser execution policy: $($_.Exception.Message)" -ForegroundColor Yellow }
@@ -98,7 +101,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         $tmp = $env:TEMP + '\' + ($name -replace '\W', '') + 'Setup.exe'
 >>"%SCRIPT%" echo         if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
->>"%SCRIPT%" echo         Start-Process -FilePath $tmp -ArgumentList $silentArgs -Wait
+>>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name" -FilePath $tmp -ArgumentList $silentArgs
 >>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
@@ -111,7 +114,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         $tmp = $env:TEMP + '\' + ($name -replace '\W', '') + 'Setup.msi'
 >>"%SCRIPT%" echo         if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
 >>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
->>"%SCRIPT%" echo         Start-Process msiexec.exe -ArgumentList "/i", $tmp, "/qn", "/norestart" -Wait
+>>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name (msi)" -FilePath msiexec.exe -ArgumentList "/i", $tmp, "/qn", "/norestart" -WatchProcess msiexec
 >>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
@@ -194,7 +197,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if ($asset) {
 >>"%SCRIPT%" echo             $dokanMsi = "$env:TEMP\DokanSetup.msi"
 >>"%SCRIPT%" echo             ^& curl.exe -fL -o $dokanMsi $asset.browser_download_url --silent --show-error
->>"%SCRIPT%" echo             Start-Process msiexec.exe -ArgumentList "/i", $dokanMsi, "/qn", "/norestart" -Wait
+>>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing Dokan (msi)" -FilePath msiexec.exe -ArgumentList "/i", $dokanMsi, "/qn", "/norestart" -WatchProcess msiexec
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     } catch { }
 >>"%SCRIPT%" echo     if (Test-DokanInstalled) { return $true }
@@ -241,11 +244,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo             if (Test-IceDriveInstaller $iceInstaller) { $ok = $true; break }
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo         if (-not $ok) { throw "IceDrive installer download failed validation." }
->>"%SCRIPT%" echo         Start-Process -FilePath $iceInstaller -ArgumentList "/S /NORESTART" -Wait
+>>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing IceDrive" -FilePath $iceInstaller -ArgumentList "/S /NORESTART"
 >>"%SCRIPT%" echo         if (-not (Test-DokanInstalled)) {
 >>"%SCRIPT%" echo             Write-Host "Dokan missing after IceDrive install. Repairing and retrying..." -ForegroundColor Yellow
 >>"%SCRIPT%" echo             Ensure-DokanInstalled ^| Out-Null
->>"%SCRIPT%" echo             Start-Process -FilePath $iceInstaller -ArgumentList "/S /NORESTART" -Wait
+>>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing IceDrive (retry)" -FilePath $iceInstaller -ArgumentList "/S /NORESTART"
 >>"%SCRIPT%" echo             Start-Sleep -Seconds ^3
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo         if (-not (Test-IceDriveInstalled)) { throw "IceDrive installation finished but executable was not found." }
