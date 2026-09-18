@@ -78,7 +78,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         Start-Sleep -Seconds 5
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
->>"%SCRIPT%" echo 
+>>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName) {
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan

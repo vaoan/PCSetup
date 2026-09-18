@@ -397,6 +397,15 @@ Describe "2-setup-windows" {
         # Nothing may kill an app the installer opened: the fix is to not open it in the first place.
         $bat | Should -Not -Match 'Stop-LaunchedApp|Stop-Process -Name Discord'
     }
+    It "NVIDIA App is skipped without an NVIDIA GPU and is optional with one" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match 'function Test-GpuVendor'
+        $bat | Should -Match 'Win32_VideoController'
+        $bat | Should -Match "Name = 'NVIDIA App'; Source = 'msstore'; RequiresGpu = 'NVIDIA'; Optional = \`$true"
+        $bat | Should -Match 'if \(\$requiresGpu -and -not \(Test-GpuVendor \$requiresGpu\)\)'
+        $bat | Should -Match 'elseif \(\$optional\) \{ Write-Host "\$displayName did not install; optional, continuing\."'
+        $bat | Should -Match 'Install-WingetApp \$entry\.Id \$entry\.Name \$entry\.Source \$entry\.RequiresGpu \(\[bool\]\$entry\.Optional\)'
+    }
     It "Discord and Discord Canary install silently with -s from Discord's x64 endpoint, not through winget" {
         # winget runs Discord's installer with NO switches (its maintainers removed -s), so it shows
         # the installer UI and launches Discord at the end - from an elevated setup that comes with a

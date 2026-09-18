@@ -721,6 +721,13 @@ that failed is listed at the end, with the script exiting non-zero.
 > upgrade found", so `return ($LASTEXITCODE -eq 0)` reported false failures. Installs are confirmed
 > with `winget list --id <id> -e` instead.
 
+> **The NVIDIA App row is hardware-gated and optional.** A winget row can carry
+> `RequiresGpu = 'NVIDIA'` (matched against `Win32_VideoController` names) and `Optional = $true`.
+> Without an NVIDIA GPU the install is skipped with a note instead of attempted (the VirtualBox
+> VM has a "VirtualBox Graphics Adapter"); with one, a failed install is a yellow "optional,
+> continuing" rather than a recorded failure. Everything else in the table is still a failure
+> when it does not verify.
+
 > **Two entries were dead and failing silently:** `winamp` was removed from every Scoop bucket
 > upstream (now installed as `Winamp.Winamp` via winget), and `Nvidia.NVIDIAApp` has never been a
 > valid winget ID — the NVIDIA App is msstore-only, so it uses `XP8CLZL93F5Z4P` with

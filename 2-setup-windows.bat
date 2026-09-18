@@ -94,10 +94,19 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         Start-Sleep -Seconds 5
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
->>"%SCRIPT%" echo 
->>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName = $id, [string]$source) {
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Some apps only make sense with specific hardware (the NVIDIA App on an NVIDIA GPU). A row can name
+>>"%SCRIPT%" echo # the GPU vendor it requires; without that hardware the install is skipped, and with it a failed
+>>"%SCRIPT%" echo # install is a warning rather than a failed script when the row is marked Optional.
+>>"%SCRIPT%" echo function Test-GpuVendor([string]$vendor) {
+>>"%SCRIPT%" echo     $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue ^| ForEach-Object { $_.Name })
+>>"%SCRIPT%" echo     return [bool]($gpus ^| Where-Object { $_ -match $vendor })
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName = $id, [string]$source, [string]$requiresGpu, [bool]$optional = $false) {
 >>"%SCRIPT%" echo     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Host "winget missing; cannot install $displayName." -ForegroundColor Red; Add-Failure $displayName; return }
 >>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
+>>"%SCRIPT%" echo     if ($requiresGpu -and -not (Test-GpuVendor $requiresGpu)) { Write-Host "$displayName skipped: no $requiresGpu GPU in this machine." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     # Never trust winget's exit code: it returns nonzero for "no applicable upgrade"
 >>"%SCRIPT%" echo     # and other benign states. Verify with winget list instead.
@@ -106,6 +115,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     # winget prints nothing while captured, so the status line (net rate, installer cpu, its last line) is the only movement.
 >>"%SCRIPT%" echo     try { $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList $wingetArgs -WatchProcess msiexec -WatchService msiserver } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id }) { Write-Host "$displayName installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     elseif ($optional) { Write-Host "$displayName did not install; optional, continuing." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; Add-Failure $displayName }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
@@ -179,9 +189,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'wez.wezterm';                     Name = 'WezTerm' },
 >>"%SCRIPT%" echo     @{ Id = 'Docker.DockerDesktop';            Name = 'Docker Desktop' },
 >>"%SCRIPT%" echo     @{ Id = 'PatchMyPC.PatchMyPC';             Name = 'Patch My PC' },
->>"%SCRIPT%" echo     @{ Id = 'XP8CLZL93F5Z4P';                  Name = 'NVIDIA App'; Source = 'msstore' }
+>>"%SCRIPT%" echo     @{ Id = 'XP8CLZL93F5Z4P';                  Name = 'NVIDIA App'; Source = 'msstore'; RequiresGpu = 'NVIDIA'; Optional = $true }
 >>"%SCRIPT%" echo )
->>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source }
+>>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source $entry.RequiresGpu ([bool]$entry.Optional) }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Discord and Discord Canary: direct downloads run with Discord's own -s switch. winget cannot do
 >>"%SCRIPT%" echo # this - its manifests carry no switches (the maintainers removed --silent), so winget shows the
