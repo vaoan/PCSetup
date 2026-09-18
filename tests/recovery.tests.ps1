@@ -133,7 +133,7 @@ Describe 'Recovery scripts - syntax' {
     # unset. A patch that read the file with utf-8-sig and wrote it back with utf-8-sig
     # added exactly that BOM on 2026-09-18; the worker's cached copy hid it locally.
     It 'remote-call.ps1 is ASCII with no BOM, because it is executed through irm | iex' {
-        $bytes = [IO.File]::ReadAllBytes((Join-Path $PSScriptRoot '..emote-call.ps1'))
+        $bytes = [IO.File]::ReadAllBytes([IO.Path]::Combine($PSScriptRoot, '..', 'remote-call.ps1'))
         ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
         @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
     }
