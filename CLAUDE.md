@@ -672,7 +672,23 @@ that failed is listed at the end, with the script exiting non-zero.
 > Windows Server Core image needs Windows containers —
 > `& "$env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchDaemon` with Docker running, or
 > right-click the tray icon → *Switch to Windows containers*.
-**Direct download:** Discord, Discord Canary (both `-s`, silent and no launch), Chrome Remote Desktop, Mudfish, IceDrive (+ Dokan)
+**Direct download:** Discord, Discord Canary (both `-s`, silent and no launch), Chrome Remote Desktop, IceDrive (+ Dokan)
+
+> **IceDrive goes in before Dokan, and its installer is never run twice.** IceDrive bundles its own
+> (older) Dokan driver and copies `dokan2.sys` with the shell copy UI, so when script 2 installed
+> the newest Dokan *first* the IceDrive installer stopped on a **Confirm File Replace** dialog
+> ("target file exists and is newer") even with `/S /NORESTART` — a blocked unattended run. Now
+> IceDrive installs first (nothing to replace on a fresh machine) and `Ensure-DokanInstalled` runs
+> afterwards only if Dokan is still missing; the old "repair Dokan then re-run the IceDrive
+> installer" retry is gone because the second pass is exactly what prompts. The one case that
+> cannot be made silent — a Dokan driver already present from something else, IceDrive not — is
+> skipped with a pointer to `optional/setup-optional-software.bat`, which has an interactive
+> IceDrive install for it. The post-install check polls (`Wait-InstalledCheck`) like the others.
+
+> **Mudfish is not installed here any more.** Its installer stops on a question about its network
+> driver that no silent switch answers (`/S` is honoured for the rest; the driver step is not),
+> which blocked the whole unattended run in the VM. It moved to `optional/setup-optional-software.bat`,
+> where installers are allowed to ask. Nothing in the numbered scripts may show a dialog.
 **Other:** Claude Code (Windows and inside WSL), WSL itself
 
 > **Installers that hand off to an updater are not registered the instant they return.** Discord
@@ -1134,7 +1150,7 @@ no-verification shape:
 
 | File | Purpose |
 |---|---|
-| `optional/setup-optional-software.bat` | Additional software installs |
+| `optional/setup-optional-software.bat` | Additional software installs (Driver Booster, ASUS DriverHub, HYTE Nexus, **Mudfish** — installers here may prompt) |
 | `optional/shallow-clone-ffxiv-profiles.bat` | Shallow-clones FFXIV profile repos |
 | `optional/open-rufus-latest.bat` | Opens the latest Rufus |
 

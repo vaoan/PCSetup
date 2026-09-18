@@ -207,19 +207,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo Install-DirectExe "Discord Canary" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=canary&platform=win&arch=$discordArch" "-s" "$env:LOCALAPPDATA\DiscordCanary"
 >>"%SCRIPT%" echo Install-DirectMsi "Chrome Remote Desktop" "https://dl.google.com/dl/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop"
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo $mudfishInstalled = (Test-Path "${env:ProgramFiles(x86)}\Mudfish Cloud VPN\mudfish.exe") -or (Test-Path "$env:ProgramFiles\Mudfish Cloud VPN\mudfish.exe") -or (Test-Path "$env:LOCALAPPDATA\Mudfish Cloud VPN\mudfish.exe")
->>"%SCRIPT%" echo if ($mudfishInstalled) { Write-Host "Mudfish already installed, skipping..." -ForegroundColor Yellow }
->>"%SCRIPT%" echo else {
->>"%SCRIPT%" echo     try {
->>"%SCRIPT%" echo         Write-Host "Resolving Mudfish download..." -ForegroundColor Cyan
->>"%SCRIPT%" echo         $mudfishPage = ^& curl.exe -fsSL "https://mudfish.net/download"
->>"%SCRIPT%" echo         $mudfishMatch = [regex]::Match($mudfishPage, '/download\?filename=mudfish-[0-9.]+-x86_64-win2k-setup\.exe')
->>"%SCRIPT%" echo         if (-not $mudfishMatch.Success) { throw "Mudfish Windows installer link not found." }
->>"%SCRIPT%" echo         $mudfishFile = $mudfishMatch.Value -replace '^^/download\?filename=', ''
->>"%SCRIPT%" echo         Install-DirectExe "Mudfish" "https://mudfish.net/releases/$mudfishFile" "/S" "${env:ProgramFiles(x86)}\Mudfish Cloud VPN"
->>"%SCRIPT%" echo     } catch { Write-Host "Mudfish FAILED: $($_.Exception.Message)" -ForegroundColor Red; Add-Failure 'Mudfish' }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Mudfish is NOT installed here: its installer stops on a driver-installation question that no
+>>"%SCRIPT%" echo # silent switch answers, which blocked the whole unattended run. It lives in
+>>"%SCRIPT%" echo # optional\setup-optional-software.bat, where installers are allowed to ask.
 >>"%SCRIPT%" echo function Test-DokanInstalled {
 >>"%SCRIPT%" echo     if (@("C:\Windows\System32\dokan2.dll", "C:\Windows\SysWOW64\dokan2.dll") ^| Where-Object { Test-Path $_ }) { return $true }
 >>"%SCRIPT%" echo     return (Test-Path "C:\Program Files\Dokan")
@@ -256,7 +246,19 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         return ((Get-AuthenticodeSignature $path).Status -eq "Valid")
 >>"%SCRIPT%" echo     } catch { return $false }
 >>"%SCRIPT%" echo }
->>"%SCRIPT%" echo if ((Test-IceDriveInstalled) -and (Test-DokanInstalled)) { Write-Host "IceDrive and Dokan already installed, skipping..." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo # IceDrive bundles its own (older) Dokan driver and copies it with the shell copy UI, so if a newer
+>>"%SCRIPT%" echo # dokan2.sys is already in System32\DRIVERS the installer stops on a "Confirm File Replace" dialog
+>>"%SCRIPT%" echo # even with /S - that is what happened when Dokan was installed first. Order is therefore IceDrive
+>>"%SCRIPT%" echo # first (nothing to replace on a fresh machine), Dokan repaired afterwards only if still missing.
+>>"%SCRIPT%" echo # A machine that already has a Dokan driver from something else is the one case that cannot be
+>>"%SCRIPT%" echo # made silent, so it is skipped with a pointer to the optional script rather than prompting.
+>>"%SCRIPT%" echo if (Test-IceDriveInstalled) {
+>>"%SCRIPT%" echo     Write-Host "IceDrive already installed, skipping..." -ForegroundColor Yellow
+>>"%SCRIPT%" echo     if (-not (Test-DokanInstalled)) { try { Ensure-DokanInstalled ^| Out-Null } catch { Write-Host "Dokan repair failed: $($_.Exception.Message)" -ForegroundColor Yellow } }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo elseif (Test-DokanInstalled) {
+>>"%SCRIPT%" echo     Write-Host "IceDrive skipped: a Dokan driver is already installed, and the IceDrive installer stops on a Confirm File Replace dialog for dokan2.sys even with /S. Install it from optional\setup-optional-software.bat." -ForegroundColor Yellow
+>>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     try {
 >>"%SCRIPT%" echo         Write-Host "Installing IceDrive..." -ForegroundColor Cyan
@@ -274,7 +276,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         } catch { }
 >>"%SCRIPT%" echo         $candidateUrls += @("https://cdn.icedrive.net/static/apps/win/IcedriveSetup-v3.56.exe", "https://cdn.icedrive.net/static/apps/win/IcedriveSetup-v3.55.exe")
 >>"%SCRIPT%" echo         $candidateUrls = $candidateUrls ^| Select-Object -Unique
->>"%SCRIPT%" echo         Ensure-DokanInstalled ^| Out-Null
 >>"%SCRIPT%" echo         $ok = $false
 >>"%SCRIPT%" echo         foreach ($candidate in $candidateUrls) {
 >>"%SCRIPT%" echo             Write-Host "Downloading IceDrive installer from $candidate" -ForegroundColor Cyan
@@ -284,12 +285,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if (-not $ok) { throw "IceDrive installer download failed validation." }
 >>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing IceDrive" -FilePath $iceInstaller -ArgumentList "/S /NORESTART"
 >>"%SCRIPT%" echo         if (-not (Test-DokanInstalled)) {
->>"%SCRIPT%" echo             Write-Host "Dokan missing after IceDrive install. Repairing and retrying..." -ForegroundColor Yellow
+>>"%SCRIPT%" echo             # The installer is never re-run here: a second pass would hit the file-replace dialog.
+>>"%SCRIPT%" echo             Write-Host "Dokan missing after IceDrive install; installing it separately..." -ForegroundColor Yellow
 >>"%SCRIPT%" echo             Ensure-DokanInstalled ^| Out-Null
->>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing IceDrive (retry)" -FilePath $iceInstaller -ArgumentList "/S /NORESTART"
->>"%SCRIPT%" echo             Start-Sleep -Seconds ^3
 >>"%SCRIPT%" echo         }
->>"%SCRIPT%" echo         if (-not (Test-IceDriveInstalled)) { throw "IceDrive installation finished but executable was not found." }
+>>"%SCRIPT%" echo         if (-not (Wait-InstalledCheck { Test-IceDriveInstalled })) { throw "IceDrive installation finished but executable was not found." }
 >>"%SCRIPT%" echo         if (-not (Test-DokanInstalled)) { throw "Dokan is still missing after automatic remediation." }
 >>"%SCRIPT%" echo         Write-Host "IceDrive installed." -ForegroundColor Green
 >>"%SCRIPT%" echo     } catch { Write-Host "IceDrive FAILED: $($_.Exception.Message)" -ForegroundColor Red; Add-Failure 'IceDrive' }

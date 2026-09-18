@@ -397,6 +397,33 @@ Describe "2-setup-windows" {
         # Nothing may kill an app the installer opened: the fix is to not open it in the first place.
         $bat | Should -Not -Match 'Stop-LaunchedApp|Stop-Process -Name Discord'
     }
+    It "IceDrive installs before Dokan, never re-runs its installer, and is skipped when a Dokan driver already exists" {
+        # IceDrive bundles an older Dokan and copies dokan2.sys with the shell copy UI: with a newer
+        # driver already in System32\DRIVERS the installer stops on "Confirm File Replace" even
+        # with /S (seen in the VM after Dokan was installed first).
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $code = (($bat -split "`r?`n") | Where-Object { $_ -notmatch 'echo #' }) -join "`n"
+        $code | Should -Not -Match 'Ensure-DokanInstalled \^\| Out-Null\n[^\n]*\$ok = \$false'
+        $code.IndexOf('Invoke-CommandWithStatus -Label "Installing IceDrive"') | Should -BeLessThan $code.IndexOf('Dokan missing after IceDrive install; installing it separately')
+        $code | Should -Not -Match 'Installing IceDrive \(retry\)'
+        $code | Should -Match 'elseif \(Test-DokanInstalled\) \{'
+        $code | Should -Match 'IceDrive skipped: a Dokan driver is already installed'
+        $code | Should -Match 'Wait-InstalledCheck \{ Test-IceDriveInstalled \}'
+        $opt = Get-Content (Join-Path $PSScriptRoot "..\optional\setup-optional-software.bat") -Raw
+        $opt | Should -Match 'call :install_icedrive'
+        $opt | Should -Match 'start /wait "" "%ICEDRIVE_INSTALLER%"'
+    }
+    It "Mudfish is not part of the unattended run; it lives in the optional script" {
+        # Its installer stops on a driver-installation question no silent switch answers, which
+        # blocked the whole run in the VM.
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        (($bat -split "`r?`n") | Where-Object { $_ -match 'Mudfish' -and $_ -notmatch 'echo #' }).Count | Should -Be 0
+        $opt = Get-Content (Join-Path $PSScriptRoot "..\optional\setup-optional-software.bat") -Raw
+        $opt | Should -Match 'mudfish\.net/download'
+        $opt | Should -Match 'start /wait "" "%MUDFISH_INSTALLER%"'
+        # Batch files must stay CRLF (an LF .bat breaks goto/labels silently).
+        $opt | Should -Not -Match '(?<!\r)\n'
+    }
     It "NVIDIA App is skipped without an NVIDIA GPU and is optional with one" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
         $bat | Should -Match 'function Test-GpuVendor'
