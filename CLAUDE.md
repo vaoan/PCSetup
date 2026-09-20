@@ -1175,6 +1175,36 @@ Downloads and installs Re:MakePlace (community-maintained fork) directly from Gi
 
 **Installed packages:** Re:MakePlace (from GitHub), 7-Zip (signed installer, if needed)
 
+### optional/repair-discord.bat
+Repairs a Discord install that **opens and closes itself** or dies at first launch with
+**"A fatal Javascript error occured"**. Double-click it; arguments pass through to
+`repair-discord.ps1` (`-Channel canary|ptb`, `-Reinstall`, `-NoLaunch`). Output is also appended to
+`%LOCALAPPDATA%\PCSetupepair-discord.log`. Both failures were seen on this PC on 2026-09-18 and
+**a plain reinstall fixes neither**:
+
+| Symptom | Cause | Repair (only when the symptom is present) |
+|---|---|---|
+| Main window appears, app quits 1-3 s later, no crash report | `USE_PINNED_UPDATE_MANIFEST: true` (+ `SKIP_HOST_UPDATE`) in `%APPDATA%\discord\settings.json`, left by Discord's own x86-to-x64 migration, while `pinned_update.json` no longer exists. Discord's bundle reads that file when the key is set and calls `fatal()` on ENOENT: message box, `app.quit()`. Sentry breadcrumbs (`%APPDATA%\discord\sentry\scope_v3.json`) show `fatal: Error: ENOENT ... pinned_update.json`. | Drop both keys (backup written next to the file). A pin whose file exists is valid and is left alone. |
+| First launch: `InconsistentInstallerState: Attempt to install host that is currently running` | `DiscordSetup.exe -s` (what `2-setup-windows.bat` uses) lays down the files but never registers the host in `installer.db`. The first launch builds an empty 12 KB database, asks for the latest build and, when that equals the installed one, refuses to install over itself. It worked in the VM only because Canary had a newer build to update to. | Reinstall from the official x64 installer in **normal** mode (signature checked first; it registers the host and launches the app itself). Triggered when `Update.exe`, the `app-*` folder or `installer.db` is missing, or the database is under 64 KB; `-Reinstall` forces it. |
+
+Afterwards the app is launched (or the running one adopted) and **watched for 30 s**; a `before-quit`
+in the crashlog inside that window is a failure that names the logs to read. Exit 0 = healthy.
+
+> **Discord must not run elevated** (drag-and-drop and the overlay break), and this script is
+> elevated like every other one here. The installer and the app are therefore started through
+> `explorer.exe "<path>"`, which launches them at the desktop's normal integrity level. It cannot
+> pass arguments, which is also why the reinstall runs the installer in normal mode rather than
+> with a switch.
+
+> **`settings.json` is rewritten without a BOM.** Discord reads it with Node's `fs` + `JSON.parse`,
+> which rejects a leading U+FEFF; Windows PowerShell's `Set-Content -Encoding UTF8` would add one and
+> Discord would fail to parse its own settings. `[IO.File]::WriteAllText` with `UTF8Encoding($false)`.
+
+Tested in `setup.tests.ps1` (`repair-discord`): the key removal, the backup, the no-BOM write, the
+"valid pin left alone" case and the idempotent second run, all against a fake profile with
+`APPDATA`/`LOCALAPPDATA` redirected and `-NoLaunch`, executed under Windows PowerShell 5.1. The
+reinstall path was verified by hand with `-Reinstall` on the real install.
+
 ## Uninstall Scripts (`uninstall/`)
 
 ### uninstall/context-menu-terminal.bat

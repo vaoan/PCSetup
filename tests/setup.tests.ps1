@@ -2,6 +2,8 @@
 
 $ErrorActionPreference = 'Stop'
 $IsCI = $env:PCSETUP_CI -eq '1'
+# Script scope on purpose: -Skip: is evaluated at discovery, before BeforeAll runs.
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 BeforeAll {
     function Test-WingetPackageInstalled {
@@ -1016,9 +1018,96 @@ Describe "update-all" {
     }
 }
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# cloudflared scheduled tasks
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+Describe "repair-discord" {
+    BeforeAll {
+        $script:bat = Get-Content (Join-Path $PSScriptRoot "..\optional\repair-discord.bat") -Raw
+        $script:ps1 = Get-Content (Join-Path $PSScriptRoot "..\optional\repair-discord.ps1") -Raw
+        $script:ps1Path = Join-Path $PSScriptRoot "..\optional\repair-discord.ps1"
+        $script:ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+
+    It "launcher elevates, clears PSModulePath and forwards its arguments" {
+        $bat | Should -Match 'net session >nul 2>&1'
+        $bat | Should -Match 'set "PSModulePath="'
+        $bat | Should -Match 'repair-discord\.ps1" %\*'
+    }
+
+    It "reinstalls with the x64 installer in normal mode, launched unelevated, never with -s" {
+        # -s is exactly what leaves installer.db unregistered (the InconsistentInstallerState crash).
+        $ps1 | Should -Match 'arch=x64'
+        $ps1 | Should -Match 'Start-Unelevated -Path \$installer'
+        $ps1 | Should -Not -Match "ArgumentList\s+'-s'"
+        $ps1 | Should -Match 'explorer\.exe'
+        $ps1 | Should -Match 'Get-AuthenticodeSignature'
+    }
+
+    It "writes settings.json without a BOM (Node's JSON.parse rejects U+FEFF)" {
+        $ps1 | Should -Match 'UTF8Encoding \$false'
+        $ps1 | Should -Not -Match 'Set-Content[^\n]*settings'
+    }
+
+    It "only counts a before-quit from the current session, not the installer's own hook run" {
+        # The normal-mode installer runs Discord once with --squirrel-install (which logs a
+        # before-quit) right before the real launch; the first version of the watch counted that
+        # and reported a healthy reinstall as "quit within 30 s".
+        $ps1 | Should -Match 'Discord starting'
+        $ps1 | Should -Not -Match 'datetime\]::Parse'
+    }
+
+    It "removes the stale pinned-manifest keys, keeps a valid pin, and leaves a healthy install alone" -Skip:(-not $IsAdmin) {
+        # Fake profile: registered install (Update.exe, app-1.0.0\Discord.exe, a 100 KB installer.db)
+        # and a settings.json carrying the keys Discord's x64 migration leaves behind. -NoLaunch, so
+        # nothing is started; the real Discord is untouched because APPDATA/LOCALAPPDATA are redirected.
+        $root = Join-Path $env:TEMP ("repair-discord-test-" + [guid]::NewGuid().ToString('N'))
+        $local = Join-Path $root 'Local'; $roaming = Join-Path $root 'Roaming'
+        $install = Join-Path $local 'Discord'; $userData = Join-Path $roaming 'discord'
+        New-Item -ItemType Directory -Path (Join-Path $install 'app-1.0.0'), $userData -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $install 'Update.exe'), (Join-Path $install 'app-1.0.0\Discord.exe') -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $install 'installer.db'), (New-Object byte[] 102400))
+        $settings = Join-Path $userData 'settings.json'
+        [IO.File]::WriteAllText($settings, '{"SKIP_HOST_UPDATE":true,"USE_PINNED_UPDATE_MANIFEST":true,"BACKGROUND_COLOR":"#121214","IS_MAXIMIZED":true}', (New-Object Text.UTF8Encoding $false))
+
+        $savedAppData = $env:APPDATA; $savedLocal = $env:LOCALAPPDATA
+        try {
+            $env:APPDATA = $roaming; $env:LOCALAPPDATA = $local
+
+            $out = & $ps51 -NoProfile -ExecutionPolicy Bypass -File $ps1Path -NoLaunch 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            $out | Should -Match 'pinned_update\.json is missing'
+            $out | Should -Match 'keys removed'
+            $after = Get-Content $settings -Raw | ConvertFrom-Json
+            $after.PSObject.Properties.Name | Should -Not -Contain 'USE_PINNED_UPDATE_MANIFEST'
+            $after.PSObject.Properties.Name | Should -Not -Contain 'SKIP_HOST_UPDATE'
+            $after.BACKGROUND_COLOR | Should -Be '#121214'
+            $after.IS_MAXIMIZED | Should -BeTrue
+            [IO.File]::ReadAllBytes($settings)[0] | Should -Be 0x7B -Because 'the rewritten file must start with { and not a BOM'
+            (Get-ChildItem $userData -Filter 'settings.json.bak-*').Count | Should -Be 1
+
+            # Second run: nothing left to do, nothing downloaded.
+            $out = & $ps51 -NoProfile -ExecutionPolicy Bypass -File $ps1Path -NoLaunch 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            $out | Should -Match 'Nothing needed repairing'
+            (Get-ChildItem $userData -Filter 'settings.json.bak-*').Count | Should -Be 1
+
+            # A pin whose file exists is valid and must be left alone.
+            [IO.File]::WriteAllText($settings, '{"USE_PINNED_UPDATE_MANIFEST":true}', (New-Object Text.UTF8Encoding $false))
+            [IO.File]::WriteAllText((Join-Path $userData 'pinned_update.json'), '{}', (New-Object Text.UTF8Encoding $false))
+            $out = & $ps51 -NoProfile -ExecutionPolicy Bypass -File $ps1Path -NoLaunch 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            $out | Should -Match 'valid pin'
+            (Get-Content $settings -Raw | ConvertFrom-Json).USE_PINNED_UPDATE_MANIFEST | Should -BeTrue
+        }
+        finally {
+            $env:APPDATA = $savedAppData; $env:LOCALAPPDATA = $savedLocal
+            Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€\r
+# cloudflared scheduled tasks\r
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€\r
 Describe "cloudflared scheduled tasks" {
     It "web installer uses boot plus logon triggers" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\install-tunnel.ps1") -Raw
