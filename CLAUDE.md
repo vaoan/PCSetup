@@ -978,7 +978,8 @@ no-pauses rule); with no argument it falls back to the interactive prompt. Both 
 file size — a 0-byte backup is refused rather than silently restoring an empty Start Menu.
 
 ### optional/download-video.bat
-One clipboard-driven downloader for **Twitch VODs, YouTube videos and Instagram reels/posts**
+One clipboard-driven downloader for **Twitch VODs, YouTube videos, Instagram reels/posts and X
+(Twitter) posts**
 (it replaced three per-site scripts on 2026-09-14). Double-click with a link in the clipboard; the
 `.bat` only elevates, clears `PSModulePath`, and runs `download-video.ps1`, which detects the site
 from the URL, installs only what that site needs (scoop itself first on a fresh PC — same
@@ -987,9 +988,10 @@ into `[Environment]::GetFolderPath('MyVideos')` (Pictures for Instagram photo po
 tool's live progress, opens Explorer on the finished file and closes after 8 s; failures end in a
 message box. Output names are `<date> <channel> - <title> [<id>] [<quality>].mp4` for Twitch/YouTube (`[1080p60]`,
 built from height and rounded fps, not from Twitch's `1080p60 (source)` label) and
-`<date> <channel> - <title> [<id>].mp4` for Instagram. Manual runs accept `-Url`,
-`-MaxHeight` (Twitch/YouTube resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
-(keep the Twitch h264), `-Cpu` (AV1 on the CPU with SVT-AV1 instead of NVENC), `-CompressFile <path>`
+`<date> <handle> - <text> [<id>].mp4` for Instagram and X (a multi-video X post gets ` (n of N)`).
+Every video download is then AV1-compressed (see "AV1 compression"). Manual runs accept `-Url`,
+`-MaxHeight` (Twitch/YouTube/X resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
+(keep the file as the site served it), `-Cpu` (AV1 on the CPU with SVT-AV1 instead of NVENC), `-CompressFile <path>`
 (AV1-compress an existing file in place and stop), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
 YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
 
@@ -998,6 +1000,7 @@ YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so te
 | Twitch | `twitchdownloader-cli`, `ffmpeg` | highest m3u8 variant by resolution then fps (`-q NAME`); `-MaxHeight N` caps it | 24 threads: 10 → 32 Mbit/s, 24 → 176, 40+ slower; 72-min VOD in 56 s |
 | YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res,fps,vcodec:h264,acodec:m4a,ext:mp4"` (`res:N` with `-MaxHeight`) — highest resolution wins, h264 only breaks ties at equal resolution so a VP9/AV1-only 1440p/4K is still taken; a 720p-and-below video gets h264, which the stock player can play | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
 | Instagram | `yt-dlp`, `gallery-dl`, `ffmpeg` | best quality (reels are VP9-only DASH, no h264 exists); photo posts/carousels fall to gallery-dl into **Pictures** as `<name> (n of N).<ext>` | `-N 8` |
+| X | `yt-dlp`, `ffmpeg` | yt-dlp with the cookie chain (same `-S` as YouTube, `res:N` with `-MaxHeight`); when X hides the post from guests, the best mp4 the embed services list (`Select-TweetFormat`: largest at or under `-MaxHeight`, else the smallest) | `-N 8`; a 17 MB 720p post in 2-3 s either way |
 
 **Background job.** The work never runs in the window you see. The launcher starts a hidden,
 detached copy of the script (`-Worker`) at **below-normal priority** — ffmpeg and the downloaders
@@ -1053,13 +1056,47 @@ cannot be scripted on Windows 11; it is a one-time right-click → Pin to Start.
 Chrome or Edge cookies: Chrome holds `Network\Cookies` with an exclusive lock while it runs (yt-dlp
 issue 7271, gallery-dl "Permission denied"), and Edge/Chrome 127+ use app-bound encryption DPAPI
 cannot open (yt-dlp issue 10927). Firefox cookies are readable but the user does not use Firefox.
-Supported path: a one-time export with the Chrome extension **Get cookies.txt LOCALLY** — the script
-adopts the newest `*instagram.com_cookies*.txt` from the Downloads folder (resolved from the `User
-Shell Folders` registry key, since Downloads is relocated) into `%APPDATA%\PCSetup\instagram-cookies.txt`
+Supported path: a one-time export with the Chrome extension **Get cookies.txt LOCALLY** —
+`Get-LoginSources` (shared with X) adopts the newest `*instagram.com_cookies*.txt` from the Downloads
+folder (resolved from the `User Shell Folders` registry key, since Downloads is relocated) whose
+content really carries an `instagram.com` cookie line into `%APPDATA%\PCSetup\instagram-cookies.txt`
 and tries, in order: that file, Firefox cookies, none. Login-shaped failures end in a message box
 with the three-step setup. Verified with the user's export: a reel downloaded and merged in 3 s.
 YouTube has its own fallback: on "Sign in to confirm you're not a bot" it retries with
 `--cookies-from-browser` firefox → chrome → edge.
+
+**X (Twitter).** Added 2026-09-20 for `x.com/mlmgay86/status/2100353858320859279`. X shows guests
+most videos, but a post the poster flagged as sensitive is hidden from them: X's guest GraphQL
+returns the tweet with no media, and yt-dlp (2026.08.19, current at the time) reports `No video
+could be found in this tweet` — the same message as for a genuinely video-less post, so it cannot
+tell the two apart. Two ways in, in this order:
+
+1. **yt-dlp with the cookie chain** from `Get-LoginSources`: the export named `x.com_cookies.txt`
+   (older ones say `twitter.com`) adopted into `%APPDATA%\PCSetup\x-cookies.txt`, then Firefox,
+   then none. Only a file whose content holds an `x.com`/`twitter.com` cookie line is adopted, so
+   the generic `cookies.txt` in Downloads is ignored. A multi-video post comes back as a yt-dlp
+   playlist and is downloaded one entry at a time with `--playlist-items`.
+2. **The public embed services**, when yt-dlp found nothing: `api.fxtwitter.com/status/<id>`
+   (3 attempts) then `api.vxtwitter.com/i/status/<id>` (2), a second apart — both accept a
+   user-less URL. They list the `video.twimg.com` mp4s per resolution with bitrates, and those
+   CDN files are public, so this needs no login and no extension; the chosen URL is handed to
+   yt-dlp so the progress bar keeps working. `ConvertFrom-TweetApi` normalises both shapes and is
+   unit-tested on trimmed live responses. fxtwitter answered `{"code":404,"tweet":null}` on 2 of
+   ~10 tries from some edge nodes for the same post others served, hence the retries; an unknown
+   id gets an HTML page, so a body that does not start with `{` is treated as no answer.
+
+Verified on the post above, both paths, same day: logged-in yt-dlp fetched 17.1 MB at 720p30 in
+3 s; with both cookie files hidden the fallback fetched the byte-identical CDN file in 2 s.
+Failure copy when neither works is the same three-step cookie export as Instagram, for x.com.
+
+> **The first live run built zero downloads from a perfectly good post and crashed at
+> `Show-Existing` with an empty path.** Cause: `$entries = if ($isList) { @($info.entries) } else
+> { @($info) }`. The if-expression flows through the pipeline, a one-element array unrolls to the
+> bare object, and `.Count` on a `PSCustomObject` is empty in Windows PowerShell 5.1 — invisible in
+> pwsh. Same trap as the `update-all` `@()` rule; the Twitch quality pick had the identical
+> shape (masked because the result was piped). All three are now `$x = @(...); if (...) { $x =
+> @(...) }`, and `setup.tests.ps1` (`download-video`) walks the AST and fails on any assignment
+> whose right side is an `if` containing `@(` — proven by planting one and watching it fail.
 
 **Disk space (Twitch).** A 5 h 10 m VOD at 720p60 needs ~8 GB; Z: had 3.4 GB free, the CLI
 downloaded all 1861 parts into `%TEMP%\TwitchDownloader\<id>_<ticks>` (on C:), then ffmpeg's finalize
@@ -1069,9 +1106,17 @@ up front when `bandwidth / 8 × length × 1.15` exceeds free space on the Videos
 drive, naming both numbers, and deletes every `<id>_<ticks>` folder before and after each run. `Z:`
 holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB).
 
-**AV1 compression (Twitch).** Twitch serves 1080p60 as h264 at ~6 Mbit/s, so every Twitch download
-is re-encoded to 10-bit AV1 afterwards (`Compress-Video`), same name, same `[1080p60]` tag, audio
-copied. Measured on 60 s of a VOD with ffmpeg 9.0.1 (gyan full build: libsvtav1, av1_nvenc, libvmaf),
+**AV1 compression (every site).** Every video download — Twitch, YouTube, Instagram and X — is
+re-encoded to 10-bit AV1 afterwards (`Compress-Video`; Twitch-only until 2026-09-20, extended on the
+user's call), same name, same `[1080p60]` tag, audio copied. A download that is already AV1 is
+left alone, and the "must be smaller" check keeps the original when the encode is not: the X post
+above (720p30 h264 at ~0.9 Mbit/s, 17 MB) came out at 26 MB from SVT-AV1 crf 35 and stayed h264.
+Expect that on small, already-lean X and Instagram files — the encode time is the only cost — and
+real savings where the source is generous, which is Twitch's 1080p60 h264 at ~6 Mbit/s. The step
+also runs on an existing file when a link is re-run (YouTube through `-BeforeShowExisting`,
+Instagram and X just before `Show-Existing`), so old h264 downloads shrink on demand. Note NVENC
+shares the GPU: with FFXIV running (GPU at 99 %) the YouTube test encode managed 5 fps instead of
+~220, and `-Cpu` is the way round that. Measured on 60 s of a VOD with ffmpeg 9.0.1 (gyan full build: libsvtav1, av1_nvenc, libvmaf),
 Ryzen 9 9950X3D + RTX 5080, VMAF `vmaf_v0.6.1` against the h264 source (95+ = no visible difference):
 
 | Encode | Size | Speed | VMAF |

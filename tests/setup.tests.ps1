@@ -1019,6 +1019,136 @@ Describe "update-all" {
 }
 
 
+Describe "download-video" {
+    BeforeAll {
+        $script:dvScript = Join-Path $PSScriptRoot "..\optional\download-video.ps1"
+        # The script runs whole when dot-sourced (param + elevation + clipboard), so the pure helpers
+        # are lifted out of it by name through the AST and defined here on their own.
+        $tokens = $null; $errors = $null
+        $script:dvAst = [System.Management.Automation.Language.Parser]::ParseFile($script:dvScript, [ref]$tokens, [ref]$errors)
+        $script:dvParseErrors = $errors
+        foreach ($name in 'Resolve-VideoLink', 'ConvertFrom-TweetApi', 'Select-TweetFormat', 'Get-SafeName') {
+            $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
+            if ($fn) { Invoke-Expression $fn.Extent.Text }
+        }
+        # Trimmed from live responses for x.com/mlmgay86/status/2100353858320859279 (2026-09-20).
+        $script:fxJson = @'
+{"code":200,"message":"OK","tweet":{"id":"2100353858320859279","url":"https://x.com/mlmgay86/status/2100353858320859279","text":"","created_at":"Wed Sep 16 22:39:17 +0000 2026","created_timestamp":1789598357,"possibly_sensitive":true,
+"author":{"screen_name":"mlmgay86","name":"fancy name"},
+"media":{"all":[],"videos":[{"id":"2096705266976956416","type":"video","duration":164.566,"width":1080,"height":720,
+"url":"https://video.twimg.com/amplify_video/2096705266976956416/vid/avc1/1080x720/okN8tSxGjT3RqceU.mp4?tag=14",
+"formats":[{"url":"https://video.twimg.com/amplify_video/2096705266976956416/pl/qBr3-4yPRqZ03LMQ.m3u8?tag=14","container":"m3u8"},
+{"url":"https://video.twimg.com/amplify_video/2096705266976956416/vid/avc1/404x270/YeI-p9bPqpHon4c9.mp4?tag=14","bitrate":288000,"container":"mp4","codec":"h264"},
+{"url":"https://video.twimg.com/amplify_video/2096705266976956416/vid/avc1/540x360/27co2cwXftLP9dem.mp4?tag=14","bitrate":832000,"container":"mp4","codec":"h264"},
+{"url":"https://video.twimg.com/amplify_video/2096705266976956416/vid/avc1/1080x720/okN8tSxGjT3RqceU.mp4?tag=14","bitrate":2176000,"container":"mp4","codec":"h264"}]}]}}}
+'@
+        $script:vxJson = @'
+{"date":"Wed Sep 16 22:39:17 +0000 2026","date_epoch":1789598357,"hasMedia":true,"possibly_sensitive":true,"text":"look at this https://t.co/GJeUks91pE","tweetID":"2100353858320859279","user_name":"fancy name","user_screen_name":"mlmgay86",
+"media_extended":[{"duration_millis":164566,"id_str":"2096705266976956416","size":{"height":720,"width":1080},"type":"video","url":"https://video.twimg.com/amplify_video/2096705266976956416/vid/avc1/1080x720/okN8tSxGjT3RqceU.mp4"}]}
+'@
+    }
+    It "parses under Windows PowerShell 5.1 with no errors" {
+        $script:dvParseErrors | Should -BeNullOrEmpty
+        $probe = "`$t=`$null;`$e=`$null;[void][System.Management.Automation.Language.Parser]::ParseFile('$($script:dvScript)',[ref]`$t,[ref]`$e);if(`$e){`$e|ForEach-Object{`$_.ToString()};exit 1}"
+        $out = & powershell.exe -NoProfile -NonInteractive -Command $probe 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0 -Because $out
+    }
+    It "routes every supported link shape to its site" {
+        Get-Command Resolve-VideoLink -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        $cases = @(
+            @{ Url = 'https://www.twitch.tv/videos/2367654321';                          Site = 'twitch';    Id = '2367654321' },
+            @{ Url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10s';                Site = 'youtube';   Id = 'dQw4w9WgXcQ' },
+            @{ Url = 'https://youtu.be/dQw4w9WgXcQ';                                      Site = 'youtube';   Id = 'dQw4w9WgXcQ' },
+            @{ Url = 'https://www.instagram.com/reel/DAbCdEfGhIj/?igsh=abc';             Site = 'instagram'; Id = 'DAbCdEfGhIj'; Kind = 'reel' },
+            @{ Url = 'https://www.instagram.com/p/DAbCdEfGhIj/';                         Site = 'instagram'; Id = 'DAbCdEfGhIj'; Kind = 'p' },
+            @{ Url = 'https://x.com/mlmgay86/status/2100353858320859279';                Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://x.com/mlmgay86/status/2100353858320859279?s=20&t=abc';     Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://twitter.com/mlmgay86/status/2100353858320859279';          Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://mobile.twitter.com/mlmgay86/status/2100353858320859279';   Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://x.com/i/status/2100353858320859279';                       Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://x.com/i/web/status/2100353858320859279';                   Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://fxtwitter.com/mlmgay86/status/2100353858320859279';        Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://vxtwitter.com/mlmgay86/status/2100353858320859279';        Site = 'x';         Id = '2100353858320859279' }
+        )
+        foreach ($c in $cases) {
+            $link = Resolve-VideoLink $c.Url
+            $link | Should -Not -BeNullOrEmpty -Because $c.Url
+            $link.Site | Should -Be $c.Site -Because $c.Url
+            $link.Id   | Should -Be $c.Id   -Because $c.Url
+            if ($c.Kind) { $link.Kind | Should -Be $c.Kind -Because $c.Url }
+        }
+        foreach ($bad in 'https://www.netflix.com/title/status/12345', 'https://x.com/mlmgay86', 'https://x.com/home', 'C:\Videos\clip [1080p60].mp4', '') {
+            Resolve-VideoLink $bad | Should -BeNullOrEmpty -Because $bad
+        }
+    }
+    It "reads a tweet from fxtwitter and from vxtwitter into the same shape" {
+        Get-Command ConvertFrom-TweetApi -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        $fx = ConvertFrom-TweetApi $script:fxJson 'fxtwitter'
+        $fx.Author | Should -Be 'mlmgay86'
+        $fx.Date   | Should -Be '2026-09-16'
+        $fx.Text   | Should -Be ''
+        @($fx.Videos).Count | Should -Be 1
+        [Math]::Floor($fx.Videos[0].Seconds) | Should -Be 164
+        # Only the mp4 formats, with the resolution read from the URL; the m3u8 is left out.
+        @($fx.Videos[0].Formats).Count | Should -Be 3
+        @($fx.Videos[0].Formats | ForEach-Object { $_.Height }) | Should -Be @(270, 360, 720)
+        ($fx.Videos[0].Formats | Where-Object { $_.Height -eq 720 }).Bitrate | Should -Be 2176000
+
+        $vx = ConvertFrom-TweetApi $script:vxJson 'vxtwitter'
+        $vx.Author | Should -Be 'mlmgay86'
+        $vx.Date   | Should -Be '2026-09-16'
+        $vx.Text   | Should -Be 'look at this'      # the t.co media link is not part of the caption
+        @($vx.Videos).Count | Should -Be 1
+        [Math]::Floor($vx.Videos[0].Seconds) | Should -Be 164
+        @($vx.Videos[0].Formats).Count | Should -Be 1
+        $vx.Videos[0].Formats[0].Height | Should -Be 720
+        $vx.Videos[0].Formats[0].Url | Should -Match '1080x720'
+
+        # A tweet the service could not see (fxtwitter answers code 404 with tweet null on some
+        # edge nodes for sensitive posts) and a tweet without media both come back as nothing usable.
+        (ConvertFrom-TweetApi '{"code":404,"message":"NOT_FOUND","tweet":null}' 'fxtwitter') | Should -BeNullOrEmpty
+        $noMedia = ConvertFrom-TweetApi '{"code":200,"message":"OK","tweet":{"id":"1","text":"hi","created_timestamp":1789598357,"author":{"screen_name":"a"},"media":null}}' 'fxtwitter'
+        $noMedia | Should -Not -BeNullOrEmpty
+        @($noMedia.Videos).Count | Should -Be 0
+        (ConvertFrom-TweetApi '<!DOCTYPE html><html></html>' 'fxtwitter') | Should -BeNullOrEmpty
+    }
+    It "picks the highest resolution within -MaxHeight, or the smallest when nothing fits" {
+        Get-Command Select-TweetFormat -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        $video = (ConvertFrom-TweetApi $script:fxJson 'fxtwitter').Videos[0]
+        (Select-TweetFormat $video 0).Height   | Should -Be 720
+        (Select-TweetFormat $video 720).Height | Should -Be 720
+        (Select-TweetFormat $video 480).Height | Should -Be 360
+        (Select-TweetFormat $video 100).Height | Should -Be 270
+        # One fitting format must come back as itself, not as "nothing fits" - see the .Count guard below.
+        $one = [pscustomobject]@{ Formats = @([pscustomobject]@{ Url = 'u'; Width = 640; Height = 360; Bitrate = 1 }) }
+        (Select-TweetFormat $one 480).Height | Should -Be 360
+        (Select-TweetFormat $one 0).Height   | Should -Be 360
+    }
+    It "never assigns an array-wrapping if-expression to a variable (5.1 unrolls it)" {
+        # `$x = if ($c) { @(...) } else { @(...) }` sends the branch through the pipeline, so a
+        # one-element array arrives as the bare object and `$x.Count` is empty in Windows
+        # PowerShell 5.1. The first live X run built zero downloads from a single-video post
+        # exactly this way. Same trap as the update-all `@()` rule; this pins it for this file.
+        $hits = $script:dvAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Right.Extent.Text -match '^\s*if\b' -and $n.Right.Extent.Text -match '@\(' }, $true)
+        @($hits | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Extent.Text)" }) | Should -BeNullOrEmpty
+    }
+    It "runs the AV1 step in every site handler, not only Twitch" {
+        foreach ($handler in 'Invoke-Twitch', 'Invoke-YouTube', 'Invoke-Instagram', 'Invoke-X') {
+            $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $handler }, $true) | Select-Object -First 1
+            $fn | Should -Not -BeNullOrEmpty -Because "$handler must exist"
+            $calls = $fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Compress-Video' }, $true)
+            @($calls).Count | Should -BeGreaterThan 0 -Because "$handler must compress what it downloads"
+        }
+    }
+    It "dispatches through Resolve-VideoLink and names X in the unsupported-link help" {
+        $text = Get-Content $script:dvScript -Raw
+        $text | Should -Match 'Resolve-VideoLink \$Url'
+        $text | Should -Match 'https://x\.com/'
+    }
+}
+
 Describe "repair-discord" {
     BeforeAll {
         $script:bat = Get-Content (Join-Path $PSScriptRoot "..\optional\repair-discord.bat") -Raw

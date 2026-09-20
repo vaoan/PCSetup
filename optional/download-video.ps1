@@ -1,25 +1,30 @@
 # download-video.ps1
-# One clipboard-driven downloader for Twitch VODs, YouTube videos and Instagram reels/posts.
+# One clipboard-driven downloader for Twitch VODs, YouTube videos, Instagram reels/posts and X (Twitter) posts.
 # Reads the link from the clipboard, detects the site, installs only the tools that site needs
 # (scoop itself included, so it works on a freshly formatted PC), downloads into the Videos
 # folder (Pictures for Instagram photo posts), shows progress in the window, opens Explorer on
 # the finished file, and reports failures in a message box. Launched by download-video.bat.
 # Twitch/YouTube names end in a quality tag ([1080p60]); an earlier download of the same video at a
 # different quality is kept and the new quality lands next to it - only an identical version is skipped.
+# Every video download is then re-encoded to AV1 (about half the size, no visible loss - see
+# "AV1 compression"); -NoCompress keeps the file as the site served it.
 #
-#   Twitch     TwitchDownloaderCLI + ffmpeg   highest quality available, 24 threads, disk-space check first,
-#                                             then re-encoded to AV1 (about half the size, no visible loss - see "AV1 compression")
+#   Twitch     TwitchDownloaderCLI + ffmpeg   highest quality available, 24 threads, disk-space check first
 #   YouTube    yt-dlp + deno + ffmpeg         highest quality available (h264/aac preferred at equal resolution), 16 fragment connections
 #   Instagram  yt-dlp + gallery-dl + ffmpeg   best quality; needs a one-time cookie export (see below)
+#   X          yt-dlp + ffmpeg                highest quality; a post flagged sensitive is hidden from guests, so it
+#                                             falls back to the public embed services (fxtwitter, vxtwitter) whose
+#                                             CDN links need no login - or to a cookie export, like Instagram
 #
-# Instagram serves almost nothing without a login and no tool can read Chrome/Edge cookies on
-# current Windows, so: install the Chrome extension "Get cookies.txt LOCALLY", open instagram.com
-# logged in, click Export, leave the file in Downloads. This script adopts it automatically.
+# Instagram serves almost nothing without a login (X only hides sensitive-flagged posts) and no tool
+# can read Chrome/Edge cookies on current Windows, so: install the Chrome extension "Get cookies.txt
+# LOCALLY", open instagram.com (or x.com) logged in, click Export, leave the file in Downloads. This
+# script adopts it automatically.
 #
 # Optional parameters (for manual runs):
 #   -Url           use this link instead of the clipboard
-#   -MaxHeight     Twitch/YouTube resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
-#   -NoCompress    keep the Twitch download as the h264 file Twitch serves (skip the AV1 step)
+#   -MaxHeight     Twitch/YouTube/X resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
+#   -NoCompress    keep the download as the site serves it (skip the AV1 step)
 #   -Cpu           encode AV1 with SVT-AV1 on the CPU instead of the GPU: ~17% smaller files, about half the speed
 #   -CompressFile  re-encode an existing video file to AV1 in place (any h264 .mp4, e.g. an earlier download) and stop
 #   -Ending        test aid: only the first part - Twitch "20s", YouTube seconds like "30" (re-encodes)
@@ -106,6 +111,59 @@ function Get-KnownFolder([string]$Name, [string]$Fallback) {
     if (-not $p) { $p = Join-Path $env:USERPROFILE $Fallback }
     New-Item -ItemType Directory -Force -Path $p | Out-Null
     return $p
+}
+
+# ---------------------------------------------------------------------------- link routing
+# Which site a link belongs to and the id its handler needs: Site, Id and Kind (Instagram: p or
+# reel), or $null for anything else. Pure, so the tests can run every link shape without a download.
+function Resolve-VideoLink([string]$Url) {
+    if (-not $Url) { return $null }
+    if ($Url -match '(?i)twitch\.tv/(?:videos|[^/\s]+/v(?:ideo)?)/(\d+)') {
+        return [pscustomobject]@{ Site = 'twitch'; Id = $Matches[1]; Kind = 'vod' }
+    }
+    if ($Url -match '(?i)(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})') {
+        return [pscustomobject]@{ Site = 'youtube'; Id = $Matches[1]; Kind = 'video' }
+    }
+    if ($Url -match '(?i)instagram\.com/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]{5,})') {
+        $kind = if ($Matches[1] -ieq 'p') { 'p' } else { 'reel' }
+        return [pscustomobject]@{ Site = 'instagram'; Id = $Matches[2]; Kind = $kind }
+    }
+    # x.com and twitter.com (also mobile.), plus the fxtwitter/vxtwitter/fixupx embed mirrors people
+    # paste from Discord; "/i/status/<id>" and "/i/web/status/<id>" carry no user name. The
+    # lookbehind keeps "netflix.com/.../status/..." out.
+    if ($Url -match '(?i)(?<![A-Za-z0-9-])(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com/(?:i/(?:web/)?status|[A-Za-z0-9_]{1,15}/status(?:es)?)/(\d{5,})') {
+        return [pscustomobject]@{ Site = 'x'; Id = $Matches[1]; Kind = 'post' }
+    }
+    return $null
+}
+
+# ---------------------------------------------------------------------------- login sources
+# Cookie sets to try, best first, for a site that hides posts behind a login: the adopted export
+# file, then Firefox's own cookies, then none. Chrome and Edge cookies cannot be read by any tool
+# on current Windows builds (Chrome locks the DB while it runs, Edge uses app-bound encryption),
+# so the supported way is a one-time export with the Chrome extension "Get cookies.txt LOCALLY".
+# Its file lands in Downloads as "<host>_cookies.txt"; the newest one matching $ExportFilters that
+# really holds a cookie for $DomainPattern is copied to $CookieFile when it is newer than the copy.
+function Get-LoginSources([string]$CookieFile, [string[]]$ExportFilters, [string]$DomainPattern) {
+    $downloadsDir = $null
+    try { $downloadsDir = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}' } catch {}
+    if ($downloadsDir) { $downloadsDir = [Environment]::ExpandEnvironmentVariables($downloadsDir) } else { $downloadsDir = Join-Path $env:USERPROFILE 'Downloads' }
+    $candidates = @()
+    foreach ($filter in $ExportFilters) { $candidates += @(Get-ChildItem -LiteralPath $downloadsDir -Filter $filter -File -ErrorAction SilentlyContinue) }
+    $exported = $candidates | Sort-Object LastWriteTime -Descending | Where-Object {
+        try { (Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop) -match "(?m)^\.?(?:[\w-]+\.)*(?:$DomainPattern)\t" } catch { $false }
+    } | Select-Object -First 1
+    if ($exported -and (-not (Test-Path -LiteralPath $CookieFile) -or $exported.LastWriteTime -gt (Get-Item -LiteralPath $CookieFile).LastWriteTime)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $CookieFile) | Out-Null
+        Copy-Item -LiteralPath $exported.FullName -Destination $CookieFile -Force
+        Write-Ok "Adopted new cookie export from Downloads: $($exported.Name) -> $CookieFile"
+    }
+    $sets = @()
+    if (Test-Path -LiteralPath $CookieFile) { $sets += ,@{ Args = @('--cookies', $CookieFile); Name = 'cookies file' } }
+    if (Test-Path -LiteralPath (Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles')) { $sets += ,@{ Args = @('--cookies-from-browser', 'firefox'); Name = 'Firefox cookies' } }
+    $sets += ,@{ Args = @(); Name = 'no cookies' }
+    Write-Info ("Login sources to try: " + (($sets | ForEach-Object { $_.Name }) -join ', '))
+    return ,$sets
 }
 
 # Run a native command / external script and echo its output (stdout AND stderr) as info lines.
@@ -531,7 +589,7 @@ function Ensure-Shortcuts {
             $s.TargetPath = $cmdExe
             $s.Arguments = "/c `"$bat`""
             $s.WorkingDirectory = $PSScriptRoot
-            $s.Description = 'Downloads the Twitch, YouTube or Instagram link in the clipboard'
+            $s.Description = 'Downloads the Twitch, YouTube, Instagram or X link in the clipboard'
             $icon = Join-Path $PSScriptRoot 'download-video.ico'
             $s.IconLocation = if (Test-Path -LiteralPath $icon) { "$icon,0" } else { '%SystemRoot%\System32\imageres.dll,175' }
             $s.Save()
@@ -554,6 +612,8 @@ function Ensure-Shortcuts {
 # av1_nvenc needs an RTX 40/50 card and a driver at least as new as the nvenc API ffmpeg was
 # built against (596.21 failed with ffmpeg 9.0.1, 616.92 works); anything else falls back to the
 # CPU. Windows plays AV1 .mp4 in the stock player once the free "AV1 Video Extension" is installed.
+# Every site handler runs this on what it downloaded - and on an earlier download it finds already
+# there, so re-running a link on an old h264 file shrinks it. An AV1 download is left as it is.
 $script:Av1NvencArgs = @('-c:v', 'av1_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '36', '-b:v', '0',
                          '-multipass', 'fullres', '-spatial-aq', '1', '-temporal-aq', '1', '-rc-lookahead', '32', '-pix_fmt', 'p010le')
 $script:Av1SvtArgs   = @('-c:v', 'libsvtav1', '-preset', '6', '-crf', '35', '-pix_fmt', 'yuv420p10le', '-svtav1-params', 'tune=0')
@@ -695,7 +755,8 @@ function Invoke-Twitch([string]$VodId) {
     Write-Info ("Available: " + (($qualities | ForEach-Object { $_.Name }) -join ', '))
     # No cap by default: take the highest resolution, then the highest frame rate. With -MaxHeight,
     # take the best variant at or under it, falling back to the lowest one if nothing fits.
-    $candidates = if ($MaxHeight -gt 0) { @($qualities | Where-Object { $_.Height -le $MaxHeight }) } else { @($qualities) }
+    $candidates = @($qualities)   # not `= if {...} else {...}`: a one-element array would unroll (5.1)
+    if ($MaxHeight -gt 0) { $candidates = @($qualities | Where-Object { $_.Height -le $MaxHeight }) }
     $pick = $candidates | Sort-Object Height, Fps -Descending | Select-Object -First 1
     if (-not $pick) { $pick = $qualities | Sort-Object Height, Fps | Select-Object -First 1 }
     $capNote = if ($MaxHeight -gt 0) { "max allowed ${MaxHeight}p" } else { 'best available' }
@@ -792,9 +853,10 @@ function Invoke-YouTube([string]$VideoId) {
     $deno   = Resolve-ScoopTool 'deno'   'deno'     # JS runtime yt-dlp needs to unlock all YouTube formats
 
     # Highest resolution available (or <= MaxHeight when given), then highest fps; at equal resolution
-    # prefer h264 + aac in mp4 so the file plays in anything (AV1/VP9 do not play in the stock Windows
-    # player). Resolution outranks codec, so a 1440p/4K VP9-only upload is still taken at full size.
-    # yt-dlp merges separate video/audio streams with ffmpeg.
+    # prefer h264 + aac in mp4: it plays in anything and is the cleanest source for the AV1 step that
+    # follows (a download that is already AV1 is left as it is). Resolution outranks codec, so a
+    # 1440p/4K VP9-only upload is still taken at full size. yt-dlp merges separate video/audio
+    # streams with ffmpeg.
     $resKey = if ($MaxHeight -gt 0) { "res:$MaxHeight" } else { 'res' }
     $common = @('--no-playlist', '-f', 'bv*+ba/b', '-S', "$resKey,fps,vcodec:h264,acodec:m4a,ext:mp4",
                 '--ffmpeg-location', $ffmpeg, '--js-runtimes', "deno:$deno")
@@ -838,7 +900,10 @@ function Invoke-YouTube([string]$VideoId) {
     Write-Ok "Folder  : $videosDir"
     Write-Ok "File    : $baseName.mp4"
     $expected = if ($Ending) { 0 } else { $length }
-    Resolve-ExistingVersions -Dir $videosDir -Id $VideoId -BaseName $idBase -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg)
+    # An earlier download of this exact quality that predates the AV1 step is compressed before
+    # its folder is opened, so re-running the link on an old h264 file is the way to shrink it.
+    Resolve-ExistingVersions -Dir $videosDir -Id $VideoId -BaseName $idBase -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg) `
+        -BeforeShowExisting { param($existing) $null = Compress-Video $existing $ffmpeg }
 
     Write-Step 'Downloading with 16 parallel fragment connections'
     Write-Info "Progress below. $(Get-CancelHint)."
@@ -857,8 +922,11 @@ function Invoke-YouTube([string]$VideoId) {
         Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`n`nScroll up in the window for yt-dlp's error."
     }
     if ($exit -ne 0) { Write-Warn "yt-dlp exited with code $exit but the file exists - check it plays." }
-    $sizeMb = [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB)
-    Finish $outPath ("{0} MB in {1} at {2}p" -f $sizeMb, (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $info.height)
+    $downloaded = "{0} MB downloaded in {1} at {2}p" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB), (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $info.height
+
+    $compressed = Compress-Video $outPath $ffmpeg
+    $summary = if ($compressed) { "$downloaded; $compressed" } else { $downloaded }
+    Finish $outPath $summary
 }
 
 # ============================================================================ site: Instagram
@@ -871,26 +939,9 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
     $ffmpeg    = Resolve-ScoopTool 'ffmpeg'     'ffmpeg'
     $gallerydl = Resolve-ScoopTool 'gallery-dl' 'gallery-dl'
 
-    # Cookie sources, best first. Instagram needs a logged-in session for nearly every post.
-    # Chrome and Edge cookies cannot be read by any tool on current Windows builds (Chrome locks the
-    # DB while running, Edge uses app-bound encryption), so the supported way is a one-time export
-    # with the "Get cookies.txt LOCALLY" extension. Its default file name is
-    # "www.instagram.com_cookies.txt" in Downloads; a fresh export found there is adopted automatically.
-    $cookieFile = Join-Path $env:APPDATA 'PCSetup\instagram-cookies.txt'
-    $downloadsDir = $null
-    try { $downloadsDir = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}' } catch {}
-    if ($downloadsDir) { $downloadsDir = [Environment]::ExpandEnvironmentVariables($downloadsDir) } else { $downloadsDir = Join-Path $env:USERPROFILE 'Downloads' }
-    $exported = Get-ChildItem -LiteralPath $downloadsDir -Filter '*instagram.com_cookies*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($exported -and (-not (Test-Path -LiteralPath $cookieFile) -or $exported.LastWriteTime -gt (Get-Item -LiteralPath $cookieFile).LastWriteTime)) {
-        New-Item -ItemType Directory -Force -Path (Split-Path $cookieFile) | Out-Null
-        Copy-Item -LiteralPath $exported.FullName -Destination $cookieFile -Force
-        Write-Ok "Adopted new cookie export from Downloads: $($exported.Name) -> $cookieFile"
-    }
-    $cookieSets = @()
-    if (Test-Path -LiteralPath $cookieFile) { $cookieSets += ,@{ Args = @('--cookies', $cookieFile); Name = 'cookies file' } }
-    if (Test-Path -LiteralPath (Join-Path $env:APPDATA 'Mozilla\Firefox\Profiles')) { $cookieSets += ,@{ Args = @('--cookies-from-browser', 'firefox'); Name = 'Firefox cookies' } }
-    $cookieSets += ,@{ Args = @(); Name = 'no cookies' }
-    Write-Info ("Login sources to try: " + (($cookieSets | ForEach-Object { $_.Name }) -join ', '))
+    # Instagram needs a logged-in session for nearly every post; Get-LoginSources says how the login
+    # gets here. The extension names the export "www.instagram.com_cookies.txt".
+    $cookieSets = Get-LoginSources -CookieFile (Join-Path $env:APPDATA 'PCSetup\instagram-cookies.txt') -ExportFilters @('*instagram.com_cookies*.txt') -DomainPattern 'instagram\.com'
     $loginHelp = "Instagram only serves this post to a logged-in account, and Chrome does not let tools read its login.`n`n" +
                  "One-time setup (about a minute):`n" +
                  "1. In Chrome install the extension 'Get cookies.txt LOCALLY' (open source, works offline).`n" +
@@ -930,7 +981,7 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
         $outPath  = Join-Path $videosDir "$baseName.mp4"
         Write-Ok "Folder  : $videosDir"
         Write-Ok "File    : $baseName.mp4"
-        if (Test-Path -LiteralPath $outPath) { Show-Existing $outPath }
+        if (Test-Path -LiteralPath $outPath) { $null = Compress-Video $outPath $ffmpeg; Show-Existing $outPath }   # an earlier h264 download is shrunk first
 
         Write-Step 'Downloading'
         Write-Host ''
@@ -942,8 +993,10 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
             Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`n`nScroll up in the window for yt-dlp's error."
         }
         if ($exit -ne 0) { Write-Warn "yt-dlp exited with code $exit but the file exists - check it plays." }
-        $sizeMb = [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB, 1)
-        Finish $outPath ("{0} MB in {1}s" -f $sizeMb, [int]$sw.Elapsed.TotalSeconds)
+        $downloaded = "{0} MB downloaded in {1}s" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB, 1), [int]$sw.Elapsed.TotalSeconds
+        $compressed = Compress-Video $outPath $ffmpeg
+        $summary = if ($compressed) { "$downloaded; $compressed" } else { $downloaded }
+        Finish $outPath $summary
     }
 
     # ----- photo post / carousel via gallery-dl -----
@@ -999,6 +1052,232 @@ function Invoke-Instagram([string]$Shortcode, [string]$Kind) {
     }
     Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     Finish $finalPaths[0] "$($files.Count) file(s) in $picturesDir"
+}
+
+# ============================================================================ site: X (Twitter)
+# Two ways in. yt-dlp's twitter extractor works for what X shows guests, and with a cookie export
+# for everything a logged-in account can see. Without a login, a post the poster flagged as
+# sensitive answers "No video could be found in this tweet" - yet the video files on
+# video.twimg.com are public. The embed services fxtwitter and vxtwitter (the link fixers people
+# paste in Discord) list those files for any public post, so they are the fallback: no login, no
+# extension, and the exact same mp4 X serves. Verified 2026-09-20 on a sensitive-flagged post that
+# yt-dlp could not see with any cookie set on this PC.
+
+# Normalises a tweet from api.fxtwitter.com (tweet.media.videos[].formats, a bitrate per
+# resolution) or api.vxtwitter.com (media_extended[], one URL per video) into one shape: Source,
+# Author (the @handle), Name, Text (without the t.co media link X appends), Date (UTC), Sensitive
+# and Videos[] with Seconds and Formats[] (Url, Width, Height, Bitrate) sorted small to large. $null
+# for a body that is not JSON or holds no tweet (fxtwitter answers code 404 with tweet null from
+# some edge nodes for a post that others serve); a post without video has an empty Videos list.
+function ConvertFrom-TweetApi([string]$Json, [string]$Source) {
+    if (-not $Json -or -not $Json.TrimStart().StartsWith('{')) { return $null }
+    try { $data = ConvertFrom-Json $Json } catch { return $null }
+    $videos = @(); $author = ''; $name = ''; $text = ''; $epoch = [long]0; $sensitive = $false
+    if ($Source -eq 'fxtwitter') {
+        $tweet = $data.tweet
+        if (-not $tweet -or -not $tweet.id) { return $null }
+        $author = [string]$tweet.author.screen_name; $name = [string]$tweet.author.name
+        $text = [string]$tweet.text; $epoch = [long]$tweet.created_timestamp; $sensitive = [bool]$tweet.possibly_sensitive
+        $list = @(); if ($tweet.media -and $tweet.media.videos) { $list = @($tweet.media.videos) }
+        foreach ($v in $list) {
+            $formats = @()
+            foreach ($f in @($v.formats)) {
+                if (-not $f -or $f.container -ne 'mp4' -or -not $f.url) { continue }
+                $w = 0; $h = 0
+                if ($f.url -match '/(\d+)x(\d+)/') { $w = [int]$Matches[1]; $h = [int]$Matches[2] }
+                $formats += [pscustomobject]@{ Url = [string]$f.url; Width = $w; Height = $h; Bitrate = [long]$f.bitrate }
+            }
+            if (-not $formats.Count -and $v.url) { $formats += [pscustomobject]@{ Url = [string]$v.url; Width = [int]$v.width; Height = [int]$v.height; Bitrate = [long]0 } }
+            if ($formats.Count) { $videos += [pscustomobject]@{ Seconds = [double]$v.duration; Formats = @($formats | Sort-Object Height, Bitrate) } }
+        }
+    }
+    elseif ($Source -eq 'vxtwitter') {
+        if (-not $data.tweetID) { return $null }
+        $author = [string]$data.user_screen_name; $name = [string]$data.user_name
+        $text = [string]$data.text; $epoch = [long]$data.date_epoch; $sensitive = [bool]$data.possibly_sensitive
+        foreach ($m in @($data.media_extended)) {
+            if (-not $m -or $m.type -notin @('video', 'gif') -or -not $m.url) { continue }
+            $w = [int]$m.size.width; $h = [int]$m.size.height
+            if ($m.url -match '/(\d+)x(\d+)/') { $w = [int]$Matches[1]; $h = [int]$Matches[2] }
+            $videos += [pscustomobject]@{ Seconds = ([double]$m.duration_millis / 1000); Formats = @([pscustomobject]@{ Url = [string]$m.url; Width = $w; Height = $h; Bitrate = [long]0 }) }
+        }
+    }
+    else { return $null }
+    $text = ($text -replace 'https?://t\.co/\S+', '').Trim()
+    $date = if ($epoch -gt 0) { [DateTimeOffset]::FromUnixTimeSeconds($epoch).UtcDateTime.ToString('yyyy-MM-dd') } else { Get-Date -Format 'yyyy-MM-dd' }
+    return [pscustomobject]@{ Source = $Source; Author = $author; Name = $name; Text = $text; Date = $date; Sensitive = $sensitive; Videos = @($videos) }
+}
+
+# The format to download: the largest at or under $Cap pixels tall (0 = no cap), else the smallest.
+function Select-TweetFormat($Video, [int]$Cap) {
+    $all = @($Video.Formats | Sort-Object Height, Bitrate)
+    if (-not $all.Count) { return $null }
+    $fit = $all
+    if ($Cap -gt 0) { $fit = @($all | Where-Object { $_.Height -le $Cap }) }   # not `= if {...}`: a one-element array would unroll
+    if ($fit.Count) { return $fit[-1] }
+    return $all[0]
+}
+
+# The post's metadata without a login, from fxtwitter first and vxtwitter second. Each gets a few
+# attempts a second apart because fxtwitter's answer for the same post differs by edge node. A
+# service that sees the post but no video in it ends the attempts for that service; the other one
+# still gets its turn, and that no-video answer is returned when nothing better turns up. $null
+# when neither answered, with the reasons in $script:TweetApiErrors.
+function Get-TweetFromApi([string]$TweetId) {
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+    $script:TweetApiErrors = @()
+    $noVideo = $null
+    $sources = @(
+        @{ Name = 'fxtwitter'; Url = "https://api.fxtwitter.com/status/$TweetId"; Attempts = 3 },
+        @{ Name = 'vxtwitter'; Url = "https://api.vxtwitter.com/i/status/$TweetId"; Attempts = 2 }
+    )
+    foreach ($src in $sources) {
+        for ($i = 1; $i -le $src.Attempts; $i++) {
+            if ($i -gt 1) { Start-Sleep -Seconds 1 }
+            $body = $null
+            try {
+                $wc = New-Object Net.WebClient
+                $wc.Encoding = [Text.Encoding]::UTF8
+                $wc.Headers['User-Agent'] = 'Mozilla/5.0 PCSetup-download-video'
+                $body = $wc.DownloadString($src.Url)
+            } catch {
+                $script:TweetApiErrors += "$($src.Name) attempt ${i}: $($_.Exception.Message)"
+                continue
+            }
+            $tweet = ConvertFrom-TweetApi $body $src.Name
+            if ($tweet -and $tweet.Videos.Count) { return $tweet }
+            if ($tweet) { $noVideo = $tweet; $script:TweetApiErrors += "$($src.Name): sees the post but no video in it"; break }
+            $script:TweetApiErrors += "$($src.Name) attempt ${i}: no post in the answer ($(([string]$body).Length) bytes)"
+        }
+    }
+    return $noVideo
+}
+
+function Invoke-X([string]$TweetId) {
+    $cleanUrl = "https://x.com/i/status/$TweetId"
+    Write-Step 'Checking tools'
+    Ensure-Shortcuts
+    Ensure-Scoop
+    $ytdlp  = Resolve-ScoopTool 'yt-dlp' 'yt-dlp'
+    $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
+    # The extension names the export "x.com_cookies.txt" (older exports say twitter.com).
+    $cookieSets = Get-LoginSources -CookieFile (Join-Path $env:APPDATA 'PCSetup\x-cookies.txt') -ExportFilters @('*x.com_cookies*.txt', '*twitter.com_cookies*.txt') -DomainPattern 'x\.com|twitter\.com'
+    $loginHelp = "X only shows this post to a logged-in account, and Chrome does not let tools read its login.`n`n" +
+                 "One-time setup (about a minute):`n" +
+                 "1. In Chrome install the extension 'Get cookies.txt LOCALLY' (open source, works offline).`n" +
+                 "2. Open x.com while logged in, click the extension icon, click Export.`n" +
+                 "3. Leave the file in Downloads (x.com_cookies.txt) - this tool picks it up on the next run.`n`n" +
+                 "The export stays valid until you log out of X in Chrome. Re-export if downloads start failing again."
+    # "No video could be found" is also what a guest gets for a sensitive-flagged video post.
+    $wallPattern = 'requires authentication|not authorized|protected|login|log in|cookies|No video could be found|401|403'
+
+    Write-Step 'Fetching post info'
+    $resKey  = if ($MaxHeight -gt 0) { "res:$MaxHeight" } else { 'res' }
+    $capNote = if ($MaxHeight -gt 0) { "max allowed ${MaxHeight}p" } else { 'best available' }
+    $common  = @('-f', 'bv*+ba/b', '-S', "$resKey,fps,vcodec:h264,acodec:m4a,ext:mp4", '--ffmpeg-location', $ffmpeg)
+    $info = $null; $used = $null; $lastErr = ''; $sawLoginWall = $false
+    foreach ($set in $cookieSets) {
+        $raw = Get-NativeOutput { & $ytdlp @common @($set.Args) --no-download --no-warnings --dump-single-json $cleanUrl }
+        $line = $raw | Where-Object { $_ -like '{*' } | Select-Object -First 1
+        if ($line) { $info = ConvertFrom-Json $line; $used = $set; break }
+        $lastErr = ($raw | Where-Object { $_ -match 'ERROR' } | Select-Object -Last 1)
+        Write-Warn "yt-dlp with $($set.Name): $lastErr"
+        if ($lastErr -match $wallPattern) { $sawLoginWall = $true } else { break }
+    }
+
+    $downloads = @()    # one per video: yt-dlp arguments, the URL to hand it, height and length
+    if ($info) {
+        Write-Ok "Using $($used.Name)"
+        # Never `$x = if (...) { @(...) }`: the if-expression flows through the pipeline and a
+        # one-element array unrolls to the bare object, whose .Count is empty in 5.1 - the first
+        # live run built zero downloads from a perfectly good single-video post that way.
+        $isList  = ($info._type -eq 'playlist')
+        $entries = @($info)
+        if ($isList) { $entries = @($info.entries) }
+        $first   = $entries[0]
+        $author  = if ($info.uploader_id) { [string]$info.uploader_id } elseif ($first.uploader_id) { [string]$first.uploader_id } elseif ($info.uploader) { [string]$info.uploader } else { 'x' }
+        $text    = if ($info.description) { [string]$info.description } elseif ($first.description) { [string]$first.description } else { '' }
+        $ud      = if ($info.upload_date) { [string]$info.upload_date } else { [string]$first.upload_date }
+        $date    = if ($ud -match '^(\d{4})(\d{2})(\d{2})$') { "$($Matches[1])-$($Matches[2])-$($Matches[3])" } else { Get-Date -Format 'yyyy-MM-dd' }
+        for ($i = 0; $i -lt $entries.Count; $i++) {
+            $e = $entries[$i]
+            $dlArgs = $common + $used.Args + @('--merge-output-format', 'mp4', '-N', '8')
+            if ($isList) { $dlArgs += @('--playlist-items', "$($i + 1)") }
+            $downloads += @{ Args = $dlArgs; Target = $cleanUrl; Height = [int]$e.height; Seconds = [double]$e.duration
+                             Quality = "$($e.format_id) $($e.width)x$($e.height) $($e.vcodec) + $($e.acodec) ($capNote)" }
+        }
+    }
+    else {
+        Write-Warn 'Trying the public embed services (fxtwitter, vxtwitter) - they list media X hides from guests'
+        $tweet  = Get-TweetFromApi $TweetId
+        $apiErr = ($script:TweetApiErrors -join "`n")
+        if (-not $tweet) {
+            if ($sawLoginWall) { Fail "$loginHelp`n`nyt-dlp: $lastErr`n$apiErr" }
+            Fail "Could not read this post.`n`nyt-dlp: $lastErr`n$apiErr`n`nThe post may be private, deleted, or X is blocking right now."
+        }
+        if (-not $tweet.Videos.Count) { Fail "This post has no video ($($tweet.Source) sees the post but no video in it).`n`nyt-dlp: $lastErr`n`nPhotos and text posts are not downloaded by this tool." }
+        Write-Ok "Using $($tweet.Source) embed data (no login)"
+        $author = $tweet.Author; $text = $tweet.Text; $date = $tweet.Date
+        foreach ($v in $tweet.Videos) {
+            $fmt = Select-TweetFormat $v $MaxHeight
+            $downloads += @{ Args = @('-N', '8'); Target = $fmt.Url; Height = $fmt.Height; Seconds = $v.Seconds
+                             Quality = "$($fmt.Width)x$($fmt.Height) h264 $([Math]::Round($fmt.Bitrate / 1000)) kbit/s ($capNote)" }
+        }
+    }
+    $text = ($text -replace 'https?://t\.co/\S+', '').Trim()
+    Write-Ok "Account : $author"
+    Write-Ok "Text    : $(Get-SafeName $text 100)"
+    Write-Ok "Posted  : $date"
+    if ($downloads.Count -gt 1) { Write-Ok "Videos  : $($downloads.Count)" }
+    foreach ($d in $downloads) {
+        $len = if ($d.Seconds -ge 1) { ", $(Format-Duration ([int]$d.Seconds))" } else { '' }
+        Write-Ok "Quality : $($d.Quality)$len"
+    }
+
+    Write-Step 'Preparing output'
+    $videosDir = Get-KnownFolder 'MyVideos' 'Videos'
+    $safeText  = Get-SafeName $text 60
+    $baseName  = if ($safeText) { "$date $(Get-SafeName $author 40) - $safeText [$TweetId]" } else { "$date $(Get-SafeName $author 40) [$TweetId]" }
+    $paths = @()
+    for ($i = 0; $i -lt $downloads.Count; $i++) {
+        $suffix = if ($downloads.Count -gt 1) { " ($($i + 1) of $($downloads.Count))" } else { '' }
+        $paths += Join-Path $videosDir "$baseName$suffix.mp4"
+    }
+    Write-Ok "Folder  : $videosDir"
+    foreach ($p in $paths) { Write-Ok "File    : $(Split-Path $p -Leaf)" }
+    $missing = @($paths | Where-Object { -not (Test-Path -LiteralPath $_) })
+    if (-not $missing.Count) {
+        # Already there: an earlier h264 download is shrunk before its folder is opened.
+        foreach ($p in $paths) { $null = Compress-Video $p $ffmpeg }
+        Show-Existing $paths[0]
+    }
+
+    Write-Step 'Downloading'
+    Write-Info "Progress below. $(Get-CancelHint)."
+    Write-Host ''
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $sizes = @()
+    for ($i = 0; $i -lt $downloads.Count; $i++) {
+        $d = $downloads[$i]; $outPath = $paths[$i]; $target = $d.Target
+        if (Test-Path -LiteralPath $outPath) { Write-Info "Already downloaded: $(Split-Path $outPath -Leaf)"; continue }
+        # yt-dlp needs %(ext)s in the template (a literal % in the name must be doubled) and would skip
+        # a partial file at this name and report success without --force-overwrites.
+        $template = [IO.Path]::GetFileNameWithoutExtension($outPath) -replace '%', '%%'
+        $dlArgs = $d.Args + @('--no-mtime', '--progress', '--force-overwrites', '-o', (Join-Path $videosDir "$template.%(ext)s"))
+        $exit = Invoke-Streaming -Tool 'yt-dlp' { & $ytdlp @dlArgs $target }
+        if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 50KB) {
+            Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`n`nScroll up in the window for yt-dlp's error."
+        }
+        if ($exit -ne 0) { Write-Warn "yt-dlp exited with code $exit but the file exists - check it plays." }
+        $sizes += "{0} MB at {1}p" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB, 1), $d.Height
+    }
+    $sw.Stop()
+    $downloaded = "{0} downloaded in {1}s" -f ($sizes -join ' + '), [int]$sw.Elapsed.TotalSeconds
+
+    $compressed = @()
+    foreach ($p in $paths) { $c = Compress-Video $p $ffmpeg; if ($c) { $compressed += $c } }
+    $summary = if ($compressed.Count) { "$downloaded; " + ($compressed -join '; ') } else { $downloaded }
+    Finish $paths[0] $summary
 }
 
 # ============================================================================ background job
@@ -1177,7 +1456,7 @@ if (-not $Inline -and -not $Worker) {
         }
         Watch-BackgroundJob $running
     }
-    if (-not $Url -and -not $CompressFile) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video or Instagram reel/post link (or a video file path) and run this again.' }
+    if (-not $Url -and -not $CompressFile) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link (or a video file path) and run this again.' }
     $desc = if ($CompressFile) { "compress $(Split-Path $CompressFile -Leaf)" } else { $Url }
     Write-Step 'Starting'
     Write-Ok "Job     : $desc"
@@ -1199,24 +1478,18 @@ try {
     }
 
     Write-Step 'Reading link'
-    if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video or Instagram reel/post link and run this again.' }
+    if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link and run this again.' }
 
-    if ($Url -match '(?i)twitch\.tv/(?:videos|[^/\s]+/v(?:ideo)?)/(\d+)') {
-        Write-Ok "Twitch VOD $($Matches[1])"
-        Invoke-Twitch $Matches[1]
-    }
-    elseif ($Url -match '(?i)(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})') {
-        Write-Ok "YouTube video $($Matches[1])"
-        Invoke-YouTube $Matches[1]
-    }
-    elseif ($Url -match '(?i)instagram\.com/(?:[A-Za-z0-9_.]+/)?(reels?|p|tv)/([A-Za-z0-9_-]{5,})') {
-        $kind = if ($Matches[1] -ieq 'p') { 'p' } else { 'reel' }
-        Write-Ok "Instagram $kind $($Matches[2])"
-        Invoke-Instagram $Matches[2] $kind
-    }
-    else {
+    $link = Resolve-VideoLink $Url
+    if (-not $link) {
         $preview = if ($Url.Length -gt 80) { $Url.Substring(0, 80) + '...' } else { $Url }
-        Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)"
+        Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)`n  https://x.com/<user>/status/123456789  (also twitter.com)"
+    }
+    switch ($link.Site) {
+        'twitch'    { Write-Ok "Twitch VOD $($link.Id)";              Invoke-Twitch $link.Id }
+        'youtube'   { Write-Ok "YouTube video $($link.Id)";           Invoke-YouTube $link.Id }
+        'instagram' { Write-Ok "Instagram $($link.Kind) $($link.Id)"; Invoke-Instagram $link.Id $link.Kind }
+        'x'         { Write-Ok "X post $($link.Id)";                  Invoke-X $link.Id }
     }
 }
 finally {
