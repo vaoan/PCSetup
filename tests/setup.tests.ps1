@@ -293,6 +293,72 @@ Describe "0-init-prereqs" {
         }
         finally { Remove-Item $root, $empty -Recurse -Force -ErrorAction SilentlyContinue }
     }
+    It "stops the distro fallback chain as soon as wsl.exe says the VM cannot be created" {
+        # Seen in the VirtualBox VM (no nested VT-x): the cached-image registration failed with
+        # Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED, and the script then
+        # ran the online install (2m50s, 395 MB), the legacy syntax (4m14s, 389 MB), the winget
+        # Ubuntu app (1m47s, 358 MB) and ubuntu2404 install --root (0x80370102) - four more
+        # failures with the same cause. Every install method needs the same VM, so once wsl.exe
+        # reports it cannot be created the chain must stop and name the real cause.
+        $path = Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1"
+        $script = Get-Content $path -Raw
+        $script | Should -Match 'function Get-WslVmBlocker'
+
+        $tokens = $null; $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        $blockerFn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-WslVmBlocker' }, $true) | Select-Object -First 1
+        $blockerFn | Should -Not -BeNullOrEmpty
+        Invoke-Expression $blockerFn.Extent.Text
+
+        # The exact lines from the screenshot, plus the NUL-laden UTF-16 shape wsl.exe emits.
+        (Get-WslVmBlocker 'Error code: Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED') | Should -Not -BeNullOrEmpty
+        (Get-WslVmBlocker "Installing, this may take a few minutes...`nWslRegisterDistribution failed with error: 0x80370102`nPlease enable the Virtual Machine Platform Windows feature and ensure virtualization is enabled in the BIOS.") | Should -Not -BeNullOrEmpty
+        (Get-WslVmBlocker "E`0r`0r`0o`0r`0 `0c`0o`0d`0e`0:`0 `0W`0s`0l`0/`0H`0C`0S`0_`0E`0_`0H`0Y`0P`0E`0R`0V`0_`0N`0O`0T`0_`0I`0N`0S`0T`0A`0L`0L`0E`0D`0") | Should -Not -BeNullOrEmpty
+        # Failures a later method can still fix are not blockers.
+        (Get-WslVmBlocker 'Error code: Wsl/InstallDistro/WSL_E_DISTRO_NOT_FOUND') | Should -Be ''
+        (Get-WslVmBlocker 'Installing: Virtual Machine Platform') | Should -Be ''
+        (Get-WslVmBlocker '') | Should -Be ''
+        (Get-WslVmBlocker $null) | Should -Be ''
+
+        # Every attempt in Install-WslDistro is followed by the check, so no method runs after a
+        # blocker has been seen, and the ubuntu2404 registration reports the same cause.
+        $installFn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Install-WslDistro' }, $true) | Select-Object -First 1
+        $attempts = ([regex]::Matches($installFn.Extent.Text, 'Invoke-ProcessCapture')).Count
+        $attempts | Should -BeGreaterThan 2
+        ([regex]::Matches($installFn.Extent.Text, 'Get-WslVmBlocker')).Count | Should -BeGreaterOrEqual $attempts
+        $registerFn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Register-UbuntuDistro' }, $true) | Select-Object -First 1
+        $registerFn.Extent.Text | Should -Match 'Get-WslVmBlocker'
+        # The message must say what to do on each kind of machine, not just "not ready".
+        $script | Should -Match 'nested virtualization'
+        $script | Should -Match 'ExposeVirtualizationExtensions'
+
+        # Behaviour, not text: run the real Install-WslDistro with wsl.exe stubbed to fail the
+        # way the VM did. Exactly one attempt may run, and winget must never be reached.
+        Invoke-Expression $installFn.Extent.Text
+        $script:calls = New-Object System.Collections.Generic.List[string]
+        function Test-WslDistroRegistered { param($DistroName) return $false }
+        function Complete-CachedDownload { param($Pending, $Destination) return 'C:\cache\ubuntu.tar.gz' }
+        function Test-CachedImageChecksum { param($Path, $SumsUrl) return $true }
+        function Get-LastOutputLine { param($Text) return "$Text" }
+        function Install-WingetPackage { $script:calls.Add('winget'); return $true }
+        function Register-UbuntuDistro { $script:calls.Add('register'); return $true }
+        function Invoke-ProcessCapture {
+            param($FilePath, $ArgumentList, $Label)
+            $script:calls.Add("capture: $($ArgumentList -join ' ')")
+            return [pscustomobject]@{ ExitCode = -1; Output = "Error code: Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED`n" }
+        }
+        $script:WslImagePending = $null; $script:WslImagePath = 'x'; $script:WslImageSumsUrl = 'x'
+        $result = Install-WslDistro -DistroName 'Ubuntu-24.04' 6>$null
+        $result | Should -BeFalse
+        @($script:calls).Count | Should -Be 1
+        $script:calls[0] | Should -Match '^capture: --install --from-file'
+
+        # And when the cached image is absent, the online attempt is the one and only attempt.
+        $script:calls.Clear()
+        function Complete-CachedDownload { param($Pending, $Destination) return $null }
+        Install-WslDistro -DistroName 'Ubuntu-24.04' 6>$null | Should -BeFalse
+        @($script:calls) | Should -Be @('capture: --install -d Ubuntu-24.04 --no-launch')
+    }
     It "status line runs a command to completion with exit code, output and empty args dropped" {
         . (Join-Path $PSScriptRoot "..\sources\status-line.ps1")
         $fake = Join-Path $env:TEMP "pcsetup-test-fake-$([guid]::NewGuid().ToString('N')).ps1"

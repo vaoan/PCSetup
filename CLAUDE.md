@@ -592,6 +592,22 @@ prerequisites.
 > layer there). Everything before the WSL section is a valid test in that VM; WSL itself needs
 > real hardware or a Hyper-V VM.
 >
+> **The distro fallback chain stops at the first `HCS_E_HYPERV_NOT_INSTALLED` / `0x80370102`.**
+> Seen in that VM on 2026-09-18: the cached-image registration failed with
+> `Wsl/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED`, and `Install-WslDistro`
+> then ran `wsl --install` (2m50s, 395 MB), the legacy syntax (4m14s, 389 MB), the winget
+> Ubuntu app (1m47s, 358 MB) and `ubuntu2404 install --root` (`0x80370102`) — nine more
+> minutes and ~1.1 GB to fail four more times with the same cause, because every method needs
+> the same VM. `Get-WslVmBlocker` classifies each attempt's output; on a match the chain
+> returns at once with a message naming the cause per machine type (SVM/VT-x off in the
+> firmware, nested virtualization off for a Hyper-V guest, impossible in VirtualBox on a
+> Hyper-V host, or reboot pending). It matches the error names, **not** the words "Virtual
+> Machine Platform", which `wsl --install` also prints while enabling the feature. A WMI
+> pre-check cannot do this job: this Hyper-V host and the VirtualBox guest both report
+> `HypervisorPresent=True` and `VMMonitorModeExtensions=False`, so only wsl.exe's own error
+> tells them apart. WSL stays a **warning** in step 0 (exit 0), as it was; script 2 then
+> skips its WSL section with "No Linux WSL distro is installed yet".
+>
 > **winget prints nothing while captured, so every winget install runs behind the line too.**
 > winget draws its progress bar only on a console it owns; with stdout redirected it emits
 > just "Found ...", "Downloading https://...", "Successfully verified installer hash",

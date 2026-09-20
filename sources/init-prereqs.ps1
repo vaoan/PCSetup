@@ -425,6 +425,35 @@ function Test-CachedImageChecksum {
     }
 }
 
+function Get-WslVmBlocker {
+    # Why WSL2 could not create its virtual machine in this boot, read from a tool's output -
+    # or '' when the failure was something a later install method can still fix.
+    #
+    # Every distro install method (cached image, wsl --install, the Store app's registration)
+    # needs that same VM, so once wsl.exe reports HCS_E_HYPERV_NOT_INSTALLED / 0x80370102 no
+    # fallback can succeed. Seen in the VirtualBox VM (no nested VT-x): the cached-image
+    # registration failed with it, and the chain then ran the online install (2m50s, 395 MB),
+    # the legacy syntax (4m14s, 389 MB), the winget Ubuntu app (1m47s, 358 MB) and
+    # ubuntu2404 install --root (0x80370102) - nine more minutes and a gigabyte of downloads to
+    # fail four more times with the same cause. The output is matched on the error names, not
+    # on "Virtual Machine Platform", which wsl --install also prints while enabling the feature.
+    # A WMI pre-check cannot replace this: a Hyper-V host and a VirtualBox guest without nested
+    # virtualization both report HypervisorPresent=True and VMMonitorModeExtensions=False.
+    param([string]$Output)
+    if (-not $Output) { return '' }
+    $text = $Output -replace "`0", ''
+    if ($text -notmatch 'HCS_E_HYPERV_NOT_INSTALLED|0x80370102|ensure virtualization is enabled in the BIOS|WSL2 is not supported with your current machine configuration|virtualization is not enabled') {
+        return ''
+    }
+    return @(
+        'WSL2 cannot create its virtual machine in this boot (HCS_E_HYPERV_NOT_INSTALLED / 0x80370102): the hypervisor is not running, so no distro can be registered by any method.'
+        '  - Real hardware: virtualization (AMD SVM / Intel VT-x) is off in the UEFI firmware. Enable it, boot, then rerun 0-init-prereqs.bat.'
+        '  - Hyper-V guest: nested virtualization is off for this VM. On the host, with the VM off: Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true'
+        '  - VirtualBox guest on a host that runs Hyper-V: nested virtualization cannot be exposed at all; WSL2 needs real hardware or a Hyper-V VM.'
+        '  - If Virtual Machine Platform was enabled in this run, reboot first and rerun.'
+    ) -join "`n"
+}
+
 function Test-WslDistroRegistered {
     param([string]$DistroName = 'Ubuntu-24.04')
 
@@ -445,6 +474,11 @@ function Register-UbuntuDistro {
     $registration = Invoke-ProcessCapture -FilePath 'ubuntu2404.exe' -ArgumentList @('install', '--root') -Label "Registering $DistroName (ubuntu2404 install --root)"
     if ($registration.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($registration.Output)) {
         Write-Host $registration.Output.Trim() -ForegroundColor Yellow
+    }
+    $blocker = Get-WslVmBlocker $registration.Output
+    if ($blocker) {
+        Write-Host $blocker -ForegroundColor Yellow
+        return $false
     }
 
     return (Test-WslDistroRegistered -DistroName 'Ubuntu-24.04')
@@ -471,6 +505,12 @@ function Install-WslDistro {
                 Write-Host "$DistroName registered from the cached image (verified)." -ForegroundColor Green
                 return $true
             }
+            $blocker = Get-WslVmBlocker $fromFile.Output
+            if ($blocker) {
+                Write-Host "from-file registration did not finish (wsl exit $($fromFile.ExitCode)): $(Get-LastOutputLine $fromFile.Output)" -ForegroundColor Yellow
+                Write-Host $blocker -ForegroundColor Yellow
+                return $false
+            }
             Write-Host "from-file registration did not finish (wsl exit $($fromFile.ExitCode)): $(Get-LastOutputLine $fromFile.Output) - falling back to the online install." -ForegroundColor Yellow
         }
         else {
@@ -483,10 +523,22 @@ function Install-WslDistro {
     if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
         return $true
     }
+    $blocker = Get-WslVmBlocker $distroInstall.Output
+    if ($blocker) {
+        Write-Host "wsl --install did not finish (wsl exit $($distroInstall.ExitCode)): $(Get-LastOutputLine $distroInstall.Output)" -ForegroundColor Yellow
+        Write-Host $blocker -ForegroundColor Yellow
+        return $false
+    }
 
     $distroInstall = Invoke-ProcessCapture -FilePath 'wsl.exe' -ArgumentList @('--install', $DistroName) -Label "Installing $DistroName (wsl --install, legacy syntax)"
     if ($distroInstall.ExitCode -eq 0 -and (Test-WslDistroRegistered -DistroName $DistroName)) {
         return $true
+    }
+    $blocker = Get-WslVmBlocker $distroInstall.Output
+    if ($blocker) {
+        Write-Host "wsl --install (legacy syntax) did not finish (wsl exit $($distroInstall.ExitCode)): $(Get-LastOutputLine $distroInstall.Output)" -ForegroundColor Yellow
+        Write-Host $blocker -ForegroundColor Yellow
+        return $false
     }
 
     Write-Host "WSL CLI distro install did not finish; trying Ubuntu 24.04 via winget..." -ForegroundColor Yellow
