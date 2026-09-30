@@ -134,25 +134,26 @@ SERVICEEOF
 systemctl daemon-reload
 systemctl enable go-librespot spotify-discord-bot >/dev/null 2>&1 || true
 
-# -- go-librespot dealer watchdog ---------------------------------------------
-# go-librespot's Spotify "dealer" connection can go stale and it won't reconnect
-# on its own — new tracks then fail (HTTP 500 / "context deadline exceeded").
-# This restarts it when the pong-loss errors persist (>=3 in 3 min).
-cat > /usr/local/bin/golibrespot-watchdog.sh <<'WD'
-#!/bin/bash
-DEAD=$(journalctl -u go-librespot --since '3 minutes ago' --no-pager 2>/dev/null | grep -c 'did not receive last pong from dealer')
-if [ "${DEAD:-0}" -ge 3 ]; then
-  logger -t golibrespot-watchdog "dealer stale (${DEAD} pong losses/3min) — restarting go-librespot"
-  systemctl restart go-librespot
-fi
-WD
-chmod +x /usr/local/bin/golibrespot-watchdog.sh
+# -- go-librespot self-healing watchdog ---------------------------------------
+# Replaces the original dealer-only watchdog. It repairs the whole known failure
+# set (see spotify-discord/FAILURES.md) and escalates from "restart" to "upgrade
+# the binary" when a restart provably cannot help — which is the case for the
+# login5 auth bug (SD-001), where the fault is compiled into the binary.
+#
+# The old watchdog greped for ONE string (dealer pong loss). It therefore sat
+# idle through a two-week outage in which every play returned HTTP 500, because
+# that failure logs entirely different lines. Do not narrow this back down.
+mkdir -p /var/lib/golibrespot-heal/work
+curl -fsSL "$REPO_RAW/cloud/golibrespot-heal.sh" -o /usr/local/bin/golibrespot-heal.sh
+chmod +x /usr/local/bin/golibrespot-heal.sh
+# The old script is superseded; leave no stale copy for a timer to find.
+rm -f /usr/local/bin/golibrespot-watchdog.sh
 cat > /etc/systemd/system/golibrespot-watchdog.service <<'WD'
 [Unit]
-Description=go-librespot dealer-stall watchdog
+Description=go-librespot self-healing watchdog
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/golibrespot-watchdog.sh
+ExecStart=/usr/local/bin/golibrespot-heal.sh
 WD
 cat > /etc/systemd/system/golibrespot-watchdog.timer <<'WD'
 [Unit]

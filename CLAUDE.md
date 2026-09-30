@@ -2066,6 +2066,12 @@ Spotify app → go-librespot (Connect device, OAuth login) → /tmp/spotify-disc
 > is often in live use; before restarting anything **on the VPS**, check
 > `curl -s 127.0.0.1:3678/status` for `"stopped":false`.
 
+> **Read `spotify-discord/CLAUDE.md` before changing anything in that folder.** Known failure
+> modes are catalogued with stable `SD-0NN` ids in `spotify-discord/FAILURES.md`, most are repaired
+> unattended on the VPS by `spotify-discord/cloud/golibrespot-heal.sh` (every 2 min from
+> `golibrespot-watchdog.timer`), and `tests\spotify-discord.tests.ps1` enforces that every fix gets
+> a registry entry and every "auto-healed" claim has a detector in the healer.
+
 > **The local WSL variant was removed on 2026-09-15.** It was `setup-spotify-discord.bat`,
 > `setup-spotify-discord-wsl.sh`, `install-scheduled-task.ps1`, `login-spotify.ps1/.sh` and
 > `setup-wsl-mirrored.ps1`. Verified before deleting: local WSL had no `go-librespot` /
@@ -2092,7 +2098,10 @@ Full details + gotchas in `spotify-discord/README.md`.
 | `spotify-discord/.env.example` | Reference for `/etc/spotify-discord.env` on the VPS |
 | `spotify-discord/cloud/setup-cloud.sh` | One-command VPS installer; pulls the files above from GitHub `main` |
 | `spotify-discord/cloud/login-spotify-cloud.sh` | One-time Spotify OAuth over an SSH tunnel |
-| `spotify-discord/cloud/vps-ssh.ps1` | Connect to / deploy on the VPS |
+| `spotify-discord/cloud/vps-ssh.ps1` | Connect to / deploy on the VPS (key-based SSH only since 2026-09-27) |
+| `spotify-discord/cloud/golibrespot-heal.sh` | VPS watchdog: detects the known failure modes and escalates restart → binary upgrade → rollback |
+| `spotify-discord/CLAUDE.md`, `FAILURES.md` | Folder rules and the `SD-0NN` failure registry |
+| `tests/spotify-discord.tests.ps1` | Enforces the registry, TSDoc on every top-level function, and healer coverage |
 
 ## Source Files (`sources/`)
 
