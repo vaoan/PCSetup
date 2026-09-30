@@ -1,12 +1,17 @@
-﻿# Connect to / run commands on the RackNerd cloud VPS using credentials read
-# from the repo .secrets file (NEVER hardcode them). Requires plink (PuTTY).
+# Connect to / run commands on the RackNerd cloud VPS using credentials read
+# from the repo .secrets file (NEVER hardcode them).
+#
+# Since 2026-09-27 the box accepts key-based SSH only (PasswordAuthentication
+# no), so this uses OpenSSH's ssh.exe with the key named in .secrets.
+# RACKNERD_VPS_PASSWORD remains the root password for the RackNerd VNC
+# console (recovery path); it is no longer accepted over SSH.
 #
 # Usage:
 #   .\vps-ssh.ps1 "systemctl status spotify-discord-bot"     # run a remote command
 #   .\vps-ssh.ps1 -Script path\to\local-script.sh            # run a local script remotely
 #   .\vps-ssh.ps1 -Tunnel 8898                               # open an SSH -L tunnel (for OAuth login)
 #
-# Reads RACKNERD_VPS_IP / _USER / _PASSWORD / _HOSTKEY from .secrets.
+# Reads RACKNERD_VPS_IP / _USER / _SSH_PORT / _SSH_KEY_PATH from .secrets.
 # Populate .secrets via `cloudflared\sync-secrets.bat` first.
 
 param(
@@ -19,42 +24,37 @@ $ErrorActionPreference = 'Stop'
 $secretsPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.secrets'
 
 function Get-Secret {
-    param([string]$Key)
+    param([string]$Key, [string]$Default = $null)
     if (-not (Test-Path $secretsPath)) { throw ".secrets not found at $secretsPath. Run cloudflared\sync-secrets.bat first." }
     $line = Select-String -Path $secretsPath -Pattern "^$Key=" | Select-Object -First 1
-    if (-not $line) { throw "$Key not found in .secrets" }
+    if (-not $line) {
+        if ($null -ne $Default) { return $Default }
+        throw "$Key not found in .secrets"
+    }
     return ($line.Line -replace "^$Key=", '').Trim()
 }
 
-function Find-Plink {
-    $c = Get-Command plink.exe -ErrorAction SilentlyContinue
-    if ($c) { return $c.Source }
-    foreach ($p in @('C:\ProgramData\chocolatey\bin\PLINK.EXE', 'C:\Program Files\PuTTY\plink.exe')) {
-        if (Test-Path $p) { return $p }
-    }
-    throw "plink not found. Install PuTTY (choco install putty)."
-}
+$ip      = Get-Secret 'RACKNERD_VPS_IP'
+$user    = Get-Secret 'RACKNERD_VPS_USER'
+$port    = Get-Secret 'RACKNERD_VPS_SSH_PORT' '22'
+$keyPath = Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\libra_prod_ed25519')
+if (-not (Test-Path $keyPath)) { throw "SSH key not found at $keyPath (set RACKNERD_VPS_SSH_KEY_PATH in .secrets)." }
 
-$ip       = Get-Secret 'RACKNERD_VPS_IP'
-$user     = Get-Secret 'RACKNERD_VPS_USER'
-$password = Get-Secret 'RACKNERD_VPS_PASSWORD'
-$hostkey  = Get-Secret 'RACKNERD_VPS_HOSTKEY'
-$plink    = Find-Plink
+$ssh = Get-Command ssh.exe -ErrorAction SilentlyContinue
+if (-not $ssh) { throw "ssh.exe not found. Install the Windows OpenSSH client." }
 
-# RACKNERD_VPS_HOSTKEY may hold multiple fingerprints (RSA + ed25519), whitespace-
-# separated, since plink negotiates whichever host-key algorithm — pin them all.
-$common = @('-batch')
-foreach ($hk in ($hostkey -split '\s+' | Where-Object { $_ })) { $common += @('-hostkey', $hk) }
-$common += @('-ssh', '-pw', $password, "$user@$ip")
+$common = @('-i', $keyPath, '-p', $port, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', "$user@$ip")
 
 if ($Tunnel -gt 0) {
     Write-Host "[vps-ssh] Opening tunnel 127.0.0.1:$Tunnel -> ${ip}:$Tunnel (Ctrl+C to close)"
-    & $plink @common '-L' "${Tunnel}:localhost:$Tunnel" '-N'
+    & $ssh.Source @common '-L' "${Tunnel}:localhost:$Tunnel" '-N'
 } elseif ($Script) {
     if (-not (Test-Path $Script)) { throw "Script not found: $Script" }
-    & $plink @common '-m' $Script
+    # Stream the script over stdin so it runs as one bash session on the box,
+    # like plink -m did.
+    Get-Content -Raw $Script | & $ssh.Source @common 'bash -s'
 } elseif ($Command) {
-    & $plink @common $Command
+    & $ssh.Source @common $Command
 } else {
     Write-Host "Usage: .\vps-ssh.ps1 '<remote command>'  |  -Script <file>  |  -Tunnel <port>"
 }
