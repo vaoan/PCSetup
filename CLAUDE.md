@@ -1441,8 +1441,17 @@ Tested in `setup.tests.ps1` (`repair-discord`): the key removal, the backup, the
 reinstall path was verified by hand with `-Reinstall` on the real install.
 
 ## Uninstall Scripts (`uninstall/`)
+The installer download is retried (5 attempts, curl `--retry-all-errors`): on 2026-09-30 a single
+`curl: (6) Could not resolve host: discord.com` during a network blip made the whole repair fail,
+and the identical download worked minutes later.
+
 
 ### uninstall/context-menu-terminal.bat
+If the first watch sees it gone, it is relaunched **once** and watched again; only a second quit is
+a failure. The first start after a reinstall downloads the modules and quits itself to load them —
+on Canary on 2026-09-30 it restarted once, then quit for good mid-install, and a repaired install
+was reported as "quit within 30 s". A plain second launch stayed up. The real failure modes above
+quit on every launch, so the relaunch cannot mask them.
 Removes the context menu entries added by `7-context-menu-terminal-install.bat`.
 
 ### uninstall/context-menu-take-ownership.bat

@@ -210,14 +210,28 @@ else {
 
     $installer = Join-Path $env:TEMP $layout.Setup
     Write-Info "downloading the x64 installer..."
-    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-    & curl.exe -sSL --fail -o $installer $installerUrl
-    $downloaded = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $installer) -and ((Get-Item -LiteralPath $installer).Length -gt 50MB)
+    # Retried: one run on 2026-09-30 died on a single "Could not resolve host: discord.com" while the
+    # network was flapping (Discord's own updater logged connection resets in the same minutes), and
+    # the same download worked a few minutes later. curl's --retry does not cover a DNS failure
+    # (exit 6) without --retry-all-errors, and a whole attempt can still fail, hence the outer loop.
+    $downloaded = $false
+    $curlExit = $null
+    $maxAttempts = 5
+    for ($attempt = 1; $attempt -le $maxAttempts -and -not $downloaded; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-Info "attempt $attempt of $maxAttempts in 10 s..."
+            Start-Sleep -Seconds 10
+        }
+        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+        & curl.exe -sSL --fail --connect-timeout 20 --retry 3 --retry-delay 3 --retry-all-errors -o $installer $installerUrl
+        $curlExit = $LASTEXITCODE
+        $downloaded = ($curlExit -eq 0) -and (Test-Path -LiteralPath $installer) -and ((Get-Item -LiteralPath $installer).Length -gt 50MB)
+    }
     $signature = if ($downloaded) { Get-AuthenticodeSignature -LiteralPath $installer } else { $null }
     $signedByDiscord = $signature -and $signature.Status -eq 'Valid' -and $signature.SignerCertificate.Subject -match 'Discord'
 
     if (-not $downloaded) {
-        $failures.Add("installer download failed (curl exit $LASTEXITCODE)")
+        $failures.Add("installer download failed after $maxAttempts attempts (last curl exit $curlExit; 6 = DNS, check the network/VPN/AdGuard and run again)")
         Write-Fail "download failed"
     }
     elseif (-not $signedByDiscord) {
@@ -293,21 +307,41 @@ else {
     }
 
     if ($failures.Count -eq 0) {
-        Write-Info "watching for 30 s..."
-        Start-Sleep -Seconds 30
-        $alive = Get-ChannelProcesses
-        $crashlog = Get-LatestCrashlog
-        $quitLogged = $false
-        if ($crashlog) { $quitLogged = Test-CurrentSessionQuit -Path $crashlog.FullName }
-        if ($alive -and -not $quitLogged) {
-            $main = $alive | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1
-            Write-Ok "$processName is still running after 30 s$(if ($main) { " (window: '$($main.MainWindowTitle)')" })"
-        }
-        else {
-            $failures.Add("$processName quit within 30 s of launching")
-            Write-Fail "$processName quit within 30 s of launching"
+        # Two watches, one relaunch in between. The first start after a reinstall downloads the
+        # modules (voice, overlay, cloudsync...) and quits itself to load them; seen on Canary on
+        # 2026-09-30, it restarted once on its own and then quit for good mid-install, and this
+        # check reported "quit within 30 s" on a repaired install. A plain second launch stayed
+        # up. The failures this script exists for (pinned-manifest fatal, unregistered host) quit
+        # on every launch, so the relaunch cannot hide them.
+        $maxWatches = 2
+        for ($watch = 1; $watch -le $maxWatches; $watch++) {
+            Write-Info "watching for 30 s..."
+            Start-Sleep -Seconds 30
+            $alive = Get-ChannelProcesses
+            $crashlog = Get-LatestCrashlog
+            $quitLogged = $false
+            if ($crashlog) { $quitLogged = Test-CurrentSessionQuit -Path $crashlog.FullName }
+            if ($alive -and -not $quitLogged) {
+                $main = $alive | Where-Object MainWindowHandle -ne 0 | Select-Object -First 1
+                Write-Ok "$processName is still running after 30 s$(if ($main) { " (window: '$($main.MainWindowTitle)')" })"
+                break
+            }
+            if ($watch -lt $maxWatches) {
+                Write-Warn "$processName quit (normal once after a fresh install: it restarts to load its modules); relaunching"
+                Wait-Until -Condition { -not (Get-ChannelProcesses) } -TimeoutSeconds 20 | Out-Null
+                Start-Unelevated -Path (Join-Path (Get-AppFolder).FullName $layout.Exe)
+                if (-not (Wait-Until -Condition { Get-ChannelProcesses } -TimeoutSeconds 20 -IntervalSeconds 1)) {
+                    $failures.Add("$processName did not start again after quitting")
+                    Write-Fail "did not start again"
+                    break
+                }
+                $actions.Add("relaunched $processName once after it quit on its first start")
+                continue
+            }
+            $failures.Add("$processName quit within 30 s of launching, twice")
+            Write-Fail "$processName quit within 30 s of launching, twice"
             Write-Info "look at: $userData\sentry\scope_v3.json (breadcrumbs; search for 'fatal:')"
-            Write-Info "         $userData\logs\Discord_updater_rCURRENT.log"
+            Write-Info "         $userData\logs\$($processName)_updater_rCURRENT.log"
             if ($crashlog) { Write-Info "         $($crashlog.FullName)" }
         }
     }
@@ -321,8 +355,11 @@ if ($actions.Count -gt 0) {
     Write-Host "Actions:" -ForegroundColor White
     foreach ($a in $actions) { Write-Host "  - $a" }
 }
-else {
+elseif ($failures.Count -eq 0) {
     Write-Host "Nothing needed repairing." -ForegroundColor White
+}
+else {
+    Write-Host "No repair was completed." -ForegroundColor White
 }
 if ($failures.Count -gt 0) {
     Write-Host "FAILED:" -ForegroundColor Red
