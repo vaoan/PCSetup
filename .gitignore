@@ -30,3 +30,4 @@ cloudflared/reports-*/
 # Playwright artifacts from cloudflared/test-console.mjs
 cloudflared/console-loaded.png
 cloudflared/console-presets.png
+.playwright-mcp/

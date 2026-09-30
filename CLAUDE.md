@@ -977,6 +977,15 @@ in the same folder. Takes `backup` or `restore` as an argument so it can run una
 no-pauses rule); with no argument it falls back to the interactive prompt. Both directions verify by
 file size — a 0-byte backup is refused rather than silently restoring an empty Start Menu.
 
+> **A double-click never ran it until 2026-09-29.** The elevation line passed `-ArgumentList '%1'`,
+> which is an empty string when there is no argument, and `Start-Process` rejects that ("The argument
+> is null or empty") — so launched unelevated without `backup`/`restore`, the window closed and
+> nothing happened. The argument is now forwarded only when there is one. That is also why the
+> committed `.bin` was two months stale (27,660 bytes from 2026-07-31 against a live 39,020): the
+> backup had not actually been re-taken since. **Run `setup-start-menu.bat backup` before any
+> format** and commit the `.bin`; Win11Debloat's `-RunDefaults` (script 11) does not clear Start
+> pins, so the restore can run any time after setup.
+
 ### optional/download-video.bat
 One clipboard-driven downloader for **Twitch VODs, YouTube videos, Instagram reels/posts and X
 (Twitter) posts**

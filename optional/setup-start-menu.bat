@@ -3,7 +3,13 @@ if /I "%PCSETUP_CI%"=="1" goto :after_admin_check
 :: Auto-elevate to Administrator (preserving the chosen action across elevation)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent()); if ($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }" >nul 2>&1
 if %errorlevel% neq 0 (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process '%~f0' -ArgumentList '%1' -Verb RunAs"
+    :: No -ArgumentList when there is no argument: Start-Process rejects an empty string there,
+    :: so a plain double-click used to fail to elevate and the window just closed.
+    if "%~1"=="" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process '%~f0' -Verb RunAs"
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process '%~f0' -ArgumentList '%~1' -Verb RunAs"
+    )
     exit /b
 )
 :after_admin_check
