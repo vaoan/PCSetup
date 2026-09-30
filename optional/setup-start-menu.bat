@@ -73,11 +73,16 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo if ((Get-Item $backup).Length -lt 1) { Write-Host "Backup file is empty; refusing to restore." -ForegroundColor Red; exit 1 }
 >>"%SCRIPT%" echo $dir = Split-Path $startMenu -Parent
 >>"%SCRIPT%" echo if (-not (Test-Path $dir)) { Write-Host "Start Menu state folder not found: $dir" -ForegroundColor Red; exit 1 }
->>"%SCRIPT%" echo Write-Host "Stopping Start Menu..." -ForegroundColor Cyan
->>"%SCRIPT%" echo Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
->>"%SCRIPT%" echo Start-Sleep -Seconds ^2
+>>"%SCRIPT%" echo # Write FIRST, then restart Start. Windows relaunches StartMenuExperienceHost within a
+>>"%SCRIPT%" echo # second of it being stopped, and the running host re-saves its in-memory layout over
+>>"%SCRIPT%" echo # start2.bin - so the old "stop, wait 2 s, copy" order lost the race and the restored
+>>"%SCRIPT%" echo # file was overwritten with the pins it was meant to replace. Stopping it after the copy
+>>"%SCRIPT%" echo # makes the fresh host read the new file. Size is checked before the restart, because
+>>"%SCRIPT%" echo # the host re-encodes the file on start (same pins, different bytes and size).
 >>"%SCRIPT%" echo try { Copy-Item $backup $startMenu -Force -ErrorAction Stop } catch { Write-Host "Restore failed: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }
 >>"%SCRIPT%" echo if ((Get-Item $startMenu).Length -ne (Get-Item $backup).Length) { Write-Host "Restored file size does not match the backup." -ForegroundColor Red; exit 1 }
+>>"%SCRIPT%" echo Write-Host "Restarting Start Menu so it loads the restored layout..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo Stop-Process -Name StartMenuExperienceHost -Force -ErrorAction SilentlyContinue
 >>"%SCRIPT%" echo Write-Host "Start Menu layout restored. Press the Windows key to see it." -ForegroundColor Green
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%"

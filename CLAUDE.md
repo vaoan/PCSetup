@@ -985,6 +985,17 @@ file size — a 0-byte backup is refused rather than silently restoring an empty
 > backup had not actually been re-taken since. **Run `setup-start-menu.bat backup` before any
 > format** and commit the `.bin`; Win11Debloat's `-RunDefaults` (script 11) does not clear Start
 > pins, so the restore can run any time after setup.
+>
+> **And the restore itself never worked either: it lost a race with Windows.** It stopped
+> `StartMenuExperienceHost`, slept 2 s and then copied the backup — but Windows relaunches the host
+> within a second, and the running host re-saves its in-memory layout over `start2.bin`, so the
+> restored file was overwritten with the very pins it was meant to replace. Restoring a backup that
+> matched the live pins "passed" for exactly that reason. Proven on 2026-09-29 by clearing all pins
+> (Win11Debloat's empty `Assets/Start/start2.bin`) and restoring: the old order left the menu
+> unchanged, write-first-then-stop emptied it, and the fixed restore brought every pin back
+> (user-confirmed). The host also **re-encodes the file on every start** — same pins, different
+> bytes (and a different size for a different layout) — so a hash comparison after a restart proves
+> nothing; the size check runs before the restart.
 
 ### optional/download-video.bat
 One clipboard-driven downloader for **Twitch VODs, YouTube videos, Instagram reels/posts and X
