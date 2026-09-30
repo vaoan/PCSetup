@@ -59,7 +59,14 @@ jobs:
 
       - name: Confirm Docker is in Windows-container mode
         run: |
-          $os = (docker version --format '{{.Server.Os}}').Trim()
+          # The runner's Docker service is not always up when the job starts: on 2026-09-30 a
+          # re-run died here with "failed to connect to the docker API at npipe:////./pipe/
+          # docker_engine" and reported it as the wrong container mode ('' instead of windows).
+          # Start it and wait for the engine pipe instead of failing on the first probe.
+          $svc = Get-Service docker -ErrorAction SilentlyContinue
+          if ($svc -and $svc.Status -ne 'Running') { Write-Host "Docker service is $($svc.Status); starting it"; Start-Service docker }
+          for ($i = 0; $i -lt 30 -and -not (docker version --format '{{.Server.Os}}' 2>$null); $i++) { Start-Sleep -Seconds 2 }
+          $os = "$(docker version --format '{{.Server.Os}}')".Trim()
           Write-Host "Docker server OS: $os"
           if ($os -ne 'windows') {
             throw "Runner is in '$os' container mode. Dockerfile.test needs Windows containers."
