@@ -182,7 +182,9 @@ referenced but missing here, or if a documented auto-heal has no detector in the
   systemd units, no `/etc/spotify-discord.env`, no `SpotifyDiscordBridge` task, and WSL is in `nat`
   mode with no `.wslconfig` — despite mirrored mode being documented as a hard requirement.
 - **Status:** `manual`. `spotify-discord/CLAUDE.md` now leads with this so the next investigation
-  starts on the right box.
+  starts on the right box. On 2026-09-15 the local-WSL scripts were deleted and the root
+  `CLAUDE.md` was rewritten to say the bridge runs on the VPS, so the misleading docs themselves
+  are gone; the entry stays because the id is permanent.
 
 ## SD-013
 **service auto-restart rotates the PKCE challenge mid-login**

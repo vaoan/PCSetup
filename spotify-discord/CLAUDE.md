@@ -15,9 +15,10 @@ before changing anything here.
 
 **The live bridge runs on a RackNerd cloud VPS. Nothing spotify-related runs locally.**
 
-The root `CLAUDE.md` still describes the original local WSL deployment (systemd units in
-`Ubuntu-24.04`, `WSLKeepAlive`, the `SpotifyDiscordBridge` scheduled task, mirrored networking).
-That deployment is **gone**. Verified on 2026-08-30:
+The original local WSL deployment (systemd units in `Ubuntu-24.04`, `WSLKeepAlive`, the
+`SpotifyDiscordBridge` scheduled task, mirrored networking) is **gone** — its scripts were deleted
+from this folder on 2026-09-15 and the root `CLAUDE.md` was rewritten to match. Verified on
+2026-08-30, before the deletion:
 
 | Claim in the old docs | Reality on this machine |
 |---|---|
@@ -30,8 +31,7 @@ That deployment is **gone**. Verified on 2026-08-30:
 So when the bridge misbehaves, **do not debug locally** — you will find an empty machine and
 conclude the wrong thing. Go to the VPS (see *Operating it*).
 
-The local-WSL scripts are still in this folder and still work, but they are a **dormant alternative
-path**, not what is deployed. The VPS was chosen because a real KVM box has clean outbound UDP (so
+The VPS was chosen because a real KVM box has clean outbound UDP (so
 Discord voice and the OAuth callback just work, with none of the mirrored-networking gymnastics) and
 because it is always on, with no WSL CPU jitter in the audio.
 
@@ -125,7 +125,7 @@ Known-good versions as deployed: go-librespot **0.9.0**, Node **v22**, ffmpeg **
 | `cloud/setup-cloud.sh` | One-shot installer, run as root on a fresh Debian/Ubuntu KVM box. Installs deps, Node 22, go-librespot, fetches the app from GitHub raw, writes both units + the watchdog, enables everything |
 | `cloud/login-spotify-cloud.sh` | One-time Spotify OAuth on the VPS (needs an SSH `-L 8898` tunnel so your local browser can reach the callback) |
 | `cloud/golibrespot-heal.sh` | **Self-healing watchdog.** Runs every 2 min from `golibrespot-watchdog.timer`; detects the known failure modes and escalates restart -> binary upgrade -> rollback. See *Self-healing* below |
-| `cloud/vps-ssh.ps1` | **How you reach the box.** Runs remote commands / scripts / tunnels via plink, reading credentials from the repo `.secrets` |
+| `cloud/vps-ssh.ps1` | **How you reach the box.** Runs remote commands / scripts / tunnels over OpenSSH with the key named in the repo `.secrets` (the VPS is key-only since 2026-09-27) |
 | `cloud/README.md` | VPS install walkthrough |
 
 ### Documentation and tracking (mandatory, and enforced)
@@ -153,27 +153,23 @@ that" from becoming a claim nothing backs up.
 > pointing a tag at a nonexistent `SD-999`, and adding an `auto-healed` registry row the healer
 > knows nothing about. All three failed as intended and were reverted.
 
-### Legacy local-WSL path (dormant — not deployed)
+### Retired local-WSL path (deleted 2026-09-15)
 
-| File | Purpose |
-|---|---|
-| `setup-spotify-discord.bat` | One-click: mirrored networking → WSL install → scheduled task |
-| `setup-spotify-discord-wsl.sh` | WSL installer (systemd units inside the distro) |
-| `setup-wsl-mirrored.ps1` | Writes `networkingMode=mirrored` + `hostAddressLoopback=true` to `.wslconfig` |
-| `install-scheduled-task.ps1` | Registers the `SpotifyDiscordBridge` logon task |
-| `login-spotify.ps1` / `login-spotify.sh` | One-time OAuth for the WSL deployment |
-
-> Reviving the local path is a real decision, not a fallback: mirrored networking changes how the
-> **web console** is wired (WSL sshd moves to 2222, the Windows TCP relays stop being used). See the
-> mirrored-networking note in the root `CLAUDE.md`.
+`setup-spotify-discord.bat`, `setup-spotify-discord-wsl.sh`, `setup-wsl-mirrored.ps1`,
+`install-scheduled-task.ps1` and `login-spotify.ps1/.sh` were removed; they are in git history
+before that date. Reviving the local path is a real decision, not a fallback: mirrored networking
+changes how the **web console** is wired (WSL sshd moves to 2222, the Windows TCP relays stop being
+used), and only one bot may run per token.
 
 ---
 
 ## Operating it
 
-Everything goes through `cloud/vps-ssh.ps1`, which reads `RACKNERD_VPS_IP` / `_USER` / `_PASSWORD` /
-`_HOSTKEY` from the repo `.secrets` (populate with `cloudflared\sync-secrets.bat`; needs plink from
-PuTTY). **Never hardcode or echo those values.**
+Everything goes through `cloud/vps-ssh.ps1`, which reads `RACKNERD_VPS_IP` / `_USER` / `_SSH_PORT` /
+`_SSH_KEY_PATH` from the repo `.secrets` (populate with `cloudflared\sync-secrets.bat`) and connects
+with Windows' OpenSSH `ssh.exe`. The box has refused password SSH since 2026-09-27, so the key
+(`~\.ssh\libra_prod_ed25519` by default) is the only way in; `RACKNERD_VPS_PASSWORD` is kept for the
+RackNerd VNC console only. **Never hardcode or echo those values.**
 
 ```powershell
 cd spotify-discord\cloud
@@ -374,8 +370,8 @@ Two defects in the healer were found **by this testing** and fixed: `api_code` a
 
 > **`vps-ssh.ps1` takes one string, and PowerShell will fight you.** Backslash-escaped quotes,
 > `|` inside the command, and `,`/`(` in an inline `node -e` all get eaten by the PowerShell parser
-> before plink sees them. For anything beyond a simple command, write a `.sh` file and use
-> `-Script` — it is passed to plink with `-m` and reaches the shell verbatim.
+> before ssh sees them. For anything beyond a simple command, write a `.sh` file and use
+> `-Script` — it is streamed to `bash -s` on the box over stdin and reaches the shell verbatim.
 
 > **Spotify ToS / privacy:** go-librespot is a reverse-engineered client, so keep the bot private to
 > your own server. While the bridge plays, "Discord" is the account's active device — one stream at
