@@ -171,6 +171,22 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo if (Get-Command clink -ErrorAction SilentlyContinue) { Write-Host "Enabling Clink autorun for cmd.exe..." -ForegroundColor Cyan; ^& clink autorun install ^| Out-Null }
 >>"%SCRIPT%" echo else { Write-Host "Clink not found; skipping autorun." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # EarTrumpet from Scoop has no autostart: the Store build registers its own startup task, the
+>>"%SCRIPT%" echo # portable one does not, so the tray mixer was gone after every reboot. The Run value points at
+>>"%SCRIPT%" echo # Scoop's 'current' junction, so it survives "scoop update". Check, act, read back.
+>>"%SCRIPT%" echo $earPrefix = ^& scoop prefix eartrumpet 2^>$null 6^>$null
+>>"%SCRIPT%" echo $earExe = if ($earPrefix) { Join-Path $earPrefix 'EarTrumpet.exe' } else { $null }
+>>"%SCRIPT%" echo if ($earExe -and (Test-Path $earExe)) {
+>>"%SCRIPT%" echo     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+>>"%SCRIPT%" echo     $earValue = '"' + $earExe + '"'
+>>"%SCRIPT%" echo     if ((Get-ItemProperty -Path $runKey -Name 'EarTrumpet' -ErrorAction SilentlyContinue).EarTrumpet -ne $earValue) {
+>>"%SCRIPT%" echo         Set-ItemProperty -Path $runKey -Name 'EarTrumpet' -Value $earValue
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo     if ((Get-ItemProperty -Path $runKey -Name 'EarTrumpet' -ErrorAction SilentlyContinue).EarTrumpet -eq $earValue) { Write-Host "EarTrumpet starts at logon." -ForegroundColor Green }
+>>"%SCRIPT%" echo     else { Write-Host "EarTrumpet autostart FAILED." -ForegroundColor Red; Add-Failure 'EarTrumpet autostart' }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo else { Write-Host "EarTrumpet not installed; skipping autostart." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Add an app by adding a row. Source is only needed for msstore-only packages.
 >>"%SCRIPT%" echo $wingetApps = @(
 >>"%SCRIPT%" echo     @{ Id = 'CodecGuide.K-LiteCodecPack.Mega'; Name = 'K-Lite Codec Pack Mega' },
