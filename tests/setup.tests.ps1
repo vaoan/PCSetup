@@ -1027,7 +1027,9 @@ Describe "download-video" {
         $tokens = $null; $errors = $null
         $script:dvAst = [System.Management.Automation.Language.Parser]::ParseFile($script:dvScript, [ref]$tokens, [ref]$errors)
         $script:dvParseErrors = $errors
-        foreach ($name in 'Resolve-VideoLink', 'ConvertFrom-TweetApi', 'Select-TweetFormat', 'Get-SafeName') {
+        foreach ($name in 'Resolve-VideoLink', 'ConvertFrom-TweetApi', 'Select-TweetFormat', 'Get-SafeName', 'Get-CompressCandidates', 'Get-Av1TargetPath',
+                          'Get-SampleWindows', 'Find-QualityCrf', 'Get-PredictedBytes',
+                          'New-PcSetupStamp', 'ConvertFrom-PcSetupStamp', 'Join-PcSetupComment') {
             $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
             if ($fn) { Invoke-Expression $fn.Extent.Text }
         }
@@ -1141,6 +1143,226 @@ Describe "download-video" {
             $calls = $fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Compress-Video' }, $true)
             @($calls).Count | Should -BeGreaterThan 0 -Because "$handler must compress what it downloads"
         }
+    }
+    It "folder mode offers the videos directly inside a folder, largest first, and nothing else" {
+        Get-Command Get-CompressCandidates -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        $dir = Join-Path $env:TEMP ('pcsetup-compress-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $dir 'sub') | Out-Null
+        try {
+            [IO.File]::WriteAllBytes((Join-Path $dir 'small.mp4'), (New-Object byte[] 10))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'Big Clip [id].MOV'), (New-Object byte[] 300))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'medium.webm'), (New-Object byte[] 100))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'notes.txt'), (New-Object byte[] 500))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'half.mp4.av1-tmp'), (New-Object byte[] 900))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'gone.mp4.h264-old'), (New-Object byte[] 900))
+            [IO.File]::WriteAllBytes((Join-Path $dir 'sub\nested.mp4'), (New-Object byte[] 999))
+            $found = @(Get-CompressCandidates $dir)
+            @($found | ForEach-Object { $_.Name }) | Should -Be @('Big Clip [id].MOV', 'medium.webm', 'small.mp4')
+        } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        # The encode is an mp4 container, so only an .mp4 source keeps its name.
+        Get-Av1TargetPath 'Z:\v\clip [id].mp4' | Should -Be 'Z:\v\clip [id].mp4'
+        Get-Av1TargetPath 'Z:\v\clip.MOV'     | Should -Be 'Z:\v\clip.mp4'
+        Get-Av1TargetPath 'Z:\v\clip.webm'    | Should -Be 'Z:\v\clip.mp4'
+    }
+    It "spreads the quality samples over the file, and verifies on different windows than it searched" {
+        Get-Command Get-SampleWindows -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        # A clip no longer than two samples is measured whole, for the search and the check alike.
+        $short = @(Get-SampleWindows -Seconds 25 -SampleSeconds 15)
+        $short.Count | Should -Be 1
+        $short[0].Start | Should -Be 0
+        $short[0].Length | Should -Be 25
+        @(Get-SampleWindows -Seconds 25 -SampleSeconds 15 -Verify)[0].Start | Should -Be 0
+        # A 10-minute file: several windows, each inside the file, in order, none overlapping.
+        $w = @(Get-SampleWindows -Seconds 600 -SampleSeconds 15)
+        $w.Count | Should -BeGreaterThan 2
+        $w.Count | Should -BeLessOrEqual 6
+        foreach ($x in $w) { $x.Length | Should -Be 15; $x.Start | Should -BeGreaterOrEqual 0; ($x.Start + $x.Length) | Should -BeLessOrEqual 600 }
+        for ($i = 1; $i -lt $w.Count; $i++) { $w[$i].Start | Should -BeGreaterThan ($w[$i-1].Start + 15) }
+        # The check scores a file of up to 30 minutes whole (no seek to mis-pair frames on a clip
+        # with jittery timestamps - one scored 37.9 on seeked windows and 96 whole)...
+        $v = @(Get-SampleWindows -Seconds 600 -SampleSeconds 15 -Verify)
+        $v.Count | Should -Be 1
+        $v[0].Start | Should -Be 0
+        $v[0].Length | Should -Be 600
+        # ...and a longer VOD on windows that sit between the search windows, never on top of them.
+        $w = @(Get-SampleWindows -Seconds 7200 -SampleSeconds 15)
+        $v = @(Get-SampleWindows -Seconds 7200 -SampleSeconds 15 -Verify)
+        $v.Count | Should -Be $w.Count
+        for ($i = 0; $i -lt $w.Count; $i++) {
+            $v[$i].Start | Should -BeGreaterThan ($w[$i].Start + 15)
+            ($v[$i].Start + 15) | Should -BeLessOrEqual 7200
+        }
+        # A 6-hour VOD is capped at six windows, so the search stays minutes, not hours; a short clip
+        # is sampled densely (one window per 30 s), because two windows on a 2.5-minute test clip
+        # averaged 95.9 where the whole file scored 93.0.
+        @(Get-SampleWindows -Seconds 22800 -SampleSeconds 15).Count | Should -Be 6
+        @(Get-SampleWindows -Seconds 150 -SampleSeconds 15).Count | Should -Be 5
+        @(Get-SampleWindows -Seconds 61 -SampleSeconds 15).Count | Should -Be 2
+    }
+    It "finds the highest crf that still meets the VMAF target, with few measurements, and gives up when nothing fits" {
+        Get-Command Find-QualityCrf -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        # A fake encoder: VMAF falls 0.5 per crf from 99 at crf 20; size halves every 10 crf from 100% at crf 20.
+        $script:probed = @()
+        $measure = { param([int]$crf) $script:probed += $crf; [pscustomobject]@{ Vmaf = 99 - 0.5 * ($crf - 20); Ratio = [Math]::Pow(0.5, ($crf - 20) / 10.0) } }
+        $r = Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 35 -MinCrf 20 -MaxCrf 55
+        $r.Crf | Should -Be 28          # 99 - 0.5*8 = 95.0 passes, crf 29 = 94.5 fails
+        $r.Vmaf | Should -Be 95
+        $script:probed.Count | Should -BeLessOrEqual 7 -Because "a bisection needs a handful of sample encodes, not a ladder of 35"
+        # Start above the answer or below it - the same crf comes out.
+        (Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 22 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 28
+        (Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 50 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 28
+        # Everything passes: the top of the range is the answer.
+        (Find-QualityCrf -Measure $measure -TargetVmaf 80 -StartCrf 35 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 55
+        # Nothing reaches the target, even at the floor: no crf, and the reason names the best it saw.
+        $none = Find-QualityCrf -Measure $measure -TargetVmaf 99.5 -StartCrf 35 -MinCrf 20 -MaxCrf 55
+        $none.Crf | Should -BeNullOrEmpty
+        $none.Reason | Should -Match 'crf 20'
+        $none.Reason | Should -Match '99'
+        # A source already leaner than the encoder can match: a failing crf whose encode is already
+        # as big as the source means every lower crf is bigger still, so the search stops there.
+        $script:probed = @()
+        $lean = { param([int]$crf) $script:probed += $crf; [pscustomobject]@{ Vmaf = 90 - 0.5 * ($crf - 35); Ratio = 1.4 * [Math]::Pow(0.5, ($crf - 35) / 10.0) } }
+        $stop = Find-QualityCrf -Measure $lean -TargetVmaf 95 -StartCrf 35 -MinCrf 20 -MaxCrf 55 -MaxRatio 0.97
+        $stop.Crf | Should -BeNullOrEmpty
+        $stop.Reason | Should -Match 'not smaller|bigger|larger'
+        $script:probed.Count | Should -Be 1 -Because "crf 35 already fails the target at 140% of the source; going lower cannot help"
+    }
+    It "predicts the encoded size from the sample ratio with the copied audio left out of the scaling" {
+        Get-Command Get-PredictedBytes -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        # 100,000,000-byte file, 60 s, 1 Mbit/s audio = 7,500,000 bytes of audio; the other
+        # 92,500,000 of video halve: 46,250,000 + 7,500,000.
+        Get-PredictedBytes -SourceBytes 100000000 -Seconds 60 -AudioBitsPerSecond 1000000 -VideoRatio 0.5 | Should -Be ([long]53750000)
+        # No audio: the whole file scales.
+        Get-PredictedBytes -SourceBytes 100000000 -Seconds 60 -AudioBitsPerSecond 0 -VideoRatio 0.5 | Should -Be ([long]50000000)
+    }
+    It "compresses with SVT-AV1 preset 4 by default, NVENC only on -Gpu, and never swaps in an encode that failed the quality check" {
+        $text = Get-Content $script:dvScript -Raw
+        $text | Should -Match '\[switch\]\$Gpu'
+        $text | Should -Not -Match '\[switch\]\$Cpu'
+        $text | Should -Match "Av1SvtPreset = '4'"
+        $text | Should -Match 'MinVmaf'
+        $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Compress-Video' }, $true) | Select-Object -First 1
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match 'Find-QualityCrf'
+        $fn.Extent.Text | Should -Match 'Measure-Vmaf'
+        # The VMAF check on the finished encode must come before the swap, and a miss gets one retry lower.
+        $fn.Extent.Text.IndexOf('Measure-Vmaf') | Should -BeLessThan $fn.Extent.Text.IndexOf('.h264-old')
+        $fn.Extent.Text | Should -Match '\$attempt -le 2'
+        $fn.Extent.Text | Should -Match 'Encoding it again at crf'
+        # libvmaf pairs its inputs by timestamp; a variable-frame-rate clip scored 73.5 that way and
+        # 93.0 paired by order (settb + setpts=N on both sides). Both sides, or the sync is back.
+        $vm = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Measure-Vmaf' }, $true) | Select-Object -First 1
+        $vm | Should -Not -BeNullOrEmpty
+        ([regex]::Matches($vm.Extent.Text, 'settb=AVTB,setpts=N/')).Count | Should -Be 2
+        $vm.Extent.Text | Should -Not -Match 'log_path=[A-Za-z]:'
+    }
+    It "stamps its verdict into the file's own comment tag and reads it back, so a re-run needs no cache" {
+        Get-Command New-PcSetupStamp -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        $av1 = New-PcSetupStamp -Kind av1 -Crf 40 -Vmaf 96.12 -Target 95 -Encoder 'SVT-AV1 preset 4' -Date '2026-09-23'
+        $av1 | Should -Be 'PCSetup: AV1 crf 40, VMAF 96.1 at target 95, SVT-AV1 preset 4, 2026-09-23'
+        $kept = New-PcSetupStamp -Kind kept -Target 95 -Reason 'crf 29 = 116% at 93.7' -Date '2026-09-23'
+        $kept | Should -Be 'PCSetup: kept, cannot get smaller at VMAF 95 (crf 29 = 116% at 93.7), 2026-09-23'
+        # The site's own comment survives in front of the stamp; a second stamp replaces the first.
+        Join-PcSetupComment -Existing 'from the site' -Stamp $av1 | Should -Be "from the site | $av1"
+        Join-PcSetupComment -Existing '' -Stamp $av1 | Should -Be $av1
+        Join-PcSetupComment -Existing "from the site | $kept" -Stamp $av1 | Should -Be "from the site | $av1"
+        # Reading back.
+        $r = ConvertFrom-PcSetupStamp "from the site | $av1"
+        $r.Kind | Should -Be 'av1'; $r.Crf | Should -Be 40; $r.Vmaf | Should -Be 96.1; $r.Target | Should -Be 95; $r.Date | Should -Be '2026-09-23'
+        $r = ConvertFrom-PcSetupStamp $kept
+        $r.Kind | Should -Be 'kept'; $r.Target | Should -Be 95; $r.Date | Should -Be '2026-09-23'
+        ConvertFrom-PcSetupStamp 'from the site' | Should -BeNullOrEmpty
+        ConvertFrom-PcSetupStamp '' | Should -BeNullOrEmpty
+        # Compress-Video consults the stamp before any probe, honours -Recheck, and writes both kinds.
+        $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Compress-Video' }, $true) | Select-Object -First 1
+        $fn.Extent.Text.IndexOf('ConvertFrom-PcSetupStamp') | Should -BeLessThan $fn.Extent.Text.IndexOf('Find-QualityCrf')
+        $fn.Extent.Text | Should -Match '\$Recheck'
+        $fn.Extent.Text | Should -Match "New-PcSetupStamp -Kind av1"
+        $fn.Extent.Text | Should -Match 'Set-VideoStamp'
+        $text = Get-Content $script:dvScript -Raw
+        $text | Should -Match '\[switch\]\$Recheck'
+        # The kept stamp is a stream copy, never a re-encode, and the file is verified before the swap.
+        $ks = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Set-VideoStamp' }, $true) | Select-Object -First 1
+        $ks | Should -Not -BeNullOrEmpty
+        $ks.Extent.Text | Should -Match "'-c', 'copy'"
+        $ks.Extent.Text | Should -Not -Match 'libsvtav1|av1_nvenc'
+        $ks.Extent.Text.IndexOf('Get-VideoSpec') | Should -BeLessThan $ks.Extent.Text.IndexOf('Move-Item')
+    }
+    It "ships a 'Compress all videos here' launcher that works from whatever folder it is copied into" {
+        $here = Join-Path $PSScriptRoot '..\optional\compress-here.bat'
+        Test-Path $here | Should -BeTrue
+        $bat = Get-Content $here -Raw
+        $bat | Should -Match 'net session >nul 2>&1'
+        $bat | Should -Match '%~dp0'                       # the folder it sits in - a .lnk cannot know that
+        $bat | Should -Match '__PCSETUP_OPTIONAL__'        # filled in by Ensure-Shortcuts for the copies
+        $bat | Should -Match 'compress-folder\.bat'
+        $bat | Should -Not -Match "`n[^`r]*`n"              # CRLF, or goto/labels stop working
+        # Run a copy from a folder with spaces and brackets, against a fake compress-folder.bat that
+        # records the argument it was given: it must be that folder, without a trailing backslash.
+        $root = Join-Path $env:TEMP ('pcsetup-here-' + [guid]::NewGuid().ToString('N'))
+        $tool = Join-Path $root 'tool'; $target = Join-Path $root 'My Clips [2026]'
+        New-Item -ItemType Directory -Force -Path $tool, $target | Out-Null
+        try {
+            [IO.File]::WriteAllText((Join-Path $tool 'compress-folder.bat'), ('@echo off' + "`r`n" + '>"%~dp0got.txt" echo %~1' + "`r`n"), [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText((Join-Path $target 'Compress all videos here.bat'), $bat.Replace('__PCSETUP_OPTIONAL__', $tool), [Text.Encoding]::ASCII)
+            $env:PCSETUP_GENERATE_ONLY = '1'
+            & cmd.exe /c "`"$(Join-Path $target 'Compress all videos here.bat')`"" | Out-Null
+            $got = Join-Path $tool 'got.txt'
+            Test-Path $got | Should -BeTrue -Because 'the launcher must call compress-folder.bat'
+            (Get-Content $got -Raw).Trim() | Should -Be $target
+        } finally {
+            Remove-Item Env:PCSETUP_GENERATE_ONLY -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Ensure-Shortcuts drops the filled-in copy into Videos and Downloads, next to an icon'd
+        # shortcut pinned to that folder (the only way a .lnk can get the icon AND the right folder).
+        $es = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Ensure-Shortcuts' }, $true) | Select-Object -First 1
+        $es.Extent.Text | Should -Match 'compress-here\.bat'
+        $es.Extent.Text | Should -Match 'Compress all videos here \(copy into any folder\)\.bat'
+        $es.Extent.Text | Should -Match '__PCSETUP_OPTIONAL__'
+        $es.Extent.Text | Should -Match 'Get-DownloadsFolder'
+        $es.Extent.Text | Should -Match 'Compress all videos here\.lnk'
+        $es.Extent.Text | Should -Match 'compress-video\.ico'
+        $es.Extent.Text | Should -Match '\$s\.WorkingDirectory = \$dir'
+        # Both icons ship with the repo as NATIVE multi-size .ico files: every entry below 256 px is
+        # a plain 32-bit DIB (Explorer often ignores PNG entries there and downscales the 256 one,
+        # which looked "scaled up"), only 256 is PNG, and the sizes Explorer asks for at 100/125/150 %
+        # (16, 20, 24, 32, 36, 40, 48, 60, 72, 96, 120, 144, 256) are all present.
+        foreach ($name in 'compress-video', 'download-video') {
+            $ico = Join-Path $PSScriptRoot "..\optional\$name.ico"
+            Test-Path $ico | Should -BeTrue -Because "$name.ico must ship"
+            $bytes = [IO.File]::ReadAllBytes($ico)
+            [BitConverter]::ToUInt16($bytes, 2) | Should -Be 1        # icon resource
+            $count = [BitConverter]::ToUInt16($bytes, 4)
+            $sizes = @{}
+            for ($i = 0; $i -lt $count; $i++) {
+                $e = 6 + 16 * $i
+                $w = $bytes[$e]; if ($w -eq 0) { $w = 256 }
+                $len = [BitConverter]::ToUInt32($bytes, $e + 8)
+                $off = [BitConverter]::ToUInt32($bytes, $e + 12)
+                ($off + $len) | Should -BeLessOrEqual $bytes.Length -Because "$name.ico: the $w px entry must lie inside the file (the first writer unrolled the byte arrays and wrote 70 KB files pointing past their end)"
+                $isPng = ($bytes[$off] -eq 0x89 -and $bytes[$off + 1] -eq 0x50)
+                $sizes[[int]$w] = $isPng
+                if ($w -lt 256) {
+                    $isPng | Should -BeFalse -Because "$name.ico: the $w px entry must be a DIB, not PNG"
+                    [BitConverter]::ToInt32($bytes, $off) | Should -Be 40 -Because "$name.ico: a DIB entry starts with a 40-byte BITMAPINFOHEADER"
+                    $len | Should -Be (40 + $w * $w * 4 + [int]([Math]::Ceiling($w / 32.0) * 4) * $w) -Because "$name.ico: 32-bit pixels plus the 1-bit AND mask, $w px"
+                } else { $isPng | Should -BeTrue -Because "$name.ico: the 256 px entry is the PNG one" }
+            }
+            foreach ($need in 16, 20, 24, 32, 36, 40, 48, 60, 72, 96, 120, 144, 256) { $sizes.ContainsKey($need) | Should -BeTrue -Because "$name.ico needs a native $need px entry" }
+        }
+        Test-Path (Join-Path $PSScriptRoot '..\sources\make-compress-video-icon.ps1') | Should -BeTrue
+        Test-Path (Join-Path $PSScriptRoot '..\sources\icon-writer.ps1') | Should -BeTrue
+    }
+    It "switches QuickEdit off in every visible window before any progress is drawn" {
+        # A click in the viewer used to freeze it in a text selection ("Select 27% Encoding ...")
+        # while the worker finished unseen. The function is the one from sources\status-line.ps1.
+        $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Disable-ConsoleQuickEdit' }, $true) | Select-Object -First 1
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match 'SetConsoleMode'
+        $fn.Extent.Text | Should -Match '0x40'
+        $text = Get-Content $script:dvScript -Raw
+        $text | Should -Match '\} else \{\s*\$null = Disable-ConsoleQuickEdit'
     }
     It "dispatches through Resolve-VideoLink and names X in the unsupported-link help" {
         $text = Get-Content $script:dvScript -Raw

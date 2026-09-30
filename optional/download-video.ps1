@@ -25,8 +25,12 @@
 #   -Url           use this link instead of the clipboard
 #   -MaxHeight     Twitch/YouTube/X resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
 #   -NoCompress    keep the download as the site serves it (skip the AV1 step)
-#   -Cpu           encode AV1 with SVT-AV1 on the CPU instead of the GPU: ~17% smaller files, about half the speed
+#   -Gpu           encode AV1 with NVENC on the GPU instead of SVT-AV1 on the CPU: ~2.5x faster, ~30% bigger files at the same quality
+#   -MinVmaf       the VMAF score (against the source) an encode must keep to replace the original; default 95 = no visible difference
+#   -Recheck       ignore the verdict stamped in a file's comment tag (see "stamps" below) and test it again
 #   -CompressFile  re-encode an existing video file to AV1 in place (any h264 .mp4, e.g. an earlier download) and stop
+#   -CompressFolder <dir>  re-encode every video directly inside a folder (largest first, one background job) and stop
+#   -CompressDownloads     the same for the Downloads folder (what compress-folder.bat does with no argument)
 #   -Ending        test aid: only the first part - Twitch "20s", YouTube seconds like "30" (re-encodes)
 #   -NoMessageBox  failures go to the console only (tests)
 #   -Inline        do the work in this window instead of a background job (tests; the old behaviour)
@@ -39,8 +43,12 @@ param(
     [string]$Url,
     [int]$MaxHeight = 0,
     [switch]$NoCompress,
-    [switch]$Cpu,
+    [switch]$Gpu,
+    [double]$MinVmaf = 95,
+    [switch]$Recheck,
     [string]$CompressFile,
+    [string]$CompressFolder,
+    [switch]$CompressDownloads,
     [string]$Ending,
     [switch]$NoMessageBox,
     [switch]$Inline,
@@ -52,8 +60,12 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     $fwd = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -MaxHeight $MaxHeight"
     if ($Url)          { $fwd += " -Url `"$Url`"" }
     if ($NoCompress)   { $fwd += " -NoCompress" }
-    if ($Cpu)          { $fwd += " -Cpu" }
+    if ($Gpu)          { $fwd += " -Gpu" }
+    if ($Recheck)      { $fwd += " -Recheck" }
+    if ($PSBoundParameters.ContainsKey('MinVmaf')) { $fwd += " -MinVmaf $MinVmaf" }
     if ($CompressFile) { $fwd += " -CompressFile `"$CompressFile`"" }
+    if ($CompressFolder)    { $fwd += " -CompressFolder `"$CompressFolder`"" }
+    if ($CompressDownloads) { $fwd += " -CompressDownloads" }
     if ($Ending)       { $fwd += " -Ending `"$Ending`"" }
     if ($NoMessageBox) { $fwd += " -NoMessageBox" }
     if ($Inline)       { $fwd += " -Inline" }
@@ -80,6 +92,34 @@ function Get-CancelHint { if ($Worker) { 'Press X in this window to cancel' } el
 function Write-Ok([string]$Text)   { Out-Line 'K' "   $Text" Green }
 function Write-Info([string]$Text) { Out-Line 'I' "   $Text" Gray }
 function Write-Warn([string]$Text) { Out-Line 'W' "   $Text" Yellow }
+
+# QuickEdit off for this window. With it on (the conhost default) one click inside the window
+# starts a text selection and conhost blocks every write until Esc/Enter: the title reads
+# "Select 27% Encoding - Download Video" and the viewer looks stuck while the worker carries on
+# and finishes - which is exactly how the first Downloads batch was reported as "stuck" nine
+# hours after it had completed. Same code as Disable-ConsoleQuickEdit in sources\status-line.ps1
+# (not dot-sourced here: this script carries its own progress code). Nothing is persisted and
+# other windows keep their setting; a redirected stdin (tests) just returns $false.
+function Disable-ConsoleQuickEdit {
+    if (-not ('PCSetup.ConsoleMode' -as [type])) {
+        Add-Type -Namespace PCSetup -Name ConsoleMode -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@
+    }
+    try {
+        $h = [PCSetup.ConsoleMode]::GetStdHandle(-10)
+        $mode = [uint32]0
+        if (-not [PCSetup.ConsoleMode]::GetConsoleMode($h, [ref]$mode)) { return $false }
+        $wanted = ($mode -band (-bnot [uint32]0x40)) -bor [uint32]0x80
+        if (-not [PCSetup.ConsoleMode]::SetConsoleMode($h, $wanted)) { return $false }
+        $check = [uint32]0
+        if (-not [PCSetup.ConsoleMode]::GetConsoleMode($h, [ref]$check)) { return $false }
+        return (($check -band 0x40) -eq 0)
+    }
+    catch { return $false }
+}
 
 function Fail([string]$Message) {
     Write-Host ''
@@ -137,6 +177,14 @@ function Resolve-VideoLink([string]$Url) {
     return $null
 }
 
+# The Downloads folder, from the User Shell Folders key (it is relocated on this PC), else the default.
+function Get-DownloadsFolder {
+    $dir = $null
+    try { $dir = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}' } catch {}
+    if ($dir) { return [Environment]::ExpandEnvironmentVariables($dir) }
+    return (Join-Path $env:USERPROFILE 'Downloads')
+}
+
 # ---------------------------------------------------------------------------- login sources
 # Cookie sets to try, best first, for a site that hides posts behind a login: the adopted export
 # file, then Firefox's own cookies, then none. Chrome and Edge cookies cannot be read by any tool
@@ -145,9 +193,7 @@ function Resolve-VideoLink([string]$Url) {
 # Its file lands in Downloads as "<host>_cookies.txt"; the newest one matching $ExportFilters that
 # really holds a cookie for $DomainPattern is copied to $CookieFile when it is newer than the copy.
 function Get-LoginSources([string]$CookieFile, [string[]]$ExportFilters, [string]$DomainPattern) {
-    $downloadsDir = $null
-    try { $downloadsDir = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}' } catch {}
-    if ($downloadsDir) { $downloadsDir = [Environment]::ExpandEnvironmentVariables($downloadsDir) } else { $downloadsDir = Join-Path $env:USERPROFILE 'Downloads' }
+    $downloadsDir = Get-DownloadsFolder
     $candidates = @()
     foreach ($filter in $ExportFilters) { $candidates += @(Get-ChildItem -LiteralPath $downloadsDir -Filter $filter -File -ErrorAction SilentlyContinue) }
     $exported = $candidates | Sort-Object LastWriteTime -Descending | Where-Object {
@@ -251,7 +297,17 @@ function New-StatusPair {
     return $pair
 }
 
-function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0, [string]$StartLabel = 'Starting') {
+# A status pair for a console, or $null where there is none (worker, redirected output): what a
+# caller hands to several Invoke-Streaming calls as -Pair so they share the same two lines instead
+# of each leaving its own behind - the crf search runs dozens of short ffmpeg passes per file.
+function New-StatusPairIfConsole {
+    if ($Worker) { return $null }
+    $redirected = try { [Console]::IsOutputRedirected } catch { $true }
+    if ($redirected) { return $null }
+    return New-StatusPair
+}
+
+function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string]$FfmpegLabel = 'Re-encoding', [double]$TotalSeconds = 0, [string]$StartLabel = 'Starting', $Pair = $null) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     # Three output modes: a real console owns the two status lines; the background worker writes
@@ -263,7 +319,7 @@ function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string
     $spinner    = '|/-\'
     $clock      = [Diagnostics.Stopwatch]::StartNew()
     $title      = try { $Host.UI.RawUI.WindowTitle } catch { '' }
-    $pair       = if ($mode -eq 'console') { New-StatusPair } else { $null }
+    $pair       = if ($Pair) { $Pair } elseif ($mode -eq 'console') { New-StatusPair } else { $null }
     $st = @{ LastPct = -1; LastLabel = ''; Spin = 0; Stage = ''; StageStart = 0.0; Bar = ''; Raw = ''; Title = ''; StatusAt = -1.0 }
 
     $show = {
@@ -370,7 +426,7 @@ function Invoke-Streaming([scriptblock]$Command, [string]$Tool = 'tool', [string
             if ($rest.Trim()) { & $clearPair; Write-Host $rest.Trim() }
         }
         $code = $LASTEXITCODE
-        if ($mode -eq 'console') { & $pair.End }
+        if ($mode -eq 'console' -and -not $Pair) { & $pair.End }    # a shared pair is ended by its owner
         if ($mode -eq 'worker') { Write-JobStatus $st.Bar $st.Raw $st.Title 'end' }    # final pair, unthrottled; the viewer keeps it and moves below
         return $code
     }
@@ -489,7 +545,8 @@ function Finish([string]$Path, [string]$Summary) {
     Out-Line 'D' "DONE  $(Split-Path $Path -Leaf)" Green
     if ($Summary) { Out-Line 'D' "      $Summary" Green }
     Out-Line 'D' "      $Path" Green
-    Start-Process explorer.exe -ArgumentList "/select,`"$Path`""
+    if (Test-Path -LiteralPath $Path -PathType Container) { Start-Process explorer.exe -ArgumentList "`"$Path`"" }
+    else { Start-Process explorer.exe -ArgumentList "/select,`"$Path`"" }
     if ($Worker) { exit 0 }    # the viewer does the countdown
     for ($s = 8; $s -gt 0; $s--) {
         Write-Host -NoNewline "`r      Closing in $s s... "
@@ -595,117 +652,526 @@ function Ensure-Shortcuts {
             $s.Save()
             if (Test-Path -LiteralPath $t.Path) { Write-Ok "Recreated shortcut in $($t.Where): $($t.Path)" } else { Write-Warn "Could not create shortcut: $($t.Path)" }
         }
+        # "Compress all videos here": in Videos and in Downloads, a shortcut with the compress icon
+        # whose "Start in" is pinned to that folder (a .lnk cannot know its own folder - with a
+        # blank "Start in" it runs in its TARGET's folder, tested through Explorer), plus a copy of
+        # compress-here.bat with the path to this folder filled in, to be copied into any other
+        # folder (a .bat knows its folder from %~dp0, but Windows gives it no icon of its own).
+        $folderBat = Join-Path $PSScriptRoot 'compress-folder.bat'
+        $template  = Join-Path $PSScriptRoot 'compress-here.bat'
+        $compIcon  = Join-Path $PSScriptRoot 'compress-video.ico'
+        $text = if (Test-Path -LiteralPath $template) { [IO.File]::ReadAllText($template).Replace('__PCSETUP_OPTIONAL__', $PSScriptRoot) } else { $null }
+        foreach ($dir in @($videos, (Get-DownloadsFolder))) {
+            if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+            $lnk = Join-Path $dir 'Compress all videos here.lnk'
+            if ((Test-Path -LiteralPath $folderBat) -and -not (Test-Path -LiteralPath $lnk)) {
+                $s = $ws.CreateShortcut($lnk)
+                $s.TargetPath = $cmdExe
+                $s.Arguments = "/c `"`"$folderBat`" `"$($dir.TrimEnd('\'))`"`""
+                $s.WorkingDirectory = $dir
+                $s.Description = "Compresses every video in $dir to AV1 at the smallest size that still looks the same (VMAF 95+)"
+                $s.IconLocation = if (Test-Path -LiteralPath $compIcon) { "$compIcon,0" } else { '%SystemRoot%\System32\imageres.dll,165' }
+                $s.Save()
+                if (Test-Path -LiteralPath $lnk) { Write-Ok "Created shortcut: $lnk" } else { Write-Warn "Could not create shortcut: $lnk" }
+            }
+            if ($text) {
+                $p = Join-Path $dir 'Compress all videos here (copy into any folder).bat'
+                $stale = Join-Path $dir 'Compress all videos here.bat'
+                if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue }
+                $current = if (Test-Path -LiteralPath $p) { [IO.File]::ReadAllText($p) } else { $null }
+                if ($current -eq $text) { continue }
+                [IO.File]::WriteAllText($p, $text, [Text.Encoding]::ASCII)
+                Write-Ok "$(if ($current) { 'Updated' } else { 'Created' }) launcher: $p"
+            }
+        }
     } catch { Write-Warn "Shortcut check skipped: $($_.Exception.Message)" }
 }
 
 # ============================================================================ AV1 compression
-# Twitch serves h264 at ~6 Mbit/s for 1080p60, which is generous: AV1 at the settings below keeps
-# VMAF above 96 (95+ is "no visible difference") at about half the size. Measured on 60 s of a
-# 1080p60 VOD (46 MB) with ffmpeg 9.0.1, Ryzen 9 9950X3D, RTX 5080, driver 616.92:
-#   NVENC p7 hq cq36 + spatial/temporal AQ + lookahead 32     58%   ~225 fps   VMAF 96.7   <- default (GPU, PC stays usable)
-#   SVT-AV1 preset 6 crf 35, 10-bit, tune=0                   48%   ~116 fps   VMAF 96.7   <- -Cpu (smallest, all cores busy)
-#   NVENC p7 hq cq36 without AQ                                55%   ~257 fps   VMAF 96.4
-#   NVENC p7 uhq cq36                                          65%   ~105 fps   VMAF 97.1   (slower than SVT-AV1 and bigger)
-#   SVT-AV1 preset 8 crf 35                                    52%   ~164 fps   VMAF 96.5
-# A 6 h 20 m VOD (15.6 GB) therefore takes ~1.7 h on the GPU or ~3.3 h on the CPU. Not lossless:
-# it is a second lossy generation, chosen so the loss is below what VMAF considers visible.
-# av1_nvenc needs an RTX 40/50 card and a driver at least as new as the nvenc API ffmpeg was
-# built against (596.21 failed with ffmpeg 9.0.1, 616.92 works); anything else falls back to the
-# CPU. Windows plays AV1 .mp4 in the stock player once the free "AV1 Video Extension" is installed.
-# Every site handler runs this on what it downloaded - and on an earlier download it finds already
-# there, so re-running a link on an old h264 file shrinks it. An AV1 download is left as it is.
-$script:Av1NvencArgs = @('-c:v', 'av1_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '36', '-b:v', '0',
-                         '-multipass', 'fullres', '-spatial-aq', '1', '-temporal-aq', '1', '-rc-lookahead', '32', '-pix_fmt', 'p010le')
-$script:Av1SvtArgs   = @('-c:v', 'libsvtav1', '-preset', '6', '-crf', '35', '-pix_fmt', 'yuv420p10le', '-svtav1-params', 'tune=0')
+# Every download, and every file given to -CompressFile / -CompressFolder, is re-encoded to 10-bit
+# AV1 at the smallest size that still measures VMAF >= -MinVmaf (95) against the source - "no
+# visible difference" - and only replaces the original when it is smaller AND that check passes on
+# the finished file. Not lossless: it is a second lossy generation, kept below what VMAF considers
+# visible. Say so if asked.
+#
+# Why a per-file quality search instead of one fixed crf: a Twitch VOD is generous (h264 at
+# ~6 Mbit/s) and a fixed crf 35 halves it above VMAF 96, but a clip saved from X or Instagram has
+# already been squeezed by the site, and the same crf then comes out BIGGER than the source at a
+# LOWER score. Measured on 30 s of three such clips (2026-09-22, ffmpeg 9.0.1 / SVT-AV1 4.2.0,
+# Ryzen 9 9950X3D + RTX 5080, driver 616.92, VMAF vmaf_v0.6.1 against the h264 source):
+#   1922x962 30 fps, 2.4 Mbit/s h264:   NVENC p7 hq cq36  102%  VMAF 94.5    SVT-AV1 p4 crf35   50%  VMAF 91.3
+#   1280x720 30 fps, 0.9 Mbit/s h264:   NVENC p7 hq cq36  105%  VMAF 92.8    SVT-AV1 p4 crf35   52%  VMAF 89.5
+#    608x1080 60 fps, 1.0 Mbit/s h264:  NVENC p7 hq cq36  137%  VMAF 92.1    SVT-AV1 p4 crf35   75%  VMAF 89.3
+# That is why the first Downloads batch kept 79 of 100 files: the fixed cq was both too big and,
+# unnoticed, below the 95 the step promised. So the crf is now found per file: 15 s windows spread
+# over the file are encoded and scored at a few crf values (Find-QualityCrf: bisection, ~5-6
+# probes), the highest crf that still meets the target on those samples encodes the whole file,
+# and the finished file is scored again on DIFFERENT windows before it replaces the original.
+# A file that cannot get smaller without dropping below the target is kept, and the search says
+# so before any full encode is spent on it.
+#
+# Encoder: SVT-AV1 preset 4 on the CPU by default, NVENC AV1 on the GPU with -Gpu. At the same
+# VMAF, SVT-AV1 preset 4 is ~30% smaller than NVENC (clip 1 above: NVENC cq40 = 70% at 91.7,
+# SVT-AV1 crf35 = 50% at 91.3), preset 4 is ~1% smaller than preset 6 at the same score for ~20%
+# more time, and preset 2 gains nothing more at a third of the speed. NVENC's -tune uhq,
+# lookahead level 3 and temporal filtering made no difference on AV1 here (identical bytes).
+# Speed on this machine: SVT-AV1 preset 4 ~80 fps at 1080p, ~140 at 720p; NVENC ~215 / ~375 fps.
+# The worker runs at below-normal priority, so all cores busy still leaves the PC usable; -Gpu is
+# for when the hours matter more than the bytes (a 6 h VOD: ~5 h on the CPU, ~1.7 h on the GPU).
+# av1_nvenc needs an RTX 40/50 card and a driver at least as new as the nvenc API ffmpeg was built
+# against (596.21 failed with ffmpeg 9.0.1, 616.92 works). Windows plays AV1 .mp4 in the stock
+# player once the free "AV1 Video Extension" is installed. An AV1 source is left alone: a third
+# generation is never "without losing quality".
+$script:Av1SvtPreset = '4'
+function Get-Av1EncoderArgs([bool]$UseGpu, [int]$Crf) {
+    if ($UseGpu) {
+        return @('-c:v', 'av1_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', "$Crf", '-b:v', '0',
+                 '-multipass', 'fullres', '-spatial-aq', '1', '-temporal-aq', '1', '-rc-lookahead', '32', '-pix_fmt', 'p010le')
+    }
+    return @('-c:v', 'libsvtav1', '-preset', $script:Av1SvtPreset, '-crf', "$Crf", '-pix_fmt', 'yuv420p10le', '-svtav1-params', 'tune=0')
+}
 
 # 10 synthetic frames through the GPU encoder (about a second). Fails on machines without an
 # NVIDIA card or with a driver too old for this ffmpeg build.
 function Test-Av1Nvenc([string]$Ffmpeg) {
-    $null = Get-NativeOutput { & $Ffmpeg -hide_banner -loglevel error -nostdin -f lavfi -i 'color=size=256x256:rate=30' -frames:v 10 @script:Av1NvencArgs -f null - }
+    $encArgs = Get-Av1EncoderArgs $true 36
+    $null = Get-NativeOutput { & $Ffmpeg -hide_banner -loglevel error -nostdin -f lavfi -i 'color=size=256x256:rate=30' -frames:v 10 @encArgs -f null - }
     return ($LASTEXITCODE -eq 0)
 }
 
+# Bytes that must be free on the drive before a file of $Bytes is encoded: the encode sits next to
+# the original until it is verified, and AV1 output is at most ~80% of the source or it is refused.
+function Get-EncodeHeadroom([long]$Bytes) { return [long]($Bytes * 0.8) }
+
+# Where the AV1 encode of $Path ends up: the same name for an .mp4, otherwise the .mp4 next to it
+# (the encode is always an mp4 container, so a .mov/.mkv/.webm source cannot keep its extension).
+function Get-Av1TargetPath([string]$Path) {
+    if ([IO.Path]::GetExtension($Path) -ieq '.mp4') { return $Path }
+    return [IO.Path]::ChangeExtension($Path, '.mp4')
+}
+
+# The videos directly inside $Dir that the folder mode will offer to Compress-Video, largest first:
+# containers ffmpeg reads and remuxes to mp4 with the audio copied. Encode leftovers (.av1-tmp,
+# .h264-old) are not videos to compress, and subfolders are deliberately not searched.
+function Get-CompressCandidates([string]$Dir) {
+    $exts = @('.mp4', '.m4v', '.mov', '.mkv', '.webm')
+    return @(Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue |
+             Where-Object { $exts -contains $_.Extension.ToLowerInvariant() } |
+             Sort-Object Length -Descending)
+}
+
+# ---------------------------------------------------------------------------- quality search
+# The windows of a file that the crf search encodes and scores: one of $SampleSeconds per 30 s
+# of file, two at least and six at most, one per equal part of the file - so a short clip is
+# sampled densely (a 2.5-minute one: five windows, half of it) and a 6-hour VOD still costs 90 s
+# of encoding per probe, not hours. -Verify gives a second set that sits BETWEEN the search
+# windows of the same file, so the check on the finished encode looks at footage the crf was not
+# tuned on. A file no longer than two windows is measured whole, both times - and so is any file
+# up to $WholeFileMax (30 min) when verifying: the check seeks the source AND the encode to the
+# same second, and on a clip with a start offset and jittery timestamps (an X post: start 0.083,
+# pts 0.083, 0.211, 0.128, 0.086...) the two seeks land on different frames - the finished encode
+# "scored" 37.9 while the same crf's search samples, cut from one file, scored 96.0. Scoring the
+# whole file from frame 0 needs no seek at all and is the definitive number anyway; only a VOD
+# too long for that keeps the windowed check, and a VOD is constant-rate footage that seeks true.
+function Get-SampleWindows([double]$Seconds, [int]$SampleSeconds = 15, [int]$MaxSamples = 6, [switch]$Verify, [int]$WholeFileMax = 1800) {
+    if ($Seconds -le 2 * $SampleSeconds -or ($Verify -and $Seconds -le $WholeFileMax)) { return @([pscustomobject]@{ Start = 0.0; Length = [double]$Seconds }) }
+    $count = [int][Math]::Max(2, [Math]::Min($MaxSamples, [Math]::Floor($Seconds / 30)))
+    $part  = $Seconds / $count
+    $slack = [Math]::Max(0.0, $part - 2 * $SampleSeconds)
+    $out = @()
+    for ($i = 0; $i -lt $count; $i++) {
+        $start = if ($Verify) { $i * $part + $SampleSeconds + $slack * 0.75 } else { $i * $part + $slack * 0.25 }
+        $start = [Math]::Max(0.0, [Math]::Min($start, $Seconds - $SampleSeconds))
+        $out += [pscustomobject]@{ Start = [Math]::Round($start, 1); Length = [double]$SampleSeconds }
+    }
+    return @($out)
+}
+
+# The highest crf (= smallest file) whose sample encode still scores at least $TargetVmaf, found
+# by walking out from $StartCrf in steps of $Step until a passing and a failing crf bracket the
+# answer and then bisecting - five or six probes instead of a ladder. $Measure is a scriptblock
+# taking a crf and returning @{ Vmaf; Ratio } (Ratio = encoded video bytes / source video bytes
+# over the samples). Two ways to come back empty, each with a Reason: even $MinCrf misses the
+# target, or a FAILING crf already comes out at $MaxRatio of the source or more - every lower crf
+# is bigger still, so the file cannot get smaller without visible loss and the search stops at
+# that first probe rather than encoding its way down to the floor.
+function Find-QualityCrf([scriptblock]$Measure, [double]$TargetVmaf, [int]$StartCrf = 35, [int]$MinCrf = 20, [int]$MaxCrf = 55, [double]$MaxRatio = 1.0, [int]$Step = 6) {
+    $seen = @{}
+    $probe = { param([int]$c) if (-not $seen.ContainsKey($c)) { $seen[$c] = & $Measure $c }; return $seen[$c] }
+    $pass = $null; $fail = $null
+    $crf = [Math]::Max($MinCrf, [Math]::Min($MaxCrf, $StartCrf))
+    while ($true) {
+        $m = & $probe $crf
+        if ($m.Vmaf -ge $TargetVmaf) {
+            $pass = $crf
+            if ($crf -ge $MaxCrf -or $null -ne $fail) { break }
+            $crf = [Math]::Min($MaxCrf, $crf + $Step)
+        } else {
+            $fail = $crf
+            if ($m.Ratio -ge $MaxRatio) {
+                return [pscustomobject]@{ Crf = $null; Vmaf = $m.Vmaf; Ratio = $m.Ratio; Probes = $seen.Count
+                    Reason = ('crf {0} is already not smaller ({1:0}% of the source) and only reaches VMAF {2:0.00} of the {3:0.0} the samples must show - every lower crf is bigger still' -f $crf, (100 * $m.Ratio), $m.Vmaf, $TargetVmaf) }
+            }
+            if ($crf -le $MinCrf -or $null -ne $pass) { break }
+            $crf = [Math]::Max($MinCrf, $crf - $Step)
+        }
+    }
+    if ($null -eq $pass) {
+        $m = $seen[$MinCrf]
+        return [pscustomobject]@{ Crf = $null; Vmaf = $m.Vmaf; Ratio = $m.Ratio; Probes = $seen.Count
+            Reason = ('even crf {0} only reaches VMAF {1:0.0} (target {2:0.0})' -f $MinCrf, $m.Vmaf, $TargetVmaf) }
+    }
+    if ($null -ne $fail) {
+        while ($fail - $pass -gt 1) {
+            $mid = [int][Math]::Floor(($pass + $fail) / 2)
+            $m = & $probe $mid
+            if ($m.Vmaf -ge $TargetVmaf) { $pass = $mid } else { $fail = $mid }
+        }
+    }
+    $best = $seen[$pass]
+    return [pscustomobject]@{ Crf = $pass; Vmaf = $best.Vmaf; Ratio = $best.Ratio; Probes = $seen.Count; Reason = $null }
+}
+
+# The size the whole file should come out at when its video shrinks by $VideoRatio: the audio is
+# copied, so it is taken out before scaling and put back unchanged.
+function Get-PredictedBytes([long]$SourceBytes, [double]$Seconds, [double]$AudioBitsPerSecond, [double]$VideoRatio) {
+    $audio = [long]($AudioBitsPerSecond * $Seconds / 8)
+    $video = [Math]::Max([long]0, $SourceBytes - $audio)
+    return [long]($video * $VideoRatio + $audio)
+}
+
+# ---------------------------------------------------------------------------- stamps
+# The verdict on a file lives in the file itself, in the standard "comment" tag (Explorer shows
+# it under Properties > Details), so a re-run of a folder needs no cache and no side files:
+#   PCSetup: AV1 crf 41, VMAF 96.1 at target 95, SVT-AV1 preset 4, 2026-09-23     <- an encode of ours
+#   PCSetup: kept, cannot get smaller at VMAF 95 (crf 29 = 116% at 93.7), 2026-09-23  <- checked, refused
+# A site's own comment is kept in front of the stamp ("<theirs> | PCSetup: ..."), a newer stamp
+# replaces an older one, and -Recheck ignores them. The kept stamp is written by a stream copy of
+# the container (Set-VideoStamp: nothing is re-encoded, and the copy is verified before it
+# replaces the file, with the file's dates put back so the folder looks untouched); a stamped
+# "kept" file is skipped as long as its target is at least the current -MinVmaf, so lowering the
+# bar tests it again.
+function New-PcSetupStamp([string]$Kind, [int]$Crf = 0, [double]$Vmaf = 0, [double]$Target = 0, [string]$Encoder = '', [string]$Reason = '', [string]$Date = '') {
+    if (-not $Date) { $Date = Get-Date -Format 'yyyy-MM-dd' }
+    if ($Kind -eq 'av1') { return ('PCSetup: AV1 crf {0}, VMAF {1:0.0} at target {2:0.#}, {3}, {4}' -f $Crf, $Vmaf, $Target, $Encoder, $Date) }
+    return ('PCSetup: kept, cannot get smaller at VMAF {0:0.#} ({1}), {2}' -f $Target, $Reason, $Date)
+}
+
+function ConvertFrom-PcSetupStamp([string]$Comment) {
+    if (-not $Comment) { return $null }
+    if ($Comment -match 'PCSetup: AV1 crf (\d+), VMAF ([\d.]+) at target ([\d.]+), (.+?), (\d{4}-\d{2}-\d{2})') {
+        return [pscustomobject]@{ Kind = 'av1'; Crf = [int]$Matches[1]; Vmaf = [double]$Matches[2]; Target = [double]$Matches[3]; Encoder = $Matches[4]; Date = $Matches[5] }
+    }
+    if ($Comment -match 'PCSetup: kept, cannot get smaller at VMAF ([\d.]+) \((.*?)\), (\d{4}-\d{2}-\d{2})') {
+        return [pscustomobject]@{ Kind = 'kept'; Target = [double]$Matches[1]; Reason = $Matches[2]; Date = $Matches[3] }
+    }
+    return $null
+}
+
+function Join-PcSetupComment([string]$Existing, [string]$Stamp) {
+    $rest = if ($Existing) { ($Existing -replace '\s*\|?\s*PCSetup: .*$', '').Trim() } else { '' }
+    if ($rest) { return "$rest | $Stamp" }
+    return $Stamp
+}
+
+# The container's comment tag, or '' (multi-line comments come back joined).
+function Get-VideoComment([string]$Path, [string]$Ffprobe) {
+    $lines = @(Get-NativeOutput { & $Ffprobe -v error -show_entries format_tags=comment -of default=nw=1:nk=1 $Path })
+    return (($lines | Where-Object { $null -ne $_ }) -join "`n").Trim()
+}
+
+# Writes $Stamp into $Path's comment tag in place through a stream copy (-c copy, so nothing is
+# re-encoded), verifies the copy (same codec, tag, length within half a second, size within 2 %,
+# stamp readable) and only then swaps it in, putting the file's dates back. $Format is the ffmpeg
+# muxer for the copy (mp4 / mov). Returns $true when the file now carries the stamp.
+function Set-VideoStamp([string]$Path, [string]$Format, [string]$Ffmpeg, [string]$Ffprobe, $Before, [string]$Existing, [string]$Stamp) {
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $item -or -not $Format -or -not $Before) { return $false }
+    $tmp = "$Path.stamp-tmp"
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    $comment = Join-PcSetupComment -Existing $Existing -Stamp $Stamp
+    $ffArgs = @('-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', $Path, '-map', '0', '-c', 'copy', '-metadata', "comment=$comment", '-f', $Format, $tmp)
+    $null = Get-NativeOutput { & $Ffmpeg @ffArgs }
+    $ok = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $tmp)
+    if ($ok) {
+        $after = Get-VideoSpec $tmp $Ffprobe
+        $size  = (Get-Item -LiteralPath $tmp).Length
+        $ok = $after -and $after.Codec -eq $Before.Codec -and $after.Tag -eq $Before.Tag -and
+              [Math]::Abs($after.Seconds - $Before.Seconds) -le 0.5 -and
+              $size -ge $item.Length * 0.98 -and $size -le $item.Length * 1.02 -and
+              $null -ne (ConvertFrom-PcSetupStamp (Get-VideoComment $tmp $Ffprobe))
+    }
+    if (-not $ok) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    $old = "$Path.pre-stamp"
+    try {
+        Move-Item -LiteralPath $Path -Destination $old -Force -ErrorAction Stop
+        Move-Item -LiteralPath $tmp -Destination $Path -ErrorAction Stop
+        Remove-Item -LiteralPath $old -Force -ErrorAction Stop
+    } catch {
+        if (-not (Test-Path -LiteralPath $Path) -and (Test-Path -LiteralPath $old)) { Move-Item -LiteralPath $old -Destination $Path -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    try { $new = Get-Item -LiteralPath $Path; $new.CreationTime = $item.CreationTime; $new.LastWriteTime = $item.LastWriteTime } catch {}
+    return $true
+}
+
+# The muxer Set-VideoStamp uses for a file, from its extension; $null for containers it leaves alone.
+function Get-StampFormat([string]$Path) {
+    switch ([IO.Path]::GetExtension($Path).ToLowerInvariant()) { '.mp4' { return 'mp4' } '.m4v' { return 'mp4' } '.mov' { return 'mov' } }
+    return $null
+}
+
+function Get-AudioBitsPerSecond([string]$Path, [string]$Ffprobe) {
+    $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate -of csv=p=0 $Path }
+    foreach ($l in $lines) { if ($l -match '^\s*(\d+)\s*$') { return [double]$Matches[1] } }
+    return 0.0
+}
+
+# Mean VMAF of $Length seconds of $Distorted (from $DistortedStart) against the same stretch of
+# $Reference (from $ReferenceStart), through libvmaf with its JSON log, or $null when ffmpeg
+# fails. Both sides are decoded to 10-bit 4:2:0 first so an 8-bit h264 source and a 10-bit AV1
+# encode compare on equal terms, and both get fresh, evenly spaced timestamps (settb + setpts=N)
+# so libvmaf pairs the frames BY ORDER: it syncs its two inputs by timestamp, and on a
+# variable-frame-rate clip (an X post at "60 fps" averaging 43) the same encode scored 73.5 paired
+# by time and 93.0 paired by order - every VFR file was being refused on a bogus score. $Fps only
+# shapes those timestamps so ffmpeg's time= progress still reads as a percentage of $Length.
+function Measure-Vmaf([string]$Ffmpeg, [string]$Reference, [double]$ReferenceStart, [string]$Distorted, [double]$DistortedStart, [double]$Length, [string]$Label, $Pair, [double]$Fps = 30) {
+    $fpsArg = '{0:0.###}' -f [Math]::Max(1.0, $Fps)
+    # The log is a bare file name and ffmpeg runs from its folder: a full Windows path cannot be
+    # given to a filter option, because the drive colon is the option separator and neither "\:"
+    # nor "\\:" survives the two rounds of filtergraph parsing (tried, "No option name near").
+    $logName = 'pcsetup-vmaf-' + [guid]::NewGuid().ToString('N') + '.json'
+    $log     = Join-Path $env:TEMP $logName
+    $threads = [Math]::Max(2, [Environment]::ProcessorCount)
+    $graph = "[0:v]settb=AVTB,setpts=N/$fpsArg/TB,format=yuv420p10le[r];[1:v]settb=AVTB,setpts=N/$fpsArg/TB,format=yuv420p10le[d];[d][r]libvmaf=n_threads=${threads}:log_fmt=json:log_path=$logName"
+    $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y',
+                '-ss', ('{0:0.###}' -f $ReferenceStart), '-t', ('{0:0.###}' -f $Length), '-i', $Reference,
+                '-ss', ('{0:0.###}' -f $DistortedStart), '-t', ('{0:0.###}' -f $Length), '-i', $Distorted,
+                '-lavfi', $graph, '-f', 'null', '-')
+    Push-Location -LiteralPath $env:TEMP
+    try {
+        $exit = Invoke-Streaming -Tool 'vmaf' -FfmpegLabel $Label -TotalSeconds $Length -Pair $Pair { & $Ffmpeg @ffArgs }
+        if ($exit -ne 0 -or -not (Test-Path -LiteralPath $log)) { return $null }
+        $json = Get-Content -LiteralPath $log -Raw | ConvertFrom-Json
+        $mean = $json.pooled_metrics.vmaf.mean
+        if ($null -eq $mean) { return $null }
+        return [double]$mean
+    } catch { return $null }
+    finally {
+        Pop-Location
+        Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Re-encodes $Path to AV1 in place and returns a one-line summary, or $null when nothing changed.
-# Check -> act -> verify -> swap: the encode goes to "<file>.av1-tmp" next to the original (not
-# .mp4, so a crash leaves nothing the version scan could mistake for a download), is probed for
-# codec, resolution, frame rate, length and size, and only then replaces the original - via a
-# rename of the original first, so there is never a moment with no good file. Every failure is a
-# warning that keeps the h264 file: the download itself succeeded and must not be reported as failed.
+# Check -> search -> act -> verify -> swap: the crf is found on sample windows (above), the encode
+# goes to "<file>.av1-tmp" next to the original (not .mp4, so a crash leaves nothing the version
+# scan could mistake for a download), is probed for codec, resolution, frame rate, length and
+# size, scored with VMAF on windows the search did not use, and only then replaces the original -
+# via a rename of the original first, so there is never a moment with no good file. Every failure
+# is a warning that keeps the source file: the download itself succeeded and must not be reported
+# as failed.
 function Compress-Video([string]$Path, [string]$Ffmpeg) {
     Write-Step 'Compressing to AV1'
-    if ($NoCompress) { Write-Info 'Skipped (-NoCompress): keeping the h264 file.'; return $null }
+    if ($NoCompress) { Write-Info 'Skipped (-NoCompress): keeping the file as it was downloaded.'; return $null }
     $ffprobe = Get-FfprobePath $Ffmpeg
     if (-not $ffprobe) { Write-Warn 'ffprobe not found - cannot verify an encode, keeping the file as it is.'; return $null }
     $before = Get-VideoSpec $Path $ffprobe
     if (-not $before) { Write-Warn 'ffprobe cannot read the file - keeping it as it is.'; return $null }
+    $target  = [double]$MinVmaf
+    $comment = Get-VideoComment $Path $ffprobe
+    $stamp   = ConvertFrom-PcSetupStamp $comment
+    if ($stamp -and -not $Recheck) {
+        if ($stamp.Kind -eq 'av1') { Write-Ok "Already compressed by this script on $($stamp.Date): crf $($stamp.Crf), VMAF $($stamp.Vmaf) - nothing to do."; return 'already compressed, nothing to do' }
+        if ($stamp.Kind -eq 'kept' -and $stamp.Target -le $target) { Write-Ok "Checked on $($stamp.Date): cannot get smaller at VMAF $($stamp.Target) ($($stamp.Reason)) - skipping. Run with -Recheck to test it again."; return 'already checked, kept' }
+    }
     if ($before.Codec -eq 'av1') { Write-Ok 'Already AV1 - nothing to do.'; return 'already AV1, nothing to do' }
+    $final = Get-Av1TargetPath $Path
+    if ($final -ne $Path -and (Test-Path -LiteralPath $final)) { Write-Warn "Not compressing: $(Split-Path $final -Leaf) already exists next to it - keeping both as they are."; return $null }
     $oldBytes = (Get-Item -LiteralPath $Path).Length
     $oldMb    = [Math]::Round($oldBytes / 1MB)
-    Write-Ok "Source  : $($before.Codec) $($before.Tag), $(Format-Duration ([int]$before.Seconds)), $oldMb MB"
+    $srcCodec = $before.Codec
+    Write-Ok "Source  : $srcCodec $($before.Tag), $(Format-Duration ([int]$before.Seconds)), $oldMb MB"
+    if ($before.Seconds -le 0) { Write-Warn 'ffprobe reports no length for the file - keeping it as it is.'; return $null }
 
     # The encode sits next to the original until it is verified, so the drive needs room for both.
     $root   = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $Path).ProviderPath)
     $free   = (New-Object IO.DriveInfo $root).AvailableFreeSpace
-    $needMb = [Math]::Round($oldBytes * 0.8 / 1MB)
-    if ($free -lt $oldBytes * 0.8) {
-        Write-Warn "Not enough free space on $root to compress: the encode needs up to ~$needMb MB next to the original, $([Math]::Round($free / 1MB)) MB free. Keeping the h264 file; run again with -CompressFile after freeing space."
+    $needMb = [Math]::Round((Get-EncodeHeadroom $oldBytes) / 1MB)
+    if ($free -lt (Get-EncodeHeadroom $oldBytes)) {
+        Write-Warn "Not enough free space on $root to compress: the encode needs up to ~$needMb MB next to the original, $([Math]::Round($free / 1MB)) MB free. Keeping the $srcCodec file; run again with -CompressFile after freeing space."
         return $null
     }
 
-    $useGpu = (-not $Cpu) -and (Test-Av1Nvenc $Ffmpeg)
-    if (-not $useGpu -and -not $Cpu) { Write-Info 'No working NVENC AV1 encoder (needs an RTX 40/50 GPU and a current driver) - encoding on the CPU instead.' }
-    $encArgs = if ($useGpu) { $script:Av1NvencArgs } else { $script:Av1SvtArgs }
-    $encName = if ($useGpu) { 'NVENC AV1 (GPU)' } else { 'SVT-AV1 (CPU)' }
+    $useGpu = $Gpu -and (Test-Av1Nvenc $Ffmpeg)
+    if ($Gpu -and -not $useGpu) { Write-Info 'No working NVENC AV1 encoder (needs an RTX 40/50 GPU and a current driver) - encoding on the CPU instead.' }
+    $encName = if ($useGpu) { 'NVENC AV1 (GPU)' } else { "SVT-AV1 preset $script:Av1SvtPreset (CPU)" }
+    # A refusal on quality or size is stamped into the file so the next run skips it in a second.
+    $keep = {
+        param([string]$Reason)
+        $stamped = Set-VideoStamp -Path $Path -Format (Get-StampFormat $Path) -Ffmpeg $Ffmpeg -Ffprobe $ffprobe -Before $before -Existing $comment -Stamp (New-PcSetupStamp -Kind kept -Target $target -Reason $Reason)
+        if ($stamped) { Write-Info 'Stamped that verdict into the file''s comment tag, so the next run skips this file (-Recheck tests it again).' }
+        else { Write-Info 'The verdict could not be stamped into the file; it will be checked again next time.' }
+    }
     Write-Ok "Encoder : $encName"
-    # Rough expectation up front, from the fps measured on this machine (see the table above), so
-    # a multi-hour encode does not look stuck before the first percent ticks over.
+    Write-Ok ("Target  : VMAF {0:0.0} or better against the source (95+ = no visible difference), at the smallest size that still gets there" -f $target)
     $frames  = [long]($before.Seconds * $before.Fps)
-    $typical = if ($useGpu) { 220 } else { 115 }
-    Write-Ok ("Work    : {0:N0} frames; at the usual ~{1} fps about {2}, then a verification pass" -f $frames, $typical, (Format-Duration ([int]($frames / $typical))))
+    $typical = if ($useGpu) { 215 } else { 80 }
+    Write-Ok ("Work    : {0:N0} frames; a crf search on sample windows first, then at the usual ~{1} fps about {2} for the encode, then the quality check" -f $frames, $typical, (Format-Duration ([int]($frames / $typical))))
     Write-Info "Progress below. $(Get-CancelHint) - the original file is kept either way."
     Write-Host ''
 
-    $temp = "$Path.av1-tmp"
-    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
     $env:SVT_LOG = '2'    # SVT-AV1 prints a 20-line config banner through its own logger, ignoring -loglevel; 2 = warnings only
-    $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y', '-i', $Path) + $encArgs + @('-g', '300', '-c:a', 'copy', '-f', 'mp4', $temp)
+    $audioBps = Get-AudioBitsPerSecond $Path $ffprobe
+    $videoBytesPerSecond = [Math]::Max(1.0, ($oldBytes - $audioBps * $before.Seconds / 8) / $before.Seconds)
+    $windows  = @(Get-SampleWindows -Seconds $before.Seconds)
+    $checks   = @(Get-SampleWindows -Seconds $before.Seconds -Verify)
+    $workDir  = Join-Path $env:TEMP ('pcsetup-crf-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+    $pair = New-StatusPairIfConsole
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $exit = Invoke-Streaming -Tool 'ffmpeg' -FfmpegLabel 'Encoding' -TotalSeconds $before.Seconds { & $Ffmpeg @ffArgs }
-    $sw.Stop()
-
-    $after    = if (Test-Path -LiteralPath $temp) { Get-VideoSpec $temp $ffprobe } else { $null }
-    $newBytes = if (Test-Path -LiteralPath $temp) { (Get-Item -LiteralPath $temp).Length } else { 0 }
-    $newMb    = [Math]::Round($newBytes / 1MB)
-    $problem  = $null
-    if ($exit -ne 0)                                  { $problem = "ffmpeg exited with code $exit" }
-    elseif (-not $after)                              { $problem = 'ffprobe cannot read the encoded file' }
-    elseif ($after.Codec -ne 'av1')                   { $problem = "the encoded file is $($after.Codec), not av1" }
-    elseif ($after.Tag -ne $before.Tag)               { $problem = "the encoded file is $($after.Tag), the source is $($before.Tag)" }
-    elseif ($after.Seconds -lt $before.Seconds * 0.99) { $problem = "the encoded file is $(Format-Duration ([int]$after.Seconds)) long, the source is $(Format-Duration ([int]$before.Seconds))" }
-    elseif ($newBytes -ge $oldBytes)                  { $problem = "the encoded file is not smaller ($newMb MB vs $oldMb MB)" }
-    if ($problem) {
-        Write-Warn "Compression failed: $problem - keeping the original h264 file."
-        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-
-    $old = "$Path.h264-old"
     try {
-        Move-Item -LiteralPath $Path -Destination $old -Force -ErrorAction Stop
-        Move-Item -LiteralPath $temp -Destination $Path -ErrorAction Stop
-    } catch {
-        Write-Warn "Could not replace the original: $($_.Exception.Message)"
-        if (-not (Test-Path -LiteralPath $Path) -and (Test-Path -LiteralPath $old)) { Move-Item -LiteralPath $old -Destination $Path -Force -ErrorAction SilentlyContinue }
-        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-    try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }
-    catch { Write-Warn "The AV1 file is in place but the h264 original could not be deleted - remove it by hand: $old" }
+        # ---- search: encode + score the sample windows at each crf the bisection asks for
+        $measure = {
+            param([int]$crf)
+            $encBytes = 0L; $scores = @(); $srcBytes = 0.0
+            for ($i = 0; $i -lt $windows.Count; $i++) {
+                $w = $windows[$i]
+                $sample = Join-Path $workDir "crf$crf-$i.mp4"
+                $encArgs = Get-Av1EncoderArgs $useGpu $crf
+                $label = 'crf {0} sample {1}/{2} encode' -f $crf, ($i + 1), $windows.Count
+                $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y', '-ss', ('{0:0.###}' -f $w.Start), '-i', $Path, '-t', ('{0:0.###}' -f $w.Length)) + $encArgs + @('-g', '300', '-an', '-f', 'mp4', $sample)
+                $exit = Invoke-Streaming -Tool 'ffmpeg' -FfmpegLabel $label -TotalSeconds $w.Length -Pair $pair { & $Ffmpeg @ffArgs }
+                if ($exit -ne 0 -or -not (Test-Path -LiteralPath $sample)) { throw "ffmpeg exited with code $exit encoding sample $($i + 1) at crf $crf" }
+                $encBytes += (Get-Item -LiteralPath $sample).Length
+                $srcBytes += $videoBytesPerSecond * $w.Length
+                $v = Measure-Vmaf $Ffmpeg $Path $w.Start $sample 0 $w.Length ('crf {0} sample {1}/{2} score' -f $crf, ($i + 1), $windows.Count) $pair $before.Fps
+                Remove-Item -LiteralPath $sample -Force -ErrorAction SilentlyContinue
+                if ($null -eq $v) { throw "VMAF could not be measured for sample $($i + 1) at crf $crf" }
+                $scores += $v
+            }
+            $mean  = ($scores | Measure-Object -Average).Average
+            $ratio = if ($srcBytes -gt 0) { $encBytes / $srcBytes } else { 1.0 }
+            if ($pair) { & $pair.Clear }
+            Write-Info ('crf {0}: VMAF {1:0.0}, ~{2:0}% of the source video' -f $crf, $mean, (100 * $ratio))
+            return [pscustomobject]@{ Vmaf = $mean; Ratio = $ratio }
+        }
+        # A point of margin on the samples, so the finished file (checked on other windows) lands on
+        # the right side of the target. A probe that cannot be encoded or scored ends the search at
+        # once (the measure throws) rather than being read as "fails the target".
+        try { $found = Find-QualityCrf -Measure $measure -TargetVmaf ($target + 1.0) -StartCrf 35 -MinCrf 20 -MaxCrf 55 -MaxRatio 0.97 }
+        catch { if ($pair) { & $pair.Clear }; Write-Warn "Compression skipped: $($_.Exception.Message) - keeping the $srcCodec file."; return $null }
+        if ($pair) { & $pair.Clear }
+        if ($null -eq $found.Crf) {
+            Write-Warn "Not compressing: $($found.Reason). This file cannot get smaller without visible loss; keeping the $srcCodec file."
+            $lastCrf = if ($found.Reason -match 'crf (\d+)') { $Matches[1] } else { '?' }
+            & $keep ('crf {0} = {1:0}% at {2:0.0}' -f $lastCrf, (100 * $found.Ratio), $found.Vmaf)
+            return $null
+        }
+        $predicted = Get-PredictedBytes $oldBytes $before.Seconds $audioBps $found.Ratio
+        Write-Ok ('Chosen  : crf {0} - VMAF {1:0.0} on {2} sample window(s), predicted ~{3:0}% ({4:N0} MB) after {5} probes in {6}' -f $found.Crf, $found.Vmaf, $windows.Count, (100.0 * $predicted / $oldBytes), ($predicted / 1MB), $found.Probes, (Format-Duration ([int]$sw.Elapsed.TotalSeconds)))
+        if ($predicted -ge $oldBytes * 0.97) {
+            Write-Warn ('Not compressing: at crf {0} the file would come out at ~{1:0}% of its size - not worth a second generation. Keeping the {2} file.' -f $found.Crf, (100.0 * $predicted / $oldBytes), $srcCodec)
+            & $keep ('crf {0} would be {1:0}% at {2:0.0}' -f $found.Crf, (100.0 * $predicted / $oldBytes), $found.Vmaf)
+            return $null
+        }
 
-    $pct     = [Math]::Round(100.0 * $newBytes / $oldBytes)
-    $summary = "AV1 $newMb MB from $oldMb MB h264 ($pct%) in $(Format-Duration ([int]$sw.Elapsed.TotalSeconds)) with $encName"
-    Write-Ok "Result  : $summary"
-    return $summary
+        # ---- act + verify: the whole file at the chosen crf, then what ffprobe says about the result
+        # and its score on windows the search never saw. Samples can flatter a file (on the test
+        # clip two windows averaged 95.9 while the whole file scored 93.0), so a finished encode
+        # that misses the target gets ONE more try at a lower crf - two points per point short -
+        # before the file is given up on.
+        $temp = "$Path.av1-tmp"
+        $crf  = [int]$found.Crf
+        $checked = $null; $lowest = $null; $newBytes = 0; $newMb = 0
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+            $encArgs = Get-Av1EncoderArgs $useGpu $crf
+            $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y', '-i', $Path) + $encArgs + @('-g', '300', '-c:a', 'copy', '-f', 'mp4', $temp)
+            $exit = Invoke-Streaming -Tool 'ffmpeg' -FfmpegLabel "Encoding crf $crf" -TotalSeconds $before.Seconds -Pair $pair { & $Ffmpeg @ffArgs }
+
+            $after    = if (Test-Path -LiteralPath $temp) { Get-VideoSpec $temp $ffprobe } else { $null }
+            $newBytes = if (Test-Path -LiteralPath $temp) { (Get-Item -LiteralPath $temp).Length } else { 0 }
+            $newMb    = [Math]::Round($newBytes / 1MB)
+            $problem  = $null
+            if ($exit -ne 0)                                   { $problem = "ffmpeg exited with code $exit" }
+            elseif (-not $after)                               { $problem = 'ffprobe cannot read the encoded file' }
+            elseif ($after.Codec -ne 'av1')                    { $problem = "the encoded file is $($after.Codec), not av1" }
+            elseif ($after.Tag -ne $before.Tag)                { $problem = "the encoded file is $($after.Tag), the source is $($before.Tag)" }
+            elseif ($after.Seconds -lt $before.Seconds * 0.99) { $problem = "the encoded file is $(Format-Duration ([int]$after.Seconds)) long, the source is $(Format-Duration ([int]$before.Seconds))" }
+            elseif ($newBytes -ge $oldBytes)                   { $problem = "the encoded file is not smaller ($newMb MB vs $oldMb MB)" }
+            $checked = $null
+            if (-not $problem) {
+                $scores = @()
+                for ($i = 0; $i -lt $checks.Count; $i++) {
+                    $w = $checks[$i]
+                    $v = Measure-Vmaf $Ffmpeg $Path $w.Start $temp $w.Start $w.Length ('Checking crf {0} quality {1}/{2}' -f $crf, ($i + 1), $checks.Count) $pair $before.Fps
+                    if ($null -eq $v) { $problem = "VMAF could not be measured on check window $($i + 1)"; break }
+                    $scores += $v
+                }
+                if (-not $problem) {
+                    $checked = ($scores | Measure-Object -Average).Average
+                    $lowest  = ($scores | Measure-Object -Minimum).Minimum
+                    if ($checked -lt $target) {
+                        $problem = ('the finished encode at crf {0} scores VMAF {1:0.0} on the check windows (lowest {2:0.0}), under the {3:0.0} target' -f $crf, $checked, $lowest, $target)
+                        if ($attempt -eq 1) {
+                            $lower = [Math]::Max(20, $crf - [Math]::Max(2, [int][Math]::Ceiling(2 * ($target - $checked))))
+                            if ($lower -lt $crf) {
+                                if ($pair) { & $pair.Clear }
+                                Write-Warn ('The samples flattered this file: {0}. Encoding it again at crf {1}.' -f $problem, $lower)
+                                $crf = $lower
+                                continue
+                            }
+                        }
+                    }
+                }
+            }
+            break
+        }
+        if ($pair) { & $pair.Clear }
+        if ($problem) {
+            Write-Warn "Compression failed: $problem - keeping the original $srcCodec file."
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+            # A verdict on size or quality is final for this file; an ffmpeg/ffprobe failure is not.
+            if ($problem -match '^the encoded file is not smaller') { & $keep ('crf {0} came out at {1:0}%' -f $crf, (100.0 * $newBytes / $oldBytes)) }
+            elseif ($problem -match 'scores VMAF') { & $keep ('crf {0} scored {1:0.0} on the finished file' -f $crf, $checked) }
+            return $null
+        }
+        $where = if ($checks.Count -eq 1 -and $checks[0].Start -eq 0 -and $checks[0].Length -ge $before.Seconds) { 'the whole file' } else { '{0} windows the search did not use (lowest {1:0.0})' -f $checks.Count, $lowest }
+        Write-Ok ('Checked : VMAF {0:0.0} on {1}' -f $checked, $where)
+
+        # ---- stamp the encode with its verdict (a stream copy of the temp file; seconds), then swap
+        $stamped = Set-VideoStamp -Path $temp -Format 'mp4' -Ffmpeg $Ffmpeg -Ffprobe $ffprobe -Before $after -Existing $comment -Stamp (New-PcSetupStamp -Kind av1 -Crf $crf -Vmaf $checked -Target $target -Encoder $encName)
+        if (-not $stamped) { Write-Info 'The encode could not be stamped with its verdict (it is still used); a re-run will see it as plain AV1.' }
+        $newBytes = (Get-Item -LiteralPath $temp).Length
+        $newMb    = [Math]::Round($newBytes / 1MB)
+        $old = "$Path.h264-old"
+        try {
+            Move-Item -LiteralPath $Path -Destination $old -Force -ErrorAction Stop
+            Move-Item -LiteralPath $temp -Destination $final -ErrorAction Stop
+        } catch {
+            Write-Warn "Could not replace the original: $($_.Exception.Message)"
+            if (-not (Test-Path -LiteralPath $Path) -and (Test-Path -LiteralPath $old)) { Move-Item -LiteralPath $old -Destination $Path -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+        try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }
+        catch { Write-Warn "The AV1 file is in place but the $srcCodec original could not be deleted - remove it by hand: $old" }
+
+        $pct     = [Math]::Round(100.0 * $newBytes / $oldBytes)
+        $summary = ('AV1 crf {0} {1} MB from {2} MB {3} ({4}%), VMAF {5:0.0}, in {6} with {7}' -f $crf, $newMb, $oldMb, $srcCodec, $pct, $checked, (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $encName)
+        if ($final -ne $Path) { $summary += ", now $(Split-Path $final -Leaf)" }
+        Write-Ok "Result  : $summary"
+        return $summary
+    }
+    finally {
+        if ($pair) { & $pair.End }
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ============================================================================ site: Twitch
@@ -1280,6 +1746,75 @@ function Invoke-X([string]$TweetId) {
     Finish $paths[0] $summary
 }
 
+# ============================================================================ folder mode
+# Every video directly inside a folder through Compress-Video, largest first, as one job: the same
+# check -> encode -> verify -> swap per file, so a file that would not get smaller (already lean
+# X/Instagram clips) or that fails is kept as it is and the run carries on. The summary counts
+# what changed and what did not, and the folder is opened at the end.
+function Invoke-CompressFolder([string]$Dir) {
+    Write-Step 'Compressing every video in a folder'
+    Ensure-Shortcuts
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { Fail "Folder not found: $Dir" }
+    $Dir = (Resolve-Path -LiteralPath $Dir).ProviderPath
+    Write-Ok "Folder  : $Dir"
+    Ensure-Scoop
+    $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
+    $files = @(Get-CompressCandidates $Dir)
+    if (-not $files.Count) { Fail "No videos (.mp4, .m4v, .mov, .mkv, .webm) directly inside $Dir.`n`nSubfolders are not searched - drop one onto compress-folder.bat instead." }
+    $totalBytes = ($files | Measure-Object Length -Sum).Sum
+    Write-Ok ("Videos  : {0} files, {1:N2} GB, largest first" -f $files.Count, ($totalBytes / 1GB))
+    Write-Info "Each encode is verified before it replaces the original; a file that would not get smaller is kept. $(Get-CancelHint)."
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $done = @(); $kept = @(); $already = @(); $deferred = @(); $saved = [long]0
+    $root = [IO.Path]::GetPathRoot($Dir)
+    # Largest first means the biggest file meets the emptiest drive: the 5 GB file in Downloads
+    # needed 4 GB of headroom with 3.8 GB free and was skipped before a single byte had been
+    # reclaimed. A file the drive cannot hold yet is deferred and tried once more at the end,
+    # when the earlier encodes have freed their share; Compress-Video keeps its own check.
+    $queue = @($files | ForEach-Object { @{ File = $_; Pass = 1 } })
+    $n = 0
+    while ($queue.Count) {
+        $item = $queue[0]; $queue = @($queue | Select-Object -Skip 1)
+        $f = Get-Item -LiteralPath $item.File.FullName -ErrorAction SilentlyContinue
+        if (-not $f) { continue }
+        $n++
+        $passNote = if ($item.Pass -gt 1) { ' (second pass, after space was freed)' } else { '' }
+        Write-Step ("[{0}/{1}] {2} ({3:N0} MB){4}" -f $n, $files.Count, $f.Name, ($f.Length / 1MB), $passNote)
+        $free = (New-Object IO.DriveInfo $root).AvailableFreeSpace
+        if ($free -lt (Get-EncodeHeadroom $f.Length)) {
+            if ($item.Pass -eq 1) {
+                Write-Warn ("Deferred: needs ~{0:N0} MB free next to it, {1:N0} MB free on {2} - trying again after the other files." -f ((Get-EncodeHeadroom $f.Length) / 1MB), ($free / 1MB), $root)
+                $deferred += $f.Name
+                $queue += @{ File = $f; Pass = 2 }
+                $n--
+                continue
+            }
+            Write-Warn ("Still not enough room on {0} ({1:N0} MB free) - keeping the file as it is." -f $root, ($free / 1MB))
+            $kept += $f.Name
+            continue
+        }
+        $result = Compress-Video $f.FullName $ffmpeg
+        if ($result -like 'already*') { $already += $f.Name; continue }
+        if (-not $result) { $kept += $f.Name; continue }
+        $target = Get-Av1TargetPath $f.FullName
+        $after = if (Test-Path -LiteralPath $target) { (Get-Item -LiteralPath $target).Length } else { $f.Length }
+        $saved += ($f.Length - $after)
+        $done += $f.Name
+    }
+    $sw.Stop()
+    Write-Step 'Summary'
+    $savedText = if ($saved -ge 1GB) { '{0:N2} GB' -f ($saved / 1GB) } else { '{0:N0} MB' -f ($saved / 1MB) }    # "0.00 GB" hid a 25 MB run
+    $line = "{0} of {1} compressed, {2} saved in {3}" -f $done.Count, $files.Count, $savedText, (Format-Duration ([int]$sw.Elapsed.TotalSeconds))
+    Write-Ok $line
+    if ($already.Count) { Write-Ok "Already done: $($already.Count) (AV1 already, or stamped as compressed / checked by an earlier run)" }
+    if ($deferred.Count) { Write-Info "Deferred to a second pass for space: $($deferred.Count)" }
+    if ($kept.Count) {
+        Write-Warn "Kept as they were (encode not smaller, or failed - the reason is above each one): $($kept.Count)"
+        foreach ($k in $kept) { Write-Info "  $k" }
+    }
+    Finish $Dir $line
+}
+
 # ============================================================================ background job
 # The work runs in a hidden, detached worker - this same script with -Worker - at below-normal
 # priority (ffmpeg and the downloaders inherit it), so it never chugs the PC and does not care
@@ -1288,9 +1823,17 @@ function Invoke-X([string]$TweetId) {
 # launcher re-attaches to a running job instead of starting another: one job at a time.
 $script:JobDir    = Join-Path $env:LOCALAPPDATA 'PCSetup\download-video'
 $script:JobFile   = Join-Path $script:JobDir 'job.json'
-$script:JobLog    = Join-Path $script:JobDir 'job.log'
-$script:JobErr    = Join-Path $script:JobDir 'job.err'
-$script:JobStatus = Join-Path $script:JobDir 'job.status'
+# The log, error and status files are named per job (job-<stamp>.log/.err/.status) and recorded
+# in job.json. They used to be fixed names, and a new job started by deleting the old ones - which
+# fails while any earlier viewer window still has the log open (a viewer frozen in a QuickEdit
+# selection, or simply one left open), so the launcher died on Remove-Item with its window
+# closing at once and no job started. Now an old window can only ever hold its own files.
+function Set-JobFiles([string]$Stamp) {
+    $script:JobLog    = Join-Path $script:JobDir "job-$Stamp.log"
+    $script:JobErr    = Join-Path $script:JobDir "job-$Stamp.err"
+    $script:JobStatus = Join-Path $script:JobDir "job-$Stamp.status"
+}
+Set-JobFiles $(if ($env:PCSETUP_JOB_STAMP) { $env:PCSETUP_JOB_STAMP } else { 'current' })
 
 # The job whose worker process is still alive, or $null. A stale job.json (PC rebooted, worker
 # killed) is recognised by the PID being gone or belonging to a different, newer process.
@@ -1314,18 +1857,28 @@ function Write-JobStatus([string]$Bar, [string]$Raw, [string]$Title, [string]$St
 
 function Start-BackgroundJob([string]$Description) {
     New-Item -ItemType Directory -Force -Path $script:JobDir | Out-Null
-    foreach ($f in @($script:JobLog, $script:JobErr, $script:JobStatus)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    Set-JobFiles $stamp
+    $env:PCSETUP_JOB_STAMP = $stamp    # inherited by the worker, which writes job-<stamp>.status
+    # Older jobs' files go now; one still held open by a lingering viewer is simply left for later.
+    Get-ChildItem -LiteralPath $script:JobDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^job(-.+)?\.(log|err|status)$' -and $_.Name -notlike "job-$stamp.*" } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
     $wargs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Worker', '-MaxHeight', $MaxHeight)
     if ($Url)          { $wargs += @('-Url', "`"$Url`"") }
     if ($CompressFile) { $wargs += @('-CompressFile', "`"$CompressFile`"") }
+    if ($CompressFolder) { $wargs += @('-CompressFolder', "`"$CompressFolder`"") }
     if ($Ending)       { $wargs += @('-Ending', "`"$Ending`"") }
     if ($NoCompress)   { $wargs += '-NoCompress' }
-    if ($Cpu)          { $wargs += '-Cpu' }
+    if ($Gpu)          { $wargs += '-Gpu' }
+    if ($Recheck)      { $wargs += '-Recheck' }
+    if ($PSBoundParameters.ContainsKey('MinVmaf')) { $wargs += @('-MinVmaf', "$MinVmaf") }
     if ($NoMessageBox) { $wargs += '-NoMessageBox' }
     $p = Start-Process powershell -ArgumentList $wargs -WindowStyle Hidden -RedirectStandardOutput $script:JobLog -RedirectStandardError $script:JobErr -PassThru
     try { $p.PriorityClass = 'BelowNormal' } catch {}
     $ticks = try { $p.StartTime.Ticks } catch { 0 }
-    $job = [pscustomobject]@{ Pid = $p.Id; ProcStart = $ticks; Started = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Description = $Description }
+    $job = [pscustomobject]@{ Pid = $p.Id; ProcStart = $ticks; Started = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); Description = $Description
+                              Log = $script:JobLog; Err = $script:JobErr; Status = $script:JobStatus }
     [IO.File]::WriteAllText($script:JobFile, ($job | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
     return $job
 }
@@ -1340,6 +1893,8 @@ function Complete-WorkerJob {
 # pair redrawn from the status file, watch for X to cancel, and finish the way the old inline run
 # did - result lines, Explorer already opened by the worker, 8 s countdown, the worker's exit code.
 function Watch-BackgroundJob($Job) {
+    # This job's own files (a re-attached viewer reads them from job.json).
+    if ($Job.Log) { $script:JobLog = $Job.Log; $script:JobErr = $Job.Err; $script:JobStatus = $Job.Status }
     Write-Step 'Background job'
     Write-Ok   "Working on: $($Job.Description)"
     Write-Info "Since $($Job.Started), worker PID $($Job.Pid), below-normal priority"
@@ -1379,7 +1934,7 @@ function Watch-BackgroundJob($Job) {
         $alive = [bool](Get-Process -Id ([int]$Job.Pid) -ErrorAction SilentlyContinue)
         & $applyStatus
         if (-not $fs -and (Test-Path -LiteralPath $script:JobLog)) {
-            try { $fs = New-Object IO.FileStream($script:JobLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite) } catch { $fs = $null }
+            try { $fs = New-Object IO.FileStream($script:JobLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)) } catch { $fs = $null }
         }
         if ($fs) {
             while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
@@ -1436,8 +1991,11 @@ function Watch-BackgroundJob($Job) {
 # ============================================================================ main
 if ($Worker) {
     try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
+} else {
+    $null = Disable-ConsoleQuickEdit    # a click in this window must never freeze the display
 }
-if (-not $CompressFile -and -not $Url) {
+if ($CompressDownloads -and -not $CompressFolder) { $CompressFolder = Get-DownloadsFolder }
+if (-not $CompressFile -and -not $Url -and -not $CompressFolder) {
     # A file path in the clipboard (Explorer's "Copy as path" puts it there in quotes) means
     # "compress this", so compress-video.bat and download-video.bat both do the whole job.
     try { $clip = (Get-Clipboard -Raw -ErrorAction Stop) } catch { $clip = '' }
@@ -1450,23 +2008,25 @@ if (-not $Inline -and -not $Worker) {
     # Launcher / viewer. A running job wins over whatever was just asked for.
     $running = Get-RunningJob
     if ($running) {
-        if ($Url -or $CompressFile) {
+        if ($Url -or $CompressFile -or $CompressFolder) {
             Write-Step 'A job is already running'
             Write-Warn "One at a time: the link/file you just gave was NOT started. Run it again after this one finishes."
         }
         Watch-BackgroundJob $running
     }
-    if (-not $Url -and -not $CompressFile) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link (or a video file path) and run this again.' }
-    $desc = if ($CompressFile) { "compress $(Split-Path $CompressFile -Leaf)" } else { $Url }
+    if (-not $Url -and -not $CompressFile -and -not $CompressFolder) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link (or a video file path) and run this again.' }
+    $desc = if ($CompressFolder) { "compress every video in $CompressFolder" } elseif ($CompressFile) { "compress $(Split-Path $CompressFile -Leaf)" } else { $Url }
     Write-Step 'Starting'
     Write-Ok "Job     : $desc"
     Watch-BackgroundJob (Start-BackgroundJob $desc)
 }
 
 try {
+    if ($CompressFolder) { Invoke-CompressFolder $CompressFolder }
     if ($CompressFile) {
         # Shrink an existing file (an earlier download, or anything h264) and stop.
         Write-Step 'Compressing an existing file'
+        Ensure-Shortcuts
         if (-not (Test-Path -LiteralPath $CompressFile -PathType Leaf)) { Fail "File not found: $CompressFile" }
         $CompressFile = (Resolve-Path -LiteralPath $CompressFile).ProviderPath
         Write-Ok "File    : $CompressFile"

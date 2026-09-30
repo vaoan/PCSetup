@@ -7,7 +7,8 @@ if %errorlevel% neq 0 (
 )
 
 :: compress-video.bat
-:: Re-encodes a video to AV1 in place (about half the size, no visible loss). Three ways to use it:
+:: Re-encodes a video to AV1 in place, at the smallest size that still measures VMAF 95+ against
+:: the source (no visible difference); a file that cannot get smaller that way is kept. Three ways:
 ::   - drop a video file onto this .bat
 ::   - run it with the file as the argument:  compress-video.bat "Z:\...\video.mp4"
 ::   - copy the file path (Explorer: Shift+right-click, Copy as path) and double-click this .bat

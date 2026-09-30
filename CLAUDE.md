@@ -991,7 +991,8 @@ built from height and rounded fps, not from Twitch's `1080p60 (source)` label) a
 `<date> <handle> - <text> [<id>].mp4` for Instagram and X (a multi-video X post gets ` (n of N)`).
 Every video download is then AV1-compressed (see "AV1 compression"). Manual runs accept `-Url`,
 `-MaxHeight` (Twitch/YouTube/X resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
-(keep the file as the site served it), `-Cpu` (AV1 on the CPU with SVT-AV1 instead of NVENC), `-CompressFile <path>`
+(keep the file as the site served it), `-Gpu` (AV1 with NVENC instead of SVT-AV1 on the CPU: ~2.5× faster,
+~30 % bigger at the same score), `-MinVmaf <n>` (the score an encode must keep, default 95), `-CompressFile <path>`
 (AV1-compress an existing file in place and stop), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
 YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
 
@@ -1045,6 +1046,63 @@ file at the exact spec name is overwritten (yt-dlp gets `--force-overwrites`, be
 skips an existing file and reports success); an unreadable file is ignored. `-Ending` runs disable
 the length check. Motivating case: the Rick Astley 4K remaster sat in Videos at 720p25 and every
 request for it was answered with "already downloaded".
+
+**"Compress all videos here".** Two launchers, because Windows will not give one file both an
+icon and knowledge of its own folder. `Ensure-Shortcuts` puts in Videos and in Downloads:
+- `Compress all videos here.lnk` — the icon'd one (`compress-video.ico`, the same Aero glass orb
+  as the download icon in a blue→teal→green sweep with two arrows squeezing a bar; regenerate
+  with `sources\make-compress-video-icon.ps1`). Its "Start in" and argument are pinned to that
+  folder, so it only ever compresses the folder it was made for. A `.lnk` cannot do better:
+  tested through Explorer on 2026-09-23, a shortcut with a blank "Start in" runs in its
+  **target's** folder (`C:\Windows\System32` for `cmd.exe`), never its own.
+- `Compress all videos here (copy into any folder).bat` — a copy of `optional/compress-here.bat`
+  with the path to `optional\` filled in (`__PCSETUP_OPTIONAL__` in the template; refreshed when
+  the template changes). Copy it into any folder and double-click: `%~dp0` is the folder it sits
+  in, which it hands to `compress-folder.bat`. A `.bat` gets no icon of its own on Windows.
+> **Both icons are written natively, and that is why they stopped looking "scaled up".** The first
+> `.ico` files stored every size as a PNG-compressed entry. Explorer honours a PNG entry only at
+> 256 px; below that many shell paths ignore it and resample the 256 one, which is soft — and
+> the sizes Explorer asks for were missing anyway (96 for "Large icons" at 100 %, 72/144 at
+> 150 %, 60/120 at 125 %). `sources\icon-writer.ps1` (dot-sourced by both `make-*-icon.ps1`)
+> renders each size through the generator's own `Render` and stores everything below 256 as a
+> plain 32-bit DIB with its AND mask (`ConvertTo-IconDib`), 256 as PNG, for 15 sizes from 16 to
+> 256. The test opens both files and checks entry types and sizes. Gotcha met writing the mask:
+> `[int]($x / 8)` in PowerShell rounds half to even (15/8 → 2), which indexed past the row — it is
+> `$x -shr 3`. After regenerating, `ie4uinit.exe -show` makes Explorer drop its icon cache.
+
+> **Tested for real on 2026-09-23** (user's ask: "no mock videos"), in a test folder under Videos
+> with a 3-minute stream-copied excerpt of the 5.5 h Baalorlord VOD, a real lean X clip, a real
+> variable-frame-rate clip, a real `.mov` and a real AV1 file, launched through the copied `.bat`
+> the way a double-click does. Result: the excerpt went 133 → 28 MB at whole-file VMAF 96.1 with
+> the stamp appended *after* Twitch's own three-line comment; the three others were refused and
+> stamped (`.mov` included) with their modification times untouched; the AV1 file was skipped. A
+> second run through the shortcut's exact command skipped all five in one second. Two lessons:
+> the crf search on a short 1080p60 clip cost 11 of the 15 minutes (six 15 s windows = half of a
+> 3-minute file per probe, with four game clients open), and launching a shortcut through
+> Explorer from an elevated session pops a UAC prompt because Explorer runs it unelevated — the
+> launcher's own elevation block, not a bug, but do not drive it from a script that way.
+
+Both run the same job as `compress-folder.bat`. The `.bat` strips the trailing backslash from
+`%~dp0` before passing it (`"Z:\folder\"` would escape its own closing quote on the PowerShell
+side) and is exercised in `setup.tests.ps1` from a folder with spaces and brackets against a fake
+`compress-folder.bat` that records the argument. Added 2026-09-23 on the user's request.
+
+**Stamps: the verdict lives in the file, no cache.** Every file `Compress-Video` finishes with
+carries the outcome in its standard `comment` tag (Explorer: Properties → Details → Comments):
+`PCSetup: AV1 crf 41, VMAF 96.1 at target 95, SVT-AV1 preset 4 (CPU), 2026-09-23` on an encode of
+ours, `PCSetup: kept, cannot get smaller at VMAF 95 (crf 29 = 116% at 93.7), 2026-09-23` on a file
+it refused on quality or size. A re-run of a folder reads the tag with ffprobe and skips both kinds
+in a second instead of re-probing every file for a minute; `-Recheck` ignores the stamps, and a
+"kept" stamp only counts while its target is ≥ the current `-MinVmaf`, so lowering the bar tests
+the file again. The site's own comment is kept in front (`<theirs> | PCSetup: …`) and a newer
+stamp replaces an older one. Writing the stamp on a *kept* file is a stream copy of the container
+(`Set-VideoStamp`: `-map 0 -c copy`, nothing re-encoded, mp4/m4v/mov only), verified — same codec
+and tag, length within 0.5 s, size within 2 %, stamp readable — before it replaces the file, with
+the file's creation and modification times put back so the folder looks untouched. An encode gets
+its stamp the same way after the quality check, so the tag carries the *checked* score, not the
+sample estimate. Verified on synthetic clips: encode stamped and skipped on the second run, lean
+clip stamped as kept with its dates intact and skipped, `-Recheck` re-tested it. An ffmpeg or
+ffprobe failure is deliberately not stamped — only a verdict on size or quality is final.
 
 **Launchers.** The script recreates `Download Video.lnk` in `%APPDATA%\Microsoft\Windows\Start
 Menu\Programs` and in the Videos folder whenever either is missing, target `cmd.exe /c "<bat>"`
@@ -1108,39 +1166,98 @@ holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB
 
 **AV1 compression (every site).** Every video download — Twitch, YouTube, Instagram and X — is
 re-encoded to 10-bit AV1 afterwards (`Compress-Video`; Twitch-only until 2026-09-20, extended on the
-user's call), same name, same `[1080p60]` tag, audio copied. A download that is already AV1 is
-left alone, and the "must be smaller" check keeps the original when the encode is not: the X post
-above (720p30 h264 at ~0.9 Mbit/s, 17 MB) came out at 26 MB from SVT-AV1 crf 35 and stayed h264.
-Expect that on small, already-lean X and Instagram files — the encode time is the only cost — and
-real savings where the source is generous, which is Twitch's 1080p60 h264 at ~6 Mbit/s. The step
+user's call), same name, same `[1080p60]` tag, audio copied, **at the smallest size that still
+measures VMAF ≥ 95 against the source** (`-MinVmaf`, 95 = "no visible difference"). A download
+that is already AV1 is left alone (a third generation is never "without losing quality"). The step
 also runs on an existing file when a link is re-run (YouTube through `-BeforeShowExisting`,
-Instagram and X just before `Show-Existing`), so old h264 downloads shrink on demand. Note NVENC
-shares the GPU: with FFXIV running (GPU at 99 %) the YouTube test encode managed 5 fps instead of
-~220, and `-Cpu` is the way round that. Measured on 60 s of a VOD with ffmpeg 9.0.1 (gyan full build: libsvtav1, av1_nvenc, libvmaf),
-Ryzen 9 9950X3D + RTX 5080, VMAF `vmaf_v0.6.1` against the h264 source (95+ = no visible difference):
+Instagram and X just before `Show-Existing`), so old h264 downloads shrink on demand.
 
-| Encode | Size | Speed | VMAF |
+> **The crf is searched per file, not fixed — because a fixed one was both too big and, unnoticed,
+> below the quality it promised.** Until 2026-09-22 the step encoded everything at NVENC cq 36 (or
+> SVT-AV1 crf 35) and accepted the result on codec, tag, length and "smaller" alone; no quality
+> was ever measured on a real file. That is fine for a generous source (a Twitch VOD at ~6 Mbit/s
+> comes out at half the size above VMAF 96) and wrong for a clip the site already squeezed: on 30 s
+> of three h264 files the first Downloads batch had kept, NVENC cq 36 came out at **102 %, 105 %
+> and 137 %** of the source at VMAF **94.5, 92.8 and 92.1** — larger *and* under the bar. The
+> encode-then-compare-sizes approach could only ever refuse; it could not tell that no crf reaches
+> 95 below the source size, which for these clips is the truth (1922×962 30 fps at 2.4 Mbit/s: SVT-AV1
+> preset 4 needs crf 25 for VMAF 95.4 and that is 100 % of the source; 1280×720 at 0.9 Mbit/s: crf 25
+> is 102 % at 93.1). `Compress-Video` now works like `ab-av1`: `Get-SampleWindows` picks 15 s
+> windows spread over the file (one per 30 s, two to six), `Find-QualityCrf` bisects the crf on
+> them (walk out from 35 in steps of 6 until a pass and a fail bracket the answer, then halve —
+> 5–6 probes, each an encode + a `libvmaf` score per window), and the highest crf that still meets
+> the target *plus a point of margin* encodes the whole file. Two early outs save the full encode:
+> a failing crf whose samples are already ≥ 97 % of the source (every lower crf is bigger still —
+> that is what the three clips above hit on their first probe, in ~30 s per file), and a chosen crf
+> whose predicted size (`Get-PredictedBytes`, audio taken out before scaling since it is copied) is
+> ≥ 97 %. The finished file is then scored again on a *second* set of windows that sit between the
+> search windows (`-Verify`); an encode under the target is re-encoded **once** at a lower crf (two
+> points per point short) and then discarded like any other failed check. That retry exists because
+> the first success-path test proved samples can flatter a file: two windows on a 150 s clip
+> averaged 95.9 at crf 31 while the whole file scored 93.0 (one window was a near-static 98.2) —
+> hence also the denser sampling on short files. The helpers are pure and unit-tested with a fake
+> encoder in `setup.tests.ps1` (`download-video`), including the "stop at the first probe" case.
+
+Encoder: **SVT-AV1 preset 4 on the CPU** by default, NVENC AV1 with `-Gpu`. Measured 2026-09-22
+on 30 s of the three kept clips, ffmpeg 9.0.1 (gyan full build: libsvtav1 4.2.0, av1_nvenc,
+libvvenc, libvmaf), Ryzen 9 9950X3D + RTX 5080, driver 616.92, VMAF `vmaf_v0.6.1` against the
+h264 source:
+
+| Encode (clip 1: 1922×962 30 fps, 2.4 Mbit/s h264) | Size | Speed | VMAF |
 |---|---|---|---|
-| NVENC `p7 -tune hq -rc vbr -cq 36 -b:v 0 -multipass fullres -spatial-aq 1 -temporal-aq 1 -rc-lookahead 32 -pix_fmt p010le` | 58 % | ~225 fps | 96.7 |
-| SVT-AV1 `-preset 6 -crf 35 -pix_fmt yuv420p10le -svtav1-params tune=0` | 48 % | ~116 fps | 96.7 |
-| NVENC same without AQ | 55 % | ~257 fps | 96.4 |
-| NVENC `-tune uhq` cq 36 | 65 % | ~105 fps | 97.1 |
-| SVT-AV1 preset 8 crf 35 | 52 % | ~164 fps | 96.5 |
-| SVT-AV1 preset 6 crf 30 / 40 | 70 % / 35 % | | 97.2 / 96.1 |
+| SVT-AV1 preset 4 crf 25 / 28 / 30 / 32 / 35 | 100 / 80 / 72 / 62 / 50 % | ~80 fps | 95.4 / 94.4 / 93.7 / 92.7 / 91.3 |
+| SVT-AV1 preset 6 crf 28 / 35 | 83 / 51 % | ~100 fps | 94.1 / 90.7 |
+| SVT-AV1 preset 2 crf 30 / 40 | 76 / 37 % | ~24 fps | 94.7 / 89.8 |
+| NVENC p7 hq cq 30 / 33 / 36 / 40 | 176 / 133 / 102 / 70 % | ~210 fps | 97.0 / 95.9 / 94.5 / 91.7 |
+| NVENC `-tune uhq -lookahead_level 3` (± `-tf_level 4`) cq 40 | 52 % | ~120 fps | 90.7 (byte-identical with and without tf) |
+| H.266 `libvvenc` medium qp 34 (clip 2, 720p) | 38 % | ~10 fps | 87.2 — vs SVT-AV1 p4 crf 40: 39 % at 87.5 |
 
-The GPU row is the default (the PC stays usable and a 6 h 20 m, 15.6 GB VOD takes ~1.7 h instead of
-~3.3 h); `-Cpu` picks the SVT-AV1 row for files ~17 % smaller at the same score. Both are a second
-lossy generation chosen to stay above the visibility threshold, not lossless — say so if asked.
-`av1_nvenc` is probed with 10 synthetic frames first and falls back to the CPU when it fails: **it
-needs a driver at least as new as the nvenc API the ffmpeg build targets** (596.21 failed with
-ffmpeg 9.0.1's API 13.1, 616.92 works). Windows plays the result in the stock player because
-`Microsoft.AV1VideoExtension` is installed.
+So at the same VMAF SVT-AV1 preset 4 is ~30 % smaller than NVENC (cq 40 = 70 % at 91.7 vs crf 35 =
+50 % at 91.3), preset 4 gains ~1 % over preset 6 for ~20 % more time, preset 2 gains nothing more
+at a third of the speed, NVENC's Blackwell extras change nothing on AV1, and VVC — the newest
+codec the build has — matches SVT-AV1 at a tenth of the speed with no player on Windows. Speed on
+this machine: SVT-AV1 preset 4 ~80 fps at 1080p / ~140 at 720p, NVENC ~215 / ~375. The worker
+runs at below-normal priority, so all cores busy still leaves the PC usable; `-Gpu` is for when
+the hours matter more than the bytes (a 6 h VOD: ~5 h on the CPU, ~1.7 h on the GPU; note NVENC
+shares the GPU with a running game — with FFXIV at 99 % an encode managed 5 fps instead of ~220).
+Both are a second lossy generation chosen to stay above the visibility threshold, not lossless —
+say so if asked. `av1_nvenc` is probed with 10 synthetic frames first and falls back to the CPU
+when it fails: **it needs a driver at least as new as the nvenc API the ffmpeg build targets**
+(596.21 failed with ffmpeg 9.0.1's API 13.1, 616.92 works). Windows plays the result in the stock
+player because `Microsoft.AV1VideoExtension` is installed.
 
-Check → act → verify → swap: the encode goes to `<file>.av1-tmp` (not `.mp4`, so a crash leaves
-nothing the version scan mistakes for a download), is probed for codec `av1`, the same
-height/fps tag, ≥ 99 % of the source length and a smaller size, and only then replaces the original
-— original renamed to `.h264-old` first, encode renamed in, old deleted, so there is never a moment
-with no good file. Any failure is a **warning that keeps the h264 file**, never a failed download.
+> **`libvmaf` cannot be given a Windows path.** The drive colon is the filter-option separator and
+> neither `\:` nor `\\:` survives the two rounds of filtergraph parsing (`No option name near
+> '/Users/...'`), so `Measure-Vmaf` runs ffmpeg from `%TEMP%` with a bare file name for
+> `log_path` and reads `pooled_metrics.vmaf.mean` from the JSON. Both sides go through
+> `format=yuv420p10le` first so an 8-bit source and a 10-bit encode compare on equal terms. The
+> search's dozens of short ffmpeg passes share one status pair (`Invoke-Streaming -Pair`, made by
+> `New-StatusPairIfConsole`), so they redraw two lines instead of leaving two behind each.
+>
+> **And it pairs frames by timestamp, which is wrong for a variable-frame-rate clip.** Four of the
+> Downloads files are VFR (an X post at a nominal 60 fps averaging 43). On one of them the first
+> batch run refused at "115 % and VMAF 80.9"; reproduced on a 15 s window, the *same* encode scored
+> **73.5** with `setpts=PTS-STARTPTS` on both sides and **93.0** with `settb=AVTB,setpts=N/<fps>/TB`
+> on both — the frame counts matched (631), only the pairing differed. `Measure-Vmaf` uses the
+> by-order form, with the file's fps only so ffmpeg's `time=` still reads as a percentage, and the
+> test counts both `settb` clauses. A CFR file scores identically either way.
+>
+> **And the check on the finished file scores the whole file when it is 30 min or shorter.** The
+> windowed check seeks the source *and* the encode to the same second, and on an X clip with a
+> start offset and jittery timestamps (start 0.083, pts 0.083 → 0.211 → 0.128 → 0.086…) the two
+> seeks landed on different frames: the finished encode "scored" 37.9 (lowest window 25.4) while
+> the search samples at the same crf, all cut from the one source file, scored 96.0 — the retry at
+> crf 20 then failed on size and the file was kept, so nothing was lost but time. Scoring from
+> frame 0 needs no seek, and the whole-file mean is the definitive number anyway; only a file
+> longer than that keeps the between-windows check (`Get-SampleWindows -Verify -WholeFileMax`),
+> and those are Twitch VODs, constant-rate footage that seeks true.
+
+Check → search → act → verify → swap: the encode goes to `<file>.av1-tmp` (not `.mp4`, so a crash
+leaves nothing the version scan mistakes for a download), is probed for codec `av1`, the same
+height/fps tag, ≥ 99 % of the source length and a smaller size, scored on the verification windows,
+and only then replaces the original — original renamed to `.h264-old` first, encode renamed in,
+old deleted, so there is never a moment with no good file. Any failure is a **warning that keeps
+the source file**, never a failed download.
 Verified by breaking it: a file truncated to 40 % encoded to 24 s of 60 and was rejected on length
 with the original intact. The step also runs when re-running a link on an earlier h264 download
 (`Resolve-ExistingVersions -BeforeShowExisting`), so an old file is shrunk instead of just "already
@@ -1150,7 +1267,60 @@ it with the path as the argument, or copy the path (Explorer: Shift+right-click 
 and double-click it — `download-video.ps1` treats a file path in the clipboard (quotes stripped,
 must exist, not a URL) as "compress this", so `download-video.bat` does the same. Its elevation
 block forwards the dropped path through `-ArgumentList '\"%~1\"'`, verified with a bracketed path
-containing spaces. Space: the encode sits next to the original until verified, so the step needs ~80 %
+containing spaces. **`optional/compress-folder.bat`** does it for every video directly inside a
+folder (added 2026-09-20 for the 100 clips, 11 GB, sitting in Downloads): double-click for the
+Downloads folder (`-CompressDownloads`, resolved from `User Shell Folders` since Downloads lives on
+Z:), or drop a folder on it (`-CompressFolder`). It is one background job like a download — hidden
+below-normal worker, the window is a viewer, X cancels, re-running re-attaches — and
+`Invoke-CompressFolder` feeds `Get-CompressCandidates` (`.mp4/.m4v/.mov/.mkv/.webm` at the top level
+only, largest first, encode leftovers excluded) through the same `Compress-Video`, so every file is
+verified before it replaces its original and a file that would not shrink is kept and listed in the
+summary. The encode is always an mp4 container, so a `.mov`/`.mkv`/`.webm` source lands as the
+`.mp4` next to it and the original goes only after verification (`Get-Av1TargetPath`; an existing
+`.mp4` of that name means the file is skipped rather than overwritten). Largest-first has one
+trap, seen on the very first file of the real run: the 5 GB, 1h05m 1440p clip needed ~4 GB of
+headroom (`Get-EncodeHeadroom`, 80 % of the source, the same rule `Compress-Video` applies) while
+Z: had 3.8 GB free, so it was skipped before a single byte had been reclaimed. A file the drive
+cannot hold yet is now **deferred to a second pass** at the end of the run, after the other
+encodes have freed their share; only a file that still does not fit then is kept. That first run
+encoded at ~250 fps on NVENC with FFXIV open, so the 5 fps seen earlier was the game's heavier
+moments, not a fixed cost.
+
+> **That first batch was reported as "stuck" nine hours after it had finished.** The viewer
+> window's title read `Select 27% Encoding - Download Video`: a click inside it had started a
+> QuickEdit text selection, and conhost blocks every write until Esc/Enter, so the display froze
+> at 27 % of file 2 while the detached worker went on to the end (`DONE` in `job.log` at 04:19,
+> `job.json` gone, no worker process). Same failure step 0 already guards against;
+> `download-video.ps1` now carries the same `Disable-ConsoleQuickEdit` and calls it in every
+> visible window (viewer and `-Inline`), never in the hidden worker. If a viewer ever looks frozen
+> again, read the title first, then the job log.
+>
+> **And that frozen window blocked every new job.** `Start-BackgroundJob` began by deleting the
+> previous `job.log`; the stale viewer still had it open, `Remove-Item` threw under
+> `$ErrorActionPreference = 'Stop'`, and the launcher died with its window closing at once - the
+> single-file compress of the 5 GB clip "did nothing" for exactly this reason. The log, error and
+> status files are now **named per job** (`job-<stamp>.log/.err/.status`, paths recorded in
+> `job.json`; the worker gets its stamp through `PCSETUP_JOB_STAMP`, a re-attached viewer reads the
+> paths from `job.json`), older files are removed best-effort, and the viewer opens the log with
+> `FileShare.Delete`. Verified by holding the previous log open from another process and starting
+> a job: it started, ran and finished while the old handle stayed open.
+>
+> **What the batch actually did: 20 of 100 compressed, 1.63 GB saved, 79 kept because the AV1
+> encode came out larger** (532 MB from 490 MB, 287 from 189, ...). Most clips saved from X and
+> Instagram are already leaner than NVENC AV1 at cq 36 produces, and the "must be smaller" check
+> did its job - at the cost of ~40 of the 47 minutes. The 5 GB file was the one skipped for
+> space; `compress-video.bat` with just that file (or a second `compress-folder.bat` run, now that
+> the deferral exists) finishes it — it did, on 2026-09-20: 2070 MB from 5051 MB in 38 min on NVENC.
+> The 79 were the reason for the per-file crf search above: with it, a clip that cannot shrink
+> is refused after one or two 15 s probes (~30 s) instead of a full encode, and the ones that can
+> are encoded at the crf that actually meets the target rather than a guess. **Run with the search
+> on 2026-09-22 (55 min): 6 of the 79 could be shrunk at VMAF ≥ 95** (67–97 % of their size, ~25 MB
+> in all; Downloads went from 6.66 to 6.64 GB), 57 were refused on the first or second probe, 14
+> on predicted size, 2 on the finished encode. Those clips are already leaner than AV1 can match
+> at that score — the honest answer to "compress them further without losing quality" is that it
+> is not possible for them; `-MinVmaf 93` would shrink many, and that *is* visible loss.
+>
+> Space: the encode sits next to the original until verified, so the step needs ~80 %
 of the source free and skips itself (warning) otherwise; the download's own space check only warns
 about it. SVT-AV1 prints a 20-line config banner through its own logger regardless of `-loglevel`;
 `SVT_LOG=2` silences it. `-nostdin` keeps ffmpeg from eating keystrokes through the pipe.
