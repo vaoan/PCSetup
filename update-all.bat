@@ -149,6 +149,13 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     } catch { Add-Failure "winget: $($_.Exception.Message)" }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # ---------------------------------------------------------------- Driver Booster autostarts
+>>"%SCRIPT%" echo # A Driver Booster upgrade re-runs its installer, which re-registers the elevated logon tasks
+>>"%SCRIPT%" echo # 2-setup-windows.bat removed. Strip them again; a clean machine is a no-op.
+>>"%SCRIPT%" echo Write-Section "Driver Booster autostarts"
+>>"%SCRIPT%" echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"
+>>"%SCRIPT%" echo if ($LASTEXITCODE -ne 0) { Add-Failure "Driver Booster autostart cleanup left items behind" }
+>>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # ---------------------------------------------------------------- Chocolatey
 >>"%SCRIPT%" echo # --limit-output rows are name, current, available, pinned separated by a pipe. Split on
 >>"%SCRIPT%" echo # the character so no pipe literal has to survive CMD's parser on the way into this file.

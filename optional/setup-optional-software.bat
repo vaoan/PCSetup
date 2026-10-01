@@ -8,14 +8,8 @@ if %errorlevel% neq 0 (
 
 setlocal
 
-echo === HYTE Nexus + Driver Booster + Mudfish + IceDrive Setup ===
-
-echo.
-echo Installing Driver Booster...
-winget install --id IObit.DriverBooster -e --silent --accept-package-agreements --accept-source-agreements
-if %errorlevel% neq 0 (
-    echo WARNING: Driver Booster winget install failed with code %errorlevel%.
-)
+echo === ASUS DriverHub + HYTE Nexus + Mudfish + IceDrive Setup ===
+:: Driver Booster moved to 2-setup-windows.bat (winget table + autostart cleanup).
 
 echo.
 echo Checking ASUS DriverHub...
@@ -66,7 +60,6 @@ call :install_icedrive
 echo.
 echo === Setup Complete ===
 echo Installed or launched:
-echo   - Driver Booster
 echo   - ASUS DriverHub
 echo   - HYTE Nexus
 echo   - Mudfish Cloud VPN

@@ -205,9 +205,16 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'wez.wezterm';                     Name = 'WezTerm' },
 >>"%SCRIPT%" echo     @{ Id = 'Docker.DockerDesktop';            Name = 'Docker Desktop' },
 >>"%SCRIPT%" echo     @{ Id = 'PatchMyPC.PatchMyPC';             Name = 'Patch My PC' },
+>>"%SCRIPT%" echo     @{ Id = 'IObit.DriverBooster';             Name = 'Driver Booster' },
 >>"%SCRIPT%" echo     @{ Id = 'XP8CLZL93F5Z4P';                  Name = 'NVIDIA App'; Source = 'msstore'; RequiresGpu = 'NVIDIA'; Optional = $true }
 >>"%SCRIPT%" echo )
 >>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source $entry.RequiresGpu ([bool]$entry.Optional) }
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Driver Booster's installer registers elevated logon tasks (scheduler, auto-update, "SkipUAC")
+>>"%SCRIPT%" echo # and launches the app. Strip every IObit autostart, task, service and background process; the
+>>"%SCRIPT%" echo # app itself stays and runs normally when opened. Idempotent; exit 1 if anything survived.
+>>"%SCRIPT%" echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"
+>>"%SCRIPT%" echo if ($LASTEXITCODE -ne 0) { Add-Failure 'Driver Booster autostart cleanup' }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Discord and Discord Canary: direct downloads run with Discord's own -s switch. winget cannot do
 >>"%SCRIPT%" echo # this - its manifests carry no switches (the maintainers removed --silent), so winget shows the

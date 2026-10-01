@@ -675,7 +675,24 @@ optional `Source` for msstore-only packages). Every entry is verified after inst
 that failed is listed at the end, with the script exiting non-zero.
 
 **Scoop:** Chrome, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet (HKCU Run entry added, since the Scoop build has no autostart), Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
-**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, NVIDIA App (msstore)
+**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, Driver Booster, NVIDIA App (msstore)
+
+> **Driver Booster is installed, then stripped of everything it starts on its own.** The IObit
+> installer (14.0.1) registers three scheduled tasks, all `RunLevel Highest`: *Driver Booster
+> Scheduler* and *Driver Booster Update* at every logon, and *Driver Booster SkipUAC (<user>)*,
+> which lets the app open elevated without a UAC prompt. It also launches the app at the end of the
+> install. `sources\remove-driver-booster-autostart.ps1` runs right after the winget loop and
+> removes every task, service, kernel driver, Run/RunOnce value, Startup-folder shortcut and
+> process whose path is under an `\IObit\` folder. It matches the folder, not those three names,
+> so renamed or new entries are caught too. It then re-scans and exits 1 if anything survived. The
+> app stays installed and opens normally from its shortcut, with a UAC prompt now. Measured
+> on this machine on 2026-10-01: the cleanup removed 3 tasks and the running app, and a second run
+> was a no-op. Opening the app afterwards re-created nothing (no task, Run value or service after
+> 25 s). An **upgrade** re-runs the installer, though, so `update-all.bat` runs the same cleanup
+> after its winget step. Its auto-update task is gone, so updates come from `update-all.bat`
+> (winget). It moved here from `optional/setup-optional-software.bat`. `setup.tests.ps1` registers
+> a decoy task and Run value under a temp `\IObit\` folder, runs the script under 5.1, and checks
+> both are removed and an unrelated Run value is kept.
 
 > **Docker Desktop is here so `test-local.bat` can actually be run.** Without it the container
 > test only ever runs in GitHub Actions, which is how the fresh-install path went unexercised long
@@ -910,6 +927,7 @@ in `%ProgramFiles%\Patch My PC\Patch My PC Home Updater\`). Order and verificati
 |---|---|---|
 | Scoop | `scoop update`, then `scoop update *` | `scoop status` rows that still have a Latest Version. Held packages are ignored; "Manifest removed" rows are reported as notes, not failures |
 | winget | parse `winget upgrade`, then `winget upgrade --id <id> -e --silent` **per ID** | re-parse the list; anything still there and not in the skip table |
+| Driver Booster autostarts | `sources\remove-driver-booster-autostart.ps1` (an upgrade re-registers its logon tasks) | anything under `\IObit\` still autostarting |
 | Chocolatey | `choco upgrade all -y` | `choco outdated --limit-output` rows not pinned |
 | npm | `npm install -g <pkg>@latest` per outdated package | `npm outdated -g --json` entries whose current differs from latest |
 | Patch My PC | `PatchMyPC-HomeUpdater.exe /s` (silent, no GUI, exits when done) | non-zero exit code |
@@ -1420,7 +1438,7 @@ no-verification shape:
 
 | File | Purpose |
 |---|---|
-| `optional/setup-optional-software.bat` | Additional software installs (Driver Booster, ASUS DriverHub, HYTE Nexus, **Mudfish** — installers here may prompt) |
+| `optional/setup-optional-software.bat` | Additional software installs (ASUS DriverHub, HYTE Nexus, **Mudfish** — installers here may prompt) |
 | `optional/shallow-clone-ffxiv-profiles.bat` | Shallow-clones FFXIV profile repos |
 | `optional/open-rufus-latest.bat` | Opens the latest Rufus |
 

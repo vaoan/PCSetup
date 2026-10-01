@@ -636,6 +636,48 @@ Describe "2-setup-windows" {
             (Test-WingetPackageInstalled -Id 'PatchMyPC.PatchMyPC')
         [bool]$installed | Should -BeTrue
     }
+    It "Driver Booster is in the winget table and its autostarts are stripped after install and upgrade" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match "Id = 'IObit\.DriverBooster'"
+        # The cleanup must run AFTER the winget loop, or the installer re-registers the tasks.
+        $loop = $bat.IndexOf('foreach ($entry in $wingetApps)')
+        $call = $bat.IndexOf('echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"')
+        $call | Should -BeGreaterThan $loop
+        $bat | Should -Match "Add-Failure 'Driver Booster autostart cleanup'"
+        $upd = Get-Content (Join-Path $PSScriptRoot "..\update-all.bat") -Raw
+        $upd.IndexOf('echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"') | Should -BeGreaterThan $upd.IndexOf('Write-Section "winget"')
+        $opt = Get-Content (Join-Path $PSScriptRoot "..\optional\setup-optional-software.bat") -Raw
+        $opt | Should -Not -Match 'winget install --id IObit\.DriverBooster'
+    }
+    It "remove-driver-booster-autostart removes IObit tasks and Run values and nothing else" -Skip:(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or $IsCI) {
+        # Decoys under a temp "\IObit\" folder: the script matches by install path, so these must go,
+        # and an unrelated Run value must survive. Run under Windows PowerShell 5.1, like the setup.
+        $root = Join-Path $env:TEMP ("pcsetup-iobit-" + [guid]::NewGuid().ToString('N'))
+        $exe = Join-Path $root 'IObit\Driver Booster\Fake.exe'
+        New-Item -ItemType Directory -Path (Split-Path $exe) -Force | Out-Null
+        Set-Content -LiteralPath $exe -Value '' -Encoding ASCII
+        $taskName = 'PCSetup Test IObit Decoy'
+        $runKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+        try {
+            Register-ScheduledTask -TaskName $taskName -Action (New-ScheduledTaskAction -Execute $exe) -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Force | Out-Null
+            Set-ItemProperty -Path $runKey -Name 'PCSetupTestIObit' -Value "`"$exe`" /tray"
+            Set-ItemProperty -Path $runKey -Name 'PCSetupTestKeep' -Value "`"$root\Other\Keep.exe`""
+            $script = Join-Path $PSScriptRoot '..\sources\remove-driver-booster-autostart.ps1'
+            $saved = $env:PSModulePath; $env:PSModulePath = $null
+            try { $out = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $script 2>&1 | Out-String }
+            finally { $env:PSModulePath = $saved }
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            (Get-ItemProperty -Path $runKey).PSObject.Properties.Name | Should -Not -Contain 'PCSetupTestIObit'
+            (Get-ItemProperty -Path $runKey).PSObject.Properties.Name | Should -Contain 'PCSetupTestKeep'
+            $out | Should -Match 'no IObit autostarts left'
+        }
+        finally {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $runKey -Name 'PCSetupTestIObit', 'PCSetupTestKeep' -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # ─────────────────────────────────────────────
