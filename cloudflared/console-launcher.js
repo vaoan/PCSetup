@@ -19,6 +19,8 @@
     { group: 'Orrery',        sub: 'Fresh',      title: 'Orrery (Fresh)'            },
     { group: 'PCSetup',       sub: 'Persistent', title: 'PCSetup (Persistent)'      },
     { group: 'PCSetup',       sub: 'Fresh',      title: 'PCSetup (Fresh)'           },
+    { group: 'FFXIV Profiles', sub: 'Persistent', title: 'FFXIV Profiles (Persistent)' },
+    { group: 'FFXIV Profiles', sub: 'Fresh',      title: 'FFXIV Profiles (Fresh)'      },
   ];
 
   const GROUP_COLORS = {
@@ -29,6 +31,7 @@
     'AeleOS':      '#e0a54a',
     'Orrery':      '#8fa8c8',
     'PCSetup':     '#4f8fdf',
+    'FFXIV Profiles': '#c9a227',
   };
 
   const PRIVATE_KEYS = window.__SSHWIFTY_PRIVATE_KEYS__ || {};

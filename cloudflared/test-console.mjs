@@ -71,6 +71,8 @@ const presetTitles = [
   'AeleOS (Fresh)',
   'PCSetup (Persistent)',
   'PCSetup (Fresh)',
+  'FFXIV Profiles (Persistent)',
+  'FFXIV Profiles (Fresh)',
 ];
 
 console.log('\nVerifying quick-connect buttons...');

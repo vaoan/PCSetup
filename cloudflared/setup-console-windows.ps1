@@ -205,7 +205,9 @@ if (Test-Path $sshwiftyKeyDir) {
         @{ Title = 'Orrery (Persistent)';      KeyBase = 'orrery' },
         @{ Title = 'Orrery (Fresh)';           KeyBase = 'orrery-shell' },
         @{ Title = 'PCSetup (Persistent)';     KeyBase = 'pcsetup' },
-        @{ Title = 'PCSetup (Fresh)';          KeyBase = 'pcsetup-shell' }
+        @{ Title = 'PCSetup (Fresh)';          KeyBase = 'pcsetup-shell' },
+        @{ Title = 'FFXIV Profiles (Persistent)'; KeyBase = 'ffxiv-profiles' },
+        @{ Title = 'FFXIV Profiles (Fresh)';      KeyBase = 'ffxiv-profiles-shell' }
     )
 
     $serverFingerprint = Get-WslHostFingerprint -DistroName $distro
@@ -222,7 +224,7 @@ if (Test-Path $sshwiftyKeyDir) {
     }
 
     [IO.File]::WriteAllText($sshwiftyConfPath, ($sshwiftyConfig | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding $false))
-    Write-Log "sshwifty presets synchronized (Libra, Eclipse-con, Puck, AeleOS, Orrery, PCSetup) -> $wslSshHost"
+    Write-Log "sshwifty presets synchronized (Libra, Eclipse-con, Puck, AeleOS, Orrery, PCSetup, FFXIV Profiles) -> $wslSshHost"
 } else {
     Fail "Missing generated key directory: $sshwiftyKeyDir. Run setup-console-wsl.sh before setup-console-windows.ps1."
 }

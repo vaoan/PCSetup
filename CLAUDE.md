@@ -1503,7 +1503,7 @@ Four hostnames served through a single Cloudflare Zero Trust tunnel, all requiri
 | Hostname | Purpose |
 |---|---|
 | `tools.ffxiv.be` | Dashboard — links to all dev tools |
-| `console.ffxiv.be` | SSH web client (sshwifty) with 14 quick-connect presets |
+| `console.ffxiv.be` | SSH web client (sshwifty) with 16 quick-connect presets |
 | `dev.ffxiv.be` | Direct SSH to WSL (for native SSH clients) |
 | `code.ffxiv.be` | VS Code in the browser (code-server) |
 | `ttyd.ffxiv.be` | Phone-friendly terminal — landing page with Persistent/Fresh buttons |
@@ -1856,6 +1856,8 @@ Each preset uses a unique ED25519 key embedded in `sshwifty.conf.json`. The forc
 | Puck Fresh | *(plain bash)* | `/mnt/z/Github/puck` |
 | PCSetup Persistent | `pcsetup` | `/mnt/z/Users/Heiner/Documents/PCSetup` |
 | PCSetup Fresh | *(plain bash)* | `/mnt/z/Users/Heiner/Documents/PCSetup` |
+| FFXIV Profiles Persistent | `ffxiv-profiles` | `/mnt/z/Users/Heiner/Documents/Juegos/FFXIV/Profiles` |
+| FFXIV Profiles Fresh | *(plain bash)* | `/mnt/z/Users/Heiner/Documents/Juegos/FFXIV/Profiles` |
 
 Persistent = `tmux new-session -A` (attach or create). Fresh = `exec bash -l` (new shell every time).
 

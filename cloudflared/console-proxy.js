@@ -38,6 +38,8 @@ const PRIVATE_KEY_FILES = {
   'Orrery (Fresh)': 'orrery-shell',
   'PCSetup (Persistent)': 'pcsetup',
   'PCSetup (Fresh)': 'pcsetup-shell',
+  'FFXIV Profiles (Persistent)': 'ffxiv-profiles',
+  'FFXIV Profiles (Fresh)': 'ffxiv-profiles-shell',
 };
 
 // One unreadable key must not take the whole proxy down. These are read at module

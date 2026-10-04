@@ -14,6 +14,7 @@ ECLIPSE_DIR="/mnt/z/Github/eclipse-con"
 LIBRA_DIR="/mnt/z/Github/libra"
 PUCK_DIR="/mnt/z/Github/puck"
 AELEOS_DIR="/mnt/z/Github/aeleos"
+FFXIV_PROFILES_DIR="/mnt/z/Users/Heiner/Documents/Juegos/FFXIV/Profiles"
 CODE_USER=$(getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" && $7 !~ /(false|nologin)$/ { print $1; exit }')
 if [ -z "$CODE_USER" ]; then
     CODE_USER="root"
@@ -64,6 +65,8 @@ ensure_keypair "$SSHWIFTY_KEY_DIR/orrery" 'sshwifty-orrery'
 ensure_keypair "$SSHWIFTY_KEY_DIR/orrery-shell" 'sshwifty-orrery-shell'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup" 'sshwifty-pcsetup'
 ensure_keypair "$SSHWIFTY_KEY_DIR/pcsetup-shell" 'sshwifty-pcsetup-shell'
+ensure_keypair "$SSHWIFTY_KEY_DIR/ffxiv-profiles" 'sshwifty-ffxiv-profiles'
+ensure_keypair "$SSHWIFTY_KEY_DIR/ffxiv-profiles-shell" 'sshwifty-ffxiv-profiles-shell'
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-terminal"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/wsl-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/libra"
@@ -78,6 +81,8 @@ restrict_key_permissions "$SSHWIFTY_KEY_DIR/orrery"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/orrery-shell"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup"
 restrict_key_permissions "$SSHWIFTY_KEY_DIR/pcsetup-shell"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/ffxiv-profiles"
+restrict_key_permissions "$SSHWIFTY_KEY_DIR/ffxiv-profiles-shell"
 
 # Remove stale code-server apt sources from older installs so apt-get update works on fresh machines.
 if [ -f /etc/apt/sources.list.d/code-server.list ] && grep -q 'packagecloud.io/coder/code-server/any' /etc/apt/sources.list.d/code-server.list; then
@@ -164,10 +169,12 @@ command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session 
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Github/Orrery && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/orrery-shell.pub") sshwifty-orrery-shell
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s pcsetup -c /mnt/z/Users/Heiner/Documents/PCSetup'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup.pub") sshwifty-pcsetup
 command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd /mnt/z/Users/Heiner/Documents/PCSetup && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/pcsetup-shell.pub") sshwifty-pcsetup-shell
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; exec tmux new-session -A -s ffxiv-profiles -c $FFXIV_PROFILES_DIR'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/ffxiv-profiles.pub") sshwifty-ffxiv-profiles
+command="bash -c '/usr/local/bin/mount-windows-drives.sh; cd $FFXIV_PROFILES_DIR && exec bash -l'",no-port-forwarding,no-X11-forwarding,no-agent-forwarding $(cat "$SSHWIFTY_KEY_DIR/ffxiv-profiles-shell.pub") sshwifty-ffxiv-profiles-shell
 AUTHKEYS
 
 chmod 600 /root/.ssh/authorized_keys
-echo "[setup-console-wsl] authorized_keys written (8 keys = 8 console presets)"
+echo "[setup-console-wsl] authorized_keys written ($(grep -c '^command=' /root/.ssh/authorized_keys) keys = console presets)"
 
 # -- 3b. CLI wrappers for Windows-hosted tools --------------------------------
 cat > /usr/local/bin/claude << WRAPPER
