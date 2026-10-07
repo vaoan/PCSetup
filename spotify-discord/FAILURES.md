@@ -172,7 +172,9 @@ referenced but missing here, or if a documented auto-heal has no detector in the
   does not either.
 - **Status:** `manual`. Deploying means re-fetching on the box after pushing.
 - **Check:** compare `md5sum` of `/opt/spotify-discord/{bot,dj,accounts}.js` against the repo
-  (normalise line endings first). Verified identical on 2026-08-30.
+  (normalise line endings first). Verified identical on 2026-08-30. **Not identical on
+  2026-10-07:** the box's `accounts.js` predated the TSDoc pass (comments only, no logic). It was
+  replaced in the YouTube deploy, after which all four files matched the commit by sha256.
 - **Same class of bug** as the WSL console proxies documented in the root `CLAUDE.md`, which served
   dead hostnames for days for exactly this reason.
 

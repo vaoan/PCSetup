@@ -226,6 +226,24 @@ journalctl -u go-librespot -n 50 --no-pager                     # the real error
 alone changes nothing. Current copies were verified byte-identical to this repo, so keep it that
 way; drift here is invisible and behaves like a phantom bug.
 
+The procedure used for the YouTube deploy (2026-10-07), and the one to reuse:
+
+1. **Playback gate.** Read `/status`; go on only if `stopped` or `paused` is true.
+2. **Fetch by commit SHA, not `main`:**
+   `https://raw.githubusercontent.com/<owner>/PCSetup/<full sha>/spotify-discord/<file>`. raw's
+   `main` is cached for minutes after a push; a SHA URL is exact.
+3. **Verify before installing:** `sha256sum -c` against the hashes of the committed blobs
+   (`git cat-file blob HEAD:spotify-discord/<file>`, hashed locally), then `node --check` each file.
+4. **Back up** the running files to `/opt/spotify-discord/backup-<stamp>/`, install, and restart
+   **only** `spotify-discord-bot`. go-librespot keeps its session.
+5. **Prove it came up:** wait for `registered N guild slash commands` in the journal since the
+   restart. If it does not appear, restore the backup and restart again.
+
+> **Drift found during that deploy:** the box's `accounts.js` differed from the repo. The diff
+> was TSDoc comments only (the box had a copy from before the documentation pass), so replacing it
+> changed no behaviour, but the "verified byte-identical" line above had stopped being true without
+> anyone noticing. That is SD-011 doing exactly what it says.
+
 ---
 
 ## Slash commands
@@ -423,6 +441,82 @@ Two defects in the healer were found **by this testing** and fixed: `api_code` a
 > **Spotify ToS / privacy:** go-librespot is a reverse-engineered client, so keep the bot private to
 > your own server. While the bridge plays, "Discord" is the account's active device — one stream at
 > a time. Expect ~1–2 s latency.
+
+---
+
+## How the YouTube source was built (2026-10-06 / 07)
+
+The record of what was done, in order, so the next change starts from facts.
+
+**1. Feasibility first, on the live box, without touching the services.** Every probe ran from a
+throwaway folder (`/tmp/yttest`, later `/root/yttest`) with a downloaded yt-dlp, and the folder was
+deleted afterwards. Both services were checked `active` before and after each run.
+
+| Probe | Result |
+|---|---|
+| yt-dlp 2026.08.19, no cookies | 1 of 5 videos; the rest `Sign in to confirm you're not a bot` |
+| Player clients `tv`, `web_safari`, `mweb`, `android_vr`, `ios`, `web_embedded` | 0–1 of 5 each (`android_vr` resolved one but its stream was 403) |
+| `bgutil` PO-token provider 2.0.1 (HTTP server built from source, plugin loaded) | 0 of 5 |
+| Signed-in cookies, `ffmpeg -i <googlevideo URL>` | 5 of 6, one 403 (SD-017) |
+| Signed-in cookies, `yt-dlp -o - \| ffmpeg` | **8 of 8** |
+| Search (`ytsearch`) and playlist expansion | worked even without cookies |
+
+Conclusion: the block is on the IP. Only cookies get past it (SD-015).
+
+**2. Design choices.**
+- **One queue** for both services rather than a separate `/yt` command: `track.source` routes
+  playback, and everything else (card, `/queue`, `/skip`) treats both alike.
+- **A second audio source in `bot.js`**, not a second player: the FIFO transcoder stops while a
+  YouTube track plays and restarts when it ends. go-librespot is paused first, so the pipe is quiet.
+- **Spotify wins a conflict**: a `playing` event from go-librespot during a YouTube track means
+  someone used the Spotify app, so the YouTube track stops.
+- **Cookies are written back** after each successful yt-dlp run (per-run copy, atomic rename), so the
+  session YouTube keeps refreshing is not lost.
+- **Radio stays Spotify-only**, and a plain song name searches YouTube only when Spotify search is
+  not configured.
+
+**3. Tested on the VPS before deploying** by copying `youtube.js` to a temp folder and driving it
+with a Node script: watch link (with `&list=`, so one video), `youtu.be`, a 100-entry playlist,
+`yt:` search, plain search, and a bad id (readable error). It streamed a 19 s video as exactly 19.0 s
+of PCM. That run found **SD-018** (a stopped track's yt-dlp kept running), fixed with process-group
+kills and the zipapp build, and re-tested clean: no leftover process, no temp cookie copy.
+
+**4. Bugs found in our own tooling along the way**, all fixed:
+- `set-youtube-cookies.ps1` under Windows PowerShell 5.1 prefixed a UTF-8 BOM to everything piped
+  to a native command (`\xEF\xBB\xBFset: command not found` on the VPS). The same pipe carried the
+  base64 into `gh secret set`, so the first secret was set again after the fix. The script now sets
+  a BOM-less `$OutputEncoding` and `[Console]::InputEncoding`.
+- The same script, started from pwsh, inherited PS7's `PSModulePath`, the repo-wide 5.1 trap. It
+  now points 5.1 at its own module folders.
+- Bash scripts sent through `vps-ssh.ps1 -Script` must be LF, and ffmpeg inside them needs
+  `-nostdin`, or it reads the rest of the script from stdin as keyboard commands.
+
+**5. Deploy:** commit `22701e9`, deployed with the procedure under *Operating it*. yt-dlp (zipapp)
+and `yt-dlp-update.timer` were installed by hand to match what `setup-cloud.sh` now does. Only the
+bot restarted; it re-registered 22 commands, rejoined its voice channel and resumed the pipe.
+Backup: `/opt/spotify-discord/backup-20261007-044905`.
+
+**6. Cookies, saved whole and restorable** (commit `d4453a7`): the live file on the box (2954
+bytes; yt-dlp had trimmed the original 4357-byte export to the youtube.com cookies) is stored in
+`YOUTUBE_COOKIES_B64`, with its sha256 matched against the VPS file before saving.
+
+| To | Do |
+|---|---|
+| Save the current session | `cloud\set-youtube-cookies.ps1 -FromVps` |
+| Replace with a new export | `cloud\set-youtube-cookies.ps1 -SetSecret -DeleteSource` |
+| Restore on a rebuilt VPS | pass `YOUTUBE_COOKIES_B64` to `setup-cloud.sh` |
+| Restore by hand | decode the secret to a file, then `set-youtube-cookies.ps1 -Path <file>` |
+
+**Still open:**
+- No YouTube track has been played through Discord yet. The module, the stream and the deploy were
+  verified on the box, but `/play` needs a person in a voice channel.
+- **The VPS SSH key is not stored as a secret.** It came back from
+  `PCSetup-format-backup-2026-09-29\.ssh` into `~\.ssh` (ACL: current user only). Without that
+  folder, the only way in is the RackNerd VNC console.
+- **`cloudflared\sync-secrets.bat` does not work on this PC right now:** no
+  `%USERPROFILE%\.pcsetup-sync-passphrase` (a copy sits in the same format backup), and no
+  `openssl.exe`, which it expects from Git for Windows while git here comes from Scoop. So GitHub
+  secrets, the cookie secret included, cannot be pulled to this PC until that is fixed.
 
 ---
 
