@@ -240,6 +240,10 @@ referenced but missing here, or if a documented auto-heal has no detector in the
   session, installs it at `/etc/spotify-discord/youtube-cookies.txt` (600), proves it with three
   lookups from the VPS and updates the `YOUTUBE_COOKIES_B64` secret. No restart: the file is read
   on every track. Use a throwaway Google account; Google can flag an account used this way.
+- **Saved for restore:** `YOUTUBE_COOKIES_B64` holds the whole file. `set-youtube-cookies.ps1
+  -FromVps` copies the live, bot-refreshed file from the box into the secret and refuses unless
+  the bytes it stores hash the same as the file on the VPS. `setup-cloud.sh` writes it back on a
+  rebuild. Run `-FromVps` now and then, or the secret ages behind the live session.
 - **Check:** `/status` in Discord says whether cookies are installed.
 
 ## SD-016

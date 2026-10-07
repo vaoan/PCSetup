@@ -10,6 +10,14 @@
 #   2. Export youtube.com with the extension "Get cookies.txt LOCALLY".
 #   3. .\set-youtube-cookies.ps1 -SetSecret -DeleteSource
 #
+# Save the live file (the bot keeps refreshing it on the VPS) back into the secret, whole, so a
+# restore gets the current session rather than the original export:
+#
+#   .\set-youtube-cookies.ps1 -FromVps
+#
+# Restore: setup-cloud.sh writes YOUTUBE_COOKIES_B64 back to the same path on a rebuilt box; on
+# this PC, decode the .secrets value to a file and pass it with -Path.
+#
 # What it does: finds the newest *youtube.com_cookies*.txt in Downloads (or
 # -Path), checks it holds a signed-in session, copies it to
 # /etc/spotify-discord/youtube-cookies.txt (mode 600) over SSH, proves it with a
@@ -22,6 +30,7 @@
 
 param(
     [string]$Path,
+    [switch]$FromVps,
     [switch]$SetSecret,
     [switch]$DeleteSource
 )
@@ -58,7 +67,11 @@ $remotePath = '/etc/spotify-discord/youtube-cookies.txt'
 # owner/name of this checkout's origin, e.g. from https://github.com/<owner>/<name>.git
 $githubRepo = ((git -C $repoRoot remote get-url origin) -replace '^.*github\.com[:/]', '' -replace '\.git$', '').Trim()
 
-function Fail([string]$msg) { Write-Host "X $msg" -ForegroundColor Red; exit 1 }
+function Fail([string]$msg) {
+    Write-Host "X $msg" -ForegroundColor Red
+    if ($script:fetched) { Remove-Item -LiteralPath $script:fetched -Force -ErrorAction SilentlyContinue }
+    exit 1
+}
 function Ok([string]$msg) { Write-Host "OK $msg" -ForegroundColor Green }
 
 function Get-Secret([string]$Key, [string]$Default = $null) {
@@ -68,7 +81,29 @@ function Get-Secret([string]$Key, [string]$Default = $null) {
     return ($line.Line -replace "^$Key=", '').Trim()
 }
 
-# -- 1. find the export -------------------------------------------------------
+$ip = Get-Secret 'RACKNERD_VPS_IP'
+$user = Get-Secret 'RACKNERD_VPS_USER'
+$port = Get-Secret 'RACKNERD_VPS_SSH_PORT' '22'
+$key = Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\libra_prod_ed25519')
+if (-not (Test-Path $key)) { Fail "SSH key not found at $key (set RACKNERD_VPS_SSH_KEY_PATH in .secrets)." }
+$common = @('-i', $key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new')
+
+function Get-RemoteSha256 {
+    $line = & ssh.exe @common -p $port "$user@$ip" "sha256sum $remotePath"
+    if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
+    return ("$line" -split '\s+')[0].ToLower()
+}
+
+# -- 1. find the file: the live one on the VPS, or an export ------------------
+$fetched = $null
+if ($FromVps) {
+    # The live file is the one the bot keeps refreshed; save it whole, exactly as it is on the box.
+    $fetched = Join-Path ([IO.Path]::GetTempPath()) "yt-cookies-from-vps-$([guid]::NewGuid().ToString('N')).txt"
+    & scp.exe @common -P $port -q "${user}@${ip}:$remotePath" $fetched
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $fetched)) { Fail "could not copy $remotePath from the VPS (exit $LASTEXITCODE)" }
+    $Path = $fetched
+    $SetSecret = $true
+}
 if (-not $Path) {
     $dl = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders').'{374DE290-123F-4565-9164-39C4925E467B}'
     $dl = [Environment]::ExpandEnvironmentVariables($dl)
@@ -89,21 +124,16 @@ $login = @('SAPISID', '__Secure-3PSID', 'LOGIN_INFO') | Where-Object { $names -c
 if (-not $login) { Fail 'The file has youtube.com cookies but no signed-in session (no SAPISID / __Secure-3PSID). Sign in first.' }
 Ok "$($yt.Count) youtube.com cookies, signed in ($($login -join ', '))"
 
-# -- 3. copy to the VPS -------------------------------------------------------
-$ip = Get-Secret 'RACKNERD_VPS_IP'
-$user = Get-Secret 'RACKNERD_VPS_USER'
-$port = Get-Secret 'RACKNERD_VPS_SSH_PORT' '22'
-$key = Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\libra_prod_ed25519')
-if (-not (Test-Path $key)) { Fail "SSH key not found at $key (set RACKNERD_VPS_SSH_KEY_PATH in .secrets)." }
-$common = @('-i', $key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new')
-$staging = "/root/.yt-cookies-upload-$([guid]::NewGuid().ToString('N')).txt"
-
-& scp.exe @common -P $port -q $Path "${user}@${ip}:$staging"
-if ($LASTEXITCODE -ne 0) { Fail "scp failed (exit $LASTEXITCODE)" }
-$install = "umask 077; mkdir -p /etc/spotify-discord && chmod 700 /etc/spotify-discord && sed -i 's/\r$//' $staging && mv -f $staging $remotePath && chmod 600 $remotePath && stat -c '%a %s' $remotePath"
-$mode = & ssh.exe @common -p $port "$user@$ip" $install
-if ($LASTEXITCODE -ne 0) { Fail "installing the file on the VPS failed (exit $LASTEXITCODE)" }
-Ok "installed on the VPS as $remotePath (mode/bytes: $mode)"
+# -- 3. copy to the VPS (not with -FromVps: the file came from there) ---------
+if (-not $FromVps) {
+    $staging = "/root/.yt-cookies-upload-$([guid]::NewGuid().ToString('N')).txt"
+    & scp.exe @common -P $port -q $Path "${user}@${ip}:$staging"
+    if ($LASTEXITCODE -ne 0) { Fail "scp failed (exit $LASTEXITCODE)" }
+    $install = "umask 077; mkdir -p /etc/spotify-discord && chmod 700 /etc/spotify-discord && sed -i 's/\r$//' $staging && mv -f $staging $remotePath && chmod 600 $remotePath && stat -c '%a %s' $remotePath"
+    $mode = & ssh.exe @common -p $port "$user@$ip" $install
+    if ($LASTEXITCODE -ne 0) { Fail "installing the file on the VPS failed (exit $LASTEXITCODE)" }
+    Ok "installed on the VPS as $remotePath (mode/bytes: $mode)"
+}
 
 # -- 4. prove it: a real lookup of three videos that are blocked without cookies
 $verify = @'
@@ -140,18 +170,28 @@ if ($SetSecret) {
     } catch { Fail "GH_PAT was rejected by GitHub: $($_.Exception.Message)" }
     $owner = $githubRepo.Split('/')[0]
     if ($me.login -ne $owner) { Fail "GH_PAT belongs to a different account than $owner; not setting the secret." }
-    $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($Path))
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $b64 = [Convert]::ToBase64String($bytes)
+    # The secret must be the whole file: decode what is about to be stored and compare it with
+    # the file on the VPS, byte for byte (sha256).
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $savedHash = ([BitConverter]::ToString($sha.ComputeHash([Convert]::FromBase64String($b64))) -replace '-', '').ToLower()
+    $remoteHash = Get-RemoteSha256
+    if ($FromVps -and $savedHash -ne $remoteHash) { Fail "the copy differs from the file on the VPS (sha256 $savedHash vs $remoteHash); not saving it." }
     $env:GH_TOKEN = $token
     try {
         $b64 | & $gh.Source secret set YOUTUBE_COOKIES_B64 --repo $githubRepo | Out-Null
         $rc = $LASTEXITCODE
     } finally { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue }
     if ($rc -ne 0) { Fail "gh secret set failed (exit $rc)" }
-    Ok "GitHub secret YOUTUBE_COOKIES_B64 updated on $githubRepo"
+    Ok "GitHub secret YOUTUBE_COOKIES_B64 updated on $githubRepo ($($bytes.Length) bytes, sha256 $savedHash$(if ($savedHash -eq $remoteHash) { ', identical to the VPS file' }))"
 }
 
+# The copy pulled from the VPS is a live login; it only existed to be saved.
+if ($fetched) { Remove-Item -LiteralPath $fetched -Force -ErrorAction SilentlyContinue }
+
 # -- 6. the local export is a live login; remove it ---------------------------
-if ($DeleteSource) {
+if ($DeleteSource -and -not $FromVps) {
     Remove-Item -LiteralPath $Path -Force
     if (Test-Path -LiteralPath $Path) { Fail "Could not delete $Path" }
     Ok "deleted the local export $Path"

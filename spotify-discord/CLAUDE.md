@@ -158,7 +158,7 @@ Known-good versions as deployed: go-librespot **0.9.0**, Node **v22**, ffmpeg **
 | `cloud/login-spotify-cloud.sh` | One-time Spotify OAuth on the VPS (needs an SSH `-L 8898` tunnel so your local browser can reach the callback) |
 | `cloud/golibrespot-heal.sh` | **Self-healing watchdog.** Runs every 2 min from `golibrespot-watchdog.timer`; detects the known failure modes and escalates restart -> binary upgrade -> rollback. See *Self-healing* below |
 | `cloud/vps-ssh.ps1` | **How you reach the box.** Runs remote commands / scripts / tunnels over OpenSSH with the key named in the repo `.secrets` (the VPS is key-only since 2026-09-27) |
-| `cloud/set-youtube-cookies.ps1` | Installs / refreshes the YouTube cookies on the box from a Downloads export, proves them with three lookups from the VPS, `-SetSecret` updates `YOUTUBE_COOKIES_B64`, `-DeleteSource` removes the local export (SD-015) |
+| `cloud/set-youtube-cookies.ps1` | Installs / refreshes the YouTube cookies on the box from a Downloads export, proves them with three lookups from the VPS, `-SetSecret` updates `YOUTUBE_COOKIES_B64`, `-DeleteSource` removes the local export. `-FromVps` saves the live file from the box into the secret, whole, checked by sha256 (SD-015) |
 | `cloud/README.md` | VPS install walkthrough |
 
 ### Documentation and tracking (mandatory, and enforced)
