@@ -7,6 +7,10 @@
 // Control playback entirely from your normal Spotify app — pick the "Discord"
 // device from the Connect menu. This bot is just the speaker.
 //
+// YouTube tracks queued with /play take a second path (youtube.js): yt-dlp →
+// ffmpeg → the same audio player, with the FIFO transcoder stopped for the
+// length of the track and restarted when it ends.
+//
 // Env (see .env.example):
 //   DISCORD_BOT_TOKEN          - bot token
 //   DISCORD_GUILD_ID           - server (guild) id
@@ -36,6 +40,7 @@ const {
 } = require('@discordjs/voice');
 const dj = require('./dj');
 const accounts = require('./accounts');
+const youtube = require('./youtube');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -125,12 +130,10 @@ let ffmpeg = null;
  */
 function startStream() {
   ensureFifoKeepAlive();
+  // A YouTube track owns the player; the respawn timer below must not steal it back.
+  if (external) return;
 
-  if (ffmpeg) {
-    ffmpeg.removeAllListeners('exit');
-    try { ffmpeg.kill('SIGKILL'); } catch { /* ignore */ }
-    ffmpeg = null;
-  }
+  stopFifoStream();
 
   // Read the raw pipe (s16le @ PIPE_RATE stereo) → emit s16le @ 48k stereo,
   // which @discordjs/voice's opus encoder consumes directly (StreamType.Raw).
@@ -149,6 +152,83 @@ function startStream() {
   player.play(resource);
   log(`streaming pipe → voice (bitrate=${OPUS_BITRATE}, fec=${OPUS_FEC}, resampler=${RESAMPLER || 'default'})`);
 }
+
+/**
+ * Kill the FIFO transcoder without triggering its respawn.
+ *
+ * The `exit` listener is removed first, so a deliberate stop does not schedule
+ * the 1s restart in {@link startStream}.
+ */
+function stopFifoStream() {
+  if (!ffmpeg) return;
+  ffmpeg.removeAllListeners('exit');
+  try { ffmpeg.kill('SIGKILL'); } catch { /* ignore */ }
+  ffmpeg = null;
+}
+
+// ── Second audio source: YouTube ──────────────────────────────────────────────
+// While a YouTube track plays, `external` holds its stream and the FIFO
+// transcoder is stopped. go-librespot is paused by dj.js before this starts,
+// so nothing is written into the pipe meanwhile (the keep-alive fd still holds
+// it open, so go-librespot never sees ENXIO).
+let external = null;     // { handle, resource, onEnd }
+let externalVolume = 1;  // 0..1, follows /volume
+
+/**
+ * Play a YouTube track through the voice player in place of the FIFO.
+ *
+ * Replacing a previous YouTube track stops it without calling its `onEnd`, so
+ * a skip never double-advances the queue.
+ *
+ * @param track - A YouTube track from `youtube.resolveYouTube`.
+ * @param onEnd - Called once with `{ ok, error? }` when the track finishes on
+ * its own (not when it is stopped or replaced).
+ * @param volume - Starting volume 0..1, matched to go-librespot's.
+ */
+function playExternal(track, onEnd, volume) {
+  if (typeof volume === 'number' && volume >= 0) externalVolume = Math.min(1, volume);
+  stopFifoStream();
+  if (external) { const old = external; external = null; old.handle.stop(); }
+  const handle = youtube.startYouTubeStream(track);
+  const resource = createAudioResource(handle.stdout, { inputType: StreamType.Raw, inlineVolume: true });
+  try { resource.volume?.setVolume(externalVolume); } catch { /* ignore */ }
+  tuneEncoder(resource);
+  external = { handle, resource, onEnd };
+  player.play(resource);
+}
+
+/**
+ * Stop the YouTube track, if any, and hand the player back to the FIFO.
+ *
+ * Does not call the track's `onEnd`: stopping is a decision, not an ending.
+ *
+ * @param opts - `{ resumePipe }` — restart the FIFO transcoder (default true,
+ * when connected).
+ */
+function stopExternal({ resumePipe = true } = {}) {
+  if (!external) return;
+  const old = external;
+  external = null;
+  old.handle.stop();
+  if (resumePipe && connection) startStream();
+}
+
+/**
+ * The YouTube controls `dj.js` drives, injected so the audio path stays here.
+ */
+const externalAudio = {
+  play: playExternal,
+  stop: () => stopExternal(),
+  active: () => external !== null,
+  paused: () => external !== null && player.state.status === AudioPlayerStatus.Paused,
+  pause: () => { if (external) player.pause(); },
+  resume: () => { if (external) player.unpause(); },
+  position: () => (external ? external.resource.playbackDuration : 0),
+  setVolume: (v) => {
+    externalVolume = Math.max(0, Math.min(1, v));
+    try { external?.resource.volume?.setVolume(externalVolume); } catch { /* ignore */ }
+  },
+};
 
 /**
  * Tune the Opus encoder for music quality and packet-loss resilience.
@@ -178,8 +258,22 @@ function tuneEncoder(resource) {
 }
 
 player.on('error', (err) => console.error('[bot] player error:', err.message));
-player.on(AudioPlayerStatus.Idle, () => {
-  // Resource ended (ffmpeg died); startStream's exit handler will respawn it.
+player.on(AudioPlayerStatus.Idle, (oldState) => {
+  // A YouTube track ran out: give the player back to the FIFO and let dj.js
+  // advance. Anything else ending is the FIFO transcoder dying, and its exit
+  // handler respawns it.
+  if (external && oldState && oldState.resource === external.resource) {
+    const ended = external;
+    external = null;
+    // A beat later, so yt-dlp's exit status has landed before it is read.
+    setTimeout(() => {
+      const result = ended.handle.result();
+      ended.handle.stop();
+      if (connection) startStream();
+      try { ended.onEnd(result); } catch (e) { log('youtube onEnd error: ' + e.message); }
+    }, 250);
+    return;
+  }
   log('player idle');
 });
 
@@ -262,7 +356,9 @@ async function connectTo(guild, channelId) {
 
   await entersState(connection, VoiceConnectionStatus.Ready, 20000);
   connection.subscribe(player);
-  startStream();
+  // A YouTube track survives a channel move: the player keeps its resource and
+  // the new connection just subscribes to it.
+  if (!external) startStream();
   log(`connected to voice channel ${channelId}`);
   checkListeners(); // handle joining an already-empty channel
 }
@@ -275,17 +371,22 @@ async function connectTo(guild, channelId) {
  * orphaned transcoder writing into a destroyed connection.
  *
  * Safe to call when not connected.
+ *
+ * @param opts - `{ keepExternal }` — leave a playing YouTube track alone. Used
+ * when moving to another channel, where the track should carry on; a real
+ * leave stops it and tells the DJ engine, so its card does not show a track
+ * that is no longer playing.
  */
-function leaveVoice() {
+function leaveVoice({ keepExternal = false } = {}) {
   if (emptyTimer) { clearTimeout(emptyTimer); emptyTimer = null; }
   if (connection) {
     try { connection.destroy(); } catch { /* ignore */ }
     connection = null;
   }
-  if (ffmpeg) {
-    ffmpeg.removeAllListeners('exit');
-    try { ffmpeg.kill('SIGKILL'); } catch { /* ignore */ }
-    ffmpeg = null;
+  stopFifoStream();
+  if (!keepExternal && external) {
+    stopExternal({ resumePipe: false });
+    try { djEngine?.externalStopped(); } catch { /* ignore */ }
   }
 }
 
@@ -365,12 +466,12 @@ async function ensureVoiceForInteraction(ix) {
   if (!channel) return { error: 'Join a voice channel first, then try again.' };
   const currentId = connection?.joinConfig?.channelId || null;
   if (!connection || currentId !== channel.id) {
-    leaveVoice();
+    leaveVoice({ keepExternal: true });
     await connectTo(ix.guild, channel.id);
   }
   return { channelName: channel.name };
 }
-const djEngine = dj.createDJ({ ensureVoiceForInteraction, leaveVoice });
+const djEngine =dj.createDJ({ ensureVoiceForInteraction, leaveVoice: () => leaveVoice(), audio: externalAudio });
 
 const commands = [
   ...dj.SLASH_COMMANDS,
@@ -456,6 +557,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!connection) {
       return interaction.reply({ content: 'Not connected. Use /summon in a voice channel first.', ephemeral: true });
     }
+    if (external) {
+      return interaction.reply({ content: 'A YouTube track is playing, and it has its own stream. If it is stuck, use `/skip`.', ephemeral: true });
+    }
     startStream();
     return interaction.reply({ content: '🔄 Restarted the audio stream.', ephemeral: true });
   }
@@ -463,8 +567,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.commandName === 'status') {
     const state = connection ? connection.state.status : 'not connected';
     const ff = ffmpeg ? 'running' : 'stopped';
+    const source = external ? 'YouTube' : 'Spotify';
+    const yt = youtube.hasCookies() ? 'on' : 'on, but no cookies (most videos will be blocked)';
     return interaction.reply({
-      content: `Voice: **${state}**\nffmpeg: **${ff}**\nsearch: **${dj.SEARCH_ENABLED ? 'on' : 'off (links only)'}**`,
+      content: `Voice: **${state}**\nsource: **${source}**\nffmpeg (Spotify pipe): **${ff}**\nsearch: **${dj.SEARCH_ENABLED ? 'on' : 'off (links only)'}**\nYouTube: **${yt}**`,
       ephemeral: true,
     });
   }

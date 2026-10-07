@@ -21,6 +21,8 @@ CONFIG_DIR="/root/.config/go-librespot"
 FIFO="/tmp/spotify-discord.fifo"
 ENV_FILE="/etc/spotify-discord.env"
 BIN="/usr/local/bin/go-librespot"
+YTDLP_BIN="/usr/local/bin/yt-dlp"
+YT_COOKIES="/etc/spotify-discord/youtube-cookies.txt"
 
 echo "[setup-cloud] Installing system dependencies..."
 export DEBIAN_FRONTEND=noninteractive
@@ -57,6 +59,32 @@ tar -xzf /tmp/glr.tar.gz -C /usr/local/bin go-librespot
 chmod +x "$BIN"
 rm -f /tmp/glr.tar.gz
 
+# -- yt-dlp (YouTube source, see youtube.js) ----------------------------------
+# The zipapp release (`yt-dlp`, runs on the python3 installed above), not the
+# PyInstaller `yt-dlp_linux`: that one is a bootloader that forks the real
+# Python process, which survived a kill of its parent and kept downloading
+# (SD-018), and it unpacks itself on every start (~300 ms slower per run).
+# `yt-dlp -U` replaces the zipapp in place, which the daily timer below relies
+# on; YouTube changes often enough that a month-old yt-dlp stops working (SD-016).
+YTDLP_ASSET="yt-dlp"
+echo "[setup-cloud] Installing yt-dlp ($YTDLP_ASSET zipapp)..."
+curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$YTDLP_ASSET" -o "$YTDLP_BIN"
+chmod 755 "$YTDLP_BIN"
+
+# -- YouTube cookies (SD-015) --------------------------------------------------
+# YouTube answers almost every request from a datacenter IP with "Sign in to
+# confirm you're not a bot"; a cookies.txt from a signed-in account gets past
+# it. Pass YOUTUBE_COOKIES_B64=... (GitHub Secrets / .secrets). An existing
+# file is kept: the bot writes refreshed cookies back to it, so it is usually
+# newer than the secret. Replace it with cloud/set-youtube-cookies.ps1.
+mkdir -p -m 700 "$(dirname "$YT_COOKIES")"
+if [ -n "${YOUTUBE_COOKIES_B64:-}" ] && [ ! -s "$YT_COOKIES" ]; then
+    echo "$YOUTUBE_COOKIES_B64" | base64 -d > "$YT_COOKIES" 2>/dev/null \
+        && chmod 600 "$YT_COOKIES" \
+        && echo "[setup-cloud] Installed YouTube cookies." \
+        || echo "[setup-cloud] Could not decode YOUTUBE_COOKIES_B64; YouTube will mostly be blocked."
+fi
+
 # -- Restore saved go-librespot credentials (skip OAuth on rebuild) -----------
 # Pass SPOTIFY_GO_LIBRESPOT_STATE_B64=... (from GitHub Secrets / .secrets) to
 # drop the reusable Spotify credentials straight in — no login step needed.
@@ -73,6 +101,7 @@ mkdir -p "$APP_DIR" "$CONFIG_DIR"
 curl -fsSL "$REPO_RAW/bot.js"       -o "$APP_DIR/bot.js"
 curl -fsSL "$REPO_RAW/dj.js"        -o "$APP_DIR/dj.js"
 curl -fsSL "$REPO_RAW/accounts.js"  -o "$APP_DIR/accounts.js"
+curl -fsSL "$REPO_RAW/youtube.js"   -o "$APP_DIR/youtube.js"
 curl -fsSL "$REPO_RAW/package.json" -o "$APP_DIR/package.json"
 curl -fsSL "$REPO_RAW/config.yml"   -o "$CONFIG_DIR/config.yml"
 echo "[setup-cloud] Installing npm dependencies..."
@@ -166,6 +195,31 @@ WantedBy=timers.target
 WD
 systemctl daemon-reload
 systemctl enable golibrespot-watchdog.timer >/dev/null 2>&1 || true
+
+# -- yt-dlp daily self-update (SD-016) ----------------------------------------
+# Safe while a track streams: the updater writes the new zipapp to a temp file
+# and renames it over the old one, so a running yt-dlp keeps the file it opened.
+cat > /etc/systemd/system/yt-dlp-update.service << WD
+[Unit]
+Description=Update yt-dlp (YouTube source for the Discord bridge)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=$YTDLP_BIN --update-to stable
+WD
+cat > /etc/systemd/system/yt-dlp-update.timer <<'WD'
+[Unit]
+Description=Update yt-dlp daily
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+[Install]
+WantedBy=timers.target
+WD
+systemctl daemon-reload
+systemctl enable --now yt-dlp-update.timer >/dev/null 2>&1 || true
 
 # -- First-run check ----------------------------------------------------------
 if ls "$CONFIG_DIR"/*.json >/dev/null 2>&1; then

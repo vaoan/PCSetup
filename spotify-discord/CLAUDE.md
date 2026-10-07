@@ -63,6 +63,35 @@ Discord voice channel
 - **`accounts.js`** swaps which Spotify account go-librespot is logged into (`/login`,
   `/logincode`, `/resetaccount`, `/account`), driving the service via `systemctl` and keeping the
   original login in `state.owner.json`. One account plays at a time.
+- **`youtube.js`** is the second audio source (added 2026-10-06). It resolves YouTube links,
+  playlists and `yt:` searches with yt-dlp, and streams a track as
+  `yt-dlp -o - | ffmpeg → s16le 48 kHz`.
+
+### YouTube path
+
+```
+/play <YouTube link | yt: search>   (or a plain song name when Spotify search is off)
+   ▼
+dj.js queue (same queue as Spotify, track.source = 'youtube')
+   │  pauses go-librespot, then audio.play(track)
+   ▼
+bot.js playExternal  →  youtube.js: yt-dlp -o -  →  ffmpeg (pipe:0 → s16le 48k)
+   ▼
+same AudioPlayer / voice connection   (FIFO transcoder stopped for the track's length)
+```
+
+- **Who owns playback:** for a Spotify track go-librespot is the source of truth and `dj.js` only
+  mirrors it. For a YouTube track `dj.js` is, and go-librespot's events are ignored, **except
+  `playing`**: that means someone pressed play in the Spotify app, and Spotify wins (the YouTube
+  track stops). A 3 s grace period after the switch skips the echo of our own pause.
+- **End of track** is the AudioPlayer going `Idle` with the YouTube resource, not ffmpeg exiting:
+  ffmpeg finishes decoding well before the buffered audio has played. `bot.js` then restarts the
+  FIFO transcoder and calls `dj.js`, which plays whatever is next, from either service.
+- **A channel move keeps the track** (`leaveVoice({ keepExternal: true })`); a real leave
+  (`/leave`, 👋, auto-leave) stops it and calls `djEngine.externalStopped()`.
+- **`/volume`** sets go-librespot and the YouTube inline volume to the same percentage. A YouTube
+  track also starts at go-librespot's current volume.
+- **Radio stays Spotify-only**: it is go-librespot's autoplay.
 
 ### Why it is built this way
 
@@ -87,7 +116,9 @@ Discord voice channel
 | FIFO | `/tmp/spotify-discord.fifo` (created by `ExecStartPre` on both units) |
 | Control API | `127.0.0.1:3678` — HTTP + `/events` WebSocket, loopback only |
 | OAuth callback | `127.0.0.1:8898`, only during interactive login |
-| systemd units | `go-librespot.service`, `spotify-discord-bot.service`, `golibrespot-watchdog.{service,timer}` |
+| systemd units | `go-librespot.service`, `spotify-discord-bot.service`, `golibrespot-watchdog.{service,timer}`, `yt-dlp-update.{service,timer}` |
+| yt-dlp | `/usr/local/bin/yt-dlp`, the zipapp release on the box's python3, self-updated daily. Not the PyInstaller `yt-dlp_linux` (SD-018) |
+| YouTube cookies | `/etc/spotify-discord/youtube-cookies.txt` (600; the bot writes refreshed cookies back) |
 
 Both services are `Restart=on-failure`, enabled at boot. The bot unit is `After=go-librespot.service`
 but does not require it — `dj.js` reconnects its `/events` WebSocket every 2 s on close, so
@@ -113,6 +144,7 @@ Known-good versions as deployed: go-librespot **0.9.0**, Node **v22**, ffmpeg **
 | `bot.js` | Audio path: FIFO reader, ffmpeg, voice connection, auto-join/auto-leave, `/join` `/leave` `/reconnect` `/status` |
 | `dj.js` | DJ engine: queue, search, transport, live player card; drives the go-librespot API + `/events` |
 | `accounts.js` | Swappable Spotify account (`/login`, `/logincode`, `/resetaccount`, `/account`) |
+| `youtube.js` | YouTube source: link/playlist/search resolution and the yt-dlp → ffmpeg stream |
 | `config.yml` | go-librespot config — pipe output, OAuth, fixed callback port, API on 3678 |
 | `package.json` | Node deps. **`@discordjs/voice` ≥ 0.19 is load-bearing** |
 | `.env.example` | Reference for `/etc/spotify-discord.env` |
@@ -126,6 +158,7 @@ Known-good versions as deployed: go-librespot **0.9.0**, Node **v22**, ffmpeg **
 | `cloud/login-spotify-cloud.sh` | One-time Spotify OAuth on the VPS (needs an SSH `-L 8898` tunnel so your local browser can reach the callback) |
 | `cloud/golibrespot-heal.sh` | **Self-healing watchdog.** Runs every 2 min from `golibrespot-watchdog.timer`; detects the known failure modes and escalates restart -> binary upgrade -> rollback. See *Self-healing* below |
 | `cloud/vps-ssh.ps1` | **How you reach the box.** Runs remote commands / scripts / tunnels over OpenSSH with the key named in the repo `.secrets` (the VPS is key-only since 2026-09-27) |
+| `cloud/set-youtube-cookies.ps1` | Installs / refreshes the YouTube cookies on the box from a Downloads export, proves them with three lookups from the VPS, `-SetSecret` updates `YOUTUBE_COOKIES_B64`, `-DeleteSource` removes the local export (SD-015) |
 | `cloud/README.md` | VPS install walkthrough |
 
 ### Documentation and tracking (mandatory, and enforced)
@@ -139,7 +172,7 @@ Two rules apply to any change in this folder:
 
 1. **Every fix and every self-healing behaviour gets a `FAILURES.md` entry, in the same change.**
    Ids are stable and permanent — never renumber, never reuse a retired one.
-2. **Every top-level function in `bot.js` / `dj.js` / `accounts.js` carries a TSDoc block**, ending
+2. **Every top-level function in `bot.js` / `dj.js` / `accounts.js` / `youtube.js` carries a TSDoc block**, ending
    on the line directly above the declaration. Where a function exists because of a known failure,
    tag it `@failureMode SD-0NN` — that tag is the link between the code and the registry.
 
@@ -201,8 +234,10 @@ way; drift here is invisible and behaves like a phantom bug.
 `/remove` `/shuffle` `/clear` `/volume` `/help` (dj.js) · `/join` `/leave` `/reconnect` `/status`
 (bot.js) · `/login` `/logincode` `/resetaccount` `/account` (accounts.js, gated to Manage-Server).
 
-`/play` and `/radio` accept song *names* only when `SPOTIFY_CLIENT_ID`/`SECRET` are set; otherwise
-Spotify links only.
+`/play` and `/radio` search Spotify by song *name* only when `SPOTIFY_CLIENT_ID`/`SECRET` are set.
+Without them `/radio` takes Spotify links only and `/play` sends a song name to YouTube search.
+`/play` always takes YouTube links (video or playlist, up to `YOUTUBE_PLAYLIST_LIMIT` = 100) and
+`yt: <search>`.
 
 ---
 
@@ -373,6 +408,18 @@ Two defects in the healer were found **by this testing** and fixed: `api_code` a
 > before ssh sees them. For anything beyond a simple command, write a `.sh` file and use
 > `-Script` — it is streamed to `bash -s` on the box over stdin and reaches the shell verbatim.
 
+> **YouTube from the VPS needs cookies, and nothing else worked (SD-015).** Measured 2026-10-06
+> before any code was written: no cookies → 1 of 5 videos; every alternative yt-dlp player client
+> and the `bgutil` PO-token provider → 0–1 of 5; signed-in cookies → 8 of 8. The block is on the
+> IP, which none of the workarounds change. When the bot starts saying the cookies have expired,
+> re-export and run `cloud\set-youtube-cookies.ps1 -SetSecret -DeleteSource`; no restart needed.
+
+> **Stream YouTube through yt-dlp, never hand ffmpeg the googlevideo URL (SD-017).** With
+> cookies, `ffmpeg -i <url>` was refused with 403 for a video that `yt-dlp -o - | ffmpeg` played.
+
+> **yt-dlp needs a JS runtime for YouTube.** It uses the box's Node (`--js-runtimes node`). Without
+> one, current yt-dlp gets fewer formats or fails to resolve.
+
 > **Spotify ToS / privacy:** go-librespot is a reverse-engineered client, so keep the bot private to
 > your own server. While the bridge plays, "Discord" is the account's active device — one stream at
 > a time. Expect ~1–2 s latency.
@@ -392,3 +439,8 @@ order:
 
 A green `systemctl is-active` and a 200 from `/status` prove the process is *up*, not that it can
 *play*. Prove playback with an actual `POST /player/play`.
+
+**For a YouTube failure** go-librespot is not involved. Read `journalctl -u spotify-discord-bot`
+for `[yt]` lines (yt-dlp's own error is logged there), then run the same lookup by hand:
+`yt-dlp --cookies <copy of the cookies file> --js-runtimes node -g <url>`. Use a copy, because
+yt-dlp rewrites the cookie file on exit.

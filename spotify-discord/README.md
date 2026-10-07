@@ -33,18 +33,37 @@ bot.js  →  ffmpeg (44.1 kHz → 48 kHz)  →  @discordjs/voice (v8)  →  voic
   `spotify-discord-bot`), enabled at boot. A real VPS has clean outbound UDP, so
   Discord voice and the OAuth callback just work — no networking workarounds.
 
+### YouTube
+
+`/play` also takes **YouTube links** (a video or a whole playlist) and `yt: <search>`,
+into the same queue as Spotify tracks. Those bypass go-librespot:
+
+```
+/play <YouTube link>  →  yt-dlp (downloads, -o -)  →  ffmpeg → s16le 48 kHz  →  same voice player
+```
+
+While a YouTube track plays, go-librespot is paused and the pipe is set aside; when it
+ends, the next queued track plays, whichever service it is from. Pressing play in the
+Spotify app (with **Discord** picked) during a YouTube track stops the track and gives
+playback back to Spotify. **The VPS needs YouTube cookies:** YouTube turns down almost
+every request from a datacenter IP ("Sign in to confirm you're not a bot"). Install or
+refresh them with `cloud\set-youtube-cookies.ps1 -SetSecret -DeleteSource` (SD-015 in
+`FAILURES.md`). Expect 5–10 s from `/play` to sound for a YouTube track.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `bot.js` | discord.js bot: reads the pipe, joins voice, streams audio |
 | `dj.js`, `accounts.js` | Bot modules (DJ commands, account handling) |
+| `youtube.js` | YouTube source: resolves links/searches with yt-dlp and streams the audio |
 | `config.yml` | go-librespot config (pipe output, OAuth login, fixed callback port 8898) |
 | `package.json` | Node deps (**`@discordjs/voice` ≥ 0.19** = voice gateway v8) |
 | `.env.example` | Reference for the runtime env the VPS installer writes to `/etc/spotify-discord.env` |
 | `cloud/setup-cloud.sh` | One-command VPS installer (deps, go-librespot, bot, systemd). Pulls the files above from GitHub `main` |
 | `cloud/login-spotify-cloud.sh` | One-time Spotify OAuth over an SSH tunnel |
 | `cloud/vps-ssh.ps1` | Connect to / deploy on the VPS using the `.secrets` entries |
+| `cloud/set-youtube-cookies.ps1` | Install / refresh the YouTube cookies on the VPS, verify them, update the secret |
 
 ## Setup, restore and updates
 
@@ -57,10 +76,13 @@ tunnel. Nothing on this PC needs to be installed or restored after a format.
 
 | Command | Action |
 |---|---|
+| `/play <song, Spotify link, YouTube link, or yt: search>` | Queue it (and start if idle) |
 | `/join` | Pull the speaker into the voice channel you're currently in |
 | `/leave` | Disconnect |
 | `/reconnect` | Restart the audio stream (if it ever stalls) |
-| `/status` | Show voice / ffmpeg / pipe status |
+| `/status` | Show voice / source / ffmpeg / YouTube-cookies status |
+
+The full list (`/radio`, `/skip`, `/queue`, `/player`, ...) is in `CLAUDE.md` and `/help`.
 
 ## Troubleshooting (on the VPS)
 

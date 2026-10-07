@@ -37,6 +37,16 @@ your secrets after the first login) and the installer drops the saved Spotify
 credentials straight in — skipping step 3 entirely. Refresh that secret anytime
 with `ssh root@<vps-ip> "base64 -w0 ~/.config/go-librespot/state.json"`.
 
+**YouTube:** also pass `YOUTUBE_COOKIES_B64='...'` and the installer writes
+`/etc/spotify-discord/youtube-cookies.txt`. It also installs yt-dlp and a daily
+`yt-dlp-update.timer`. Without cookies, YouTube refuses almost every video from a
+VPS IP. To install or refresh them from this PC (export first with **Get cookies.txt
+LOCALLY** on youtube.com):
+
+```powershell
+spotify-discord\cloud\set-youtube-cookies.ps1 -SetSecret -DeleteSource
+```
+
 ## 3. One-time Spotify login (SSH tunnel)
 
 go-librespot's login callback listens on `127.0.0.1:8898` **on the VPS**, but your
@@ -72,14 +82,17 @@ repo on 2026-09-15 — the VPS is the only install.
 |---|---|
 | `setup-cloud.sh` | One-command VPS installer (deps, go-librespot, bot, systemd) |
 | `login-spotify-cloud.sh` | One-time Spotify OAuth over an SSH tunnel |
+| `set-youtube-cookies.ps1` | Install / refresh YouTube cookies on the VPS (run from this PC) |
 
 ## Updating the bot later
 
-`bot.js` / `config.yml` are pulled from GitHub `main` at install time. To update
-after pushing changes:
+The app files are pulled from GitHub `main` at install time. To update after
+pushing changes (check `curl -s 127.0.0.1:3678/status` first; don't restart mid-song):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vaoan/PCSetup/main/spotify-discord/bot.js -o /opt/spotify-discord/bot.js
+for f in bot.js dj.js accounts.js youtube.js; do
+  curl -fsSL "https://raw.githubusercontent.com/vaoan/PCSetup/main/spotify-discord/$f" -o "/opt/spotify-discord/$f"
+done
 systemctl restart spotify-discord-bot
 ```
 

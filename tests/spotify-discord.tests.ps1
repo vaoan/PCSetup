@@ -42,7 +42,7 @@ $DiscoveryRoot = Split-Path -Parent $PSScriptRoot
 $DiscoveryBridge = Join-Path $DiscoveryRoot 'spotify-discord'
 $DiscoveryHealer = Join-Path $DiscoveryBridge 'cloud\golibrespot-heal.sh'
 $DiscoveryRegistry = Join-Path $DiscoveryBridge 'FAILURES.md'
-$DiscoveryLibrary = @('bot.js', 'dj.js', 'accounts.js')
+$DiscoveryLibrary = @('bot.js', 'dj.js', 'accounts.js', 'youtube.js')
 
 # --- collect every top-level declaration that must carry TSDoc ----------------
 $DiscoveryDeclarations = @()
@@ -136,7 +136,7 @@ Describe 'Spotify-Discord bridge: mandatory TSDoc' {
     }
 
     It 'finds the library files to check' {
-        foreach ($file in @('bot.js', 'dj.js', 'accounts.js')) {
+        foreach ($file in @('bot.js', 'dj.js', 'accounts.js', 'youtube.js')) {
             Join-Path $script:Bridge $file | Should -Exist
         }
     }
@@ -327,6 +327,66 @@ Describe 'Spotify-Discord bridge: installer wiring' {
 
     It 'keeps needrestart from bouncing services mid-stream (SD-008)' {
         $script:SetupCloud | Should -BeLike '*nrconf*'
+    }
+
+    It 'deploys every library file, youtube.js included' {
+        # bot.js requires ./youtube; a rebuilt box without it would crash at start.
+        foreach ($file in @('bot.js', 'dj.js', 'accounts.js', 'youtube.js')) {
+            $script:SetupCloud | Should -BeLike "*`$REPO_RAW/$file*"
+        }
+    }
+
+    It 'installs the yt-dlp zipapp and keeps it updated daily (SD-016, SD-018)' {
+        $script:SetupCloud | Should -BeLike '*releases/latest/download/$YTDLP_ASSET*'
+        # Not the PyInstaller yt-dlp_linux: its forked child survives a kill of the parent.
+        $script:SetupCloud | Should -BeLike '*YTDLP_ASSET="yt-dlp"*'
+        $script:SetupCloud | Should -BeLike '*yt-dlp-update.timer*'
+        $script:SetupCloud | Should -BeLike '*--update-to stable*'
+    }
+
+    It 'installs the YouTube cookies from the secret without clobbering a refreshed file (SD-015)' {
+        $script:SetupCloud | Should -BeLike '*YOUTUBE_COOKIES_B64*'
+        $script:SetupCloud | Should -BeLike '*! -s "$YT_COOKIES"*'
+    }
+
+    It 'the installer is LF-only (it runs on Linux)' {
+        $bytes = [System.IO.File]::ReadAllBytes((Join-Path (Split-Path -Parent $PSScriptRoot) 'spotify-discord\cloud\setup-cloud.sh'))
+        ($bytes -contains 13) | Should -BeFalse -Because 'setup-cloud.sh must not contain CR bytes'
+    }
+}
+
+Describe 'Spotify-Discord bridge: YouTube source' {
+
+    BeforeAll {
+        $script:YouTube = Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'spotify-discord\youtube.js') -Raw
+    }
+
+    It 'streams by letting yt-dlp pipe the audio, not by handing ffmpeg the URL (SD-017)' {
+        # ffmpeg -i <googlevideo URL> got HTTP 403 where yt-dlp -o - played.
+        $script:YouTube | Should -Match "'-o', '-'"
+        $script:YouTube | Should -Match "'-i', 'pipe:0'"
+        $script:YouTube | Should -Not -Match "'-g'"
+    }
+
+    It 'gives each yt-dlp run its own cookie copy and saves it back atomically (SD-015)' {
+        $script:YouTube | Should -Match 'copyFileSync\(COOKIES, tmp\)'
+        $script:YouTube | Should -Match 'renameSync\(next, COOKIES\)'
+    }
+
+    It 'recognises the bot-check message, so expired cookies read as such (SD-015)' {
+        $script:YouTube | Should -BeLike '*Sign in to confirm*'
+    }
+
+    It 'kills yt-dlp by process group, so a skipped track leaves no orphan (SD-018)' {
+        $script:YouTube | Should -Match 'detached: true'
+        $script:YouTube | Should -Match 'process\.kill\(-child\.pid'
+        # Every yt-dlp start goes through spawnYtDlp; a bare spawn(YTDLP ...) would not be killable as a group.
+        $script:YouTube | Should -Not -Match 'spawn\(YTDLP, \[\.\.\.baseArgs'
+    }
+
+    It 'passes user input to yt-dlp after --, so it cannot be read as an option' {
+        $script:YouTube | Should -Match "'--', arg"
+        $script:YouTube | Should -Match "'--', track\.url"
     }
 }
 

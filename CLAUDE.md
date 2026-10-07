@@ -2134,13 +2134,25 @@ Spotify app → go-librespot (Connect device, OAuth login) → /tmp/spotify-disc
 > "operation was aborted", `net-state 1 → 6`, never reaches UDP). Networking mode
 > was a red herring *for voice* — the outdated library was the real blocker.
 
-Slash commands: `/join`, `/leave`, `/reconnect`, `/status`.
+> **It also plays YouTube (added 2026-10-06).** `/play` takes YouTube links, playlists and
+> `yt: <search>` into the same queue. Those tracks go yt-dlp → ffmpeg → the same voice player,
+> with go-librespot paused meanwhile (`spotify-discord/youtube.js`). YouTube refuses the VPS's
+> datacenter IP without a signed-in cookies.txt. Measured: 1 of 5 videos without cookies, 8 of 8
+> with them; no player client or PO-token provider helped. When the bot reports expired cookies,
+> re-export with **Get cookies.txt LOCALLY** and run
+> `spotify-discord\cloud\set-youtube-cookies.ps1 -SetSecret -DeleteSource` (SD-015).
+> `YOUTUBE_COOKIES_B64` is the secret; a daily `yt-dlp-update.timer` keeps yt-dlp current.
+
+Slash commands: `/play` (song, Spotify or YouTube link, `yt:` search), `/join`, `/leave`,
+`/reconnect`, `/status`.
 Logs (on the VPS): `journalctl -u go-librespot -u spotify-discord-bot -f`.
 Full details + gotchas in `spotify-discord/README.md`.
 
 | File | Purpose |
 |---|---|
 | `spotify-discord/bot.js`, `dj.js`, `accounts.js` | discord.js bot: reads pipe, joins voice, streams |
+| `spotify-discord/youtube.js` | YouTube source (yt-dlp resolve + `yt-dlp -o - \| ffmpeg` stream) |
+| `spotify-discord/cloud/set-youtube-cookies.ps1` | Install / refresh the YouTube cookies on the VPS and the secret |
 | `spotify-discord/config.yml` | go-librespot config (pipe output + OAuth, callback_port 8898) |
 | `spotify-discord/package.json` | Node deps (`@discordjs/voice` ≥ 0.19) |
 | `spotify-discord/.env.example` | Reference for `/etc/spotify-discord.env` on the VPS |

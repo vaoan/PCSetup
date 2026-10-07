@@ -5,10 +5,15 @@
 // go-librespot's HTTP API (127.0.0.1:3678) and auto-advances the queue using
 // go-librespot's /events WebSocket. Spotify search uses the Web API with an
 // app token (client-credentials) when SPOTIFY_CLIENT_ID/SECRET are set;
-// otherwise it's links-only.
+// otherwise plain text falls back to a YouTube search.
+//
+// YouTube links (and `yt: <search>`) go into the same queue. Those tracks are
+// played by bot.js through yt-dlp instead of go-librespot, which is paused for
+// their duration; see youtube.js.
 
 const WebSocket = require('ws');
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const youtube = require('./youtube');
 
 const LIBRESPOT = process.env.GO_LIBRESPOT_API || 'http://127.0.0.1:3678';
 const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || '';
@@ -170,7 +175,8 @@ async function searchTrack(query, addedBy) {
  * Turn whatever the user typed into a list of queueable tracks.
  *
  * Accepts a Spotify track/album/playlist link or URI (including `intl-xx`
- * localized share links), or free text when search is configured.
+ * localized share links), a YouTube link or `yt: <search>`, or free text —
+ * searched on Spotify when search is configured, on YouTube otherwise.
  *
  * Degrades deliberately when search is off: a *track* link still works, because
  * a bare URI is enough for go-librespot to play and the metadata fills in from
@@ -185,9 +191,10 @@ async function searchTrack(query, addedBy) {
  * @returns `{ tracks, label? }` on success, or `{ error }` to show the user.
  */
 async function resolveInput(input, addedBy) {
+  if (youtube.isYouTubeInput(input)) return youtube.resolveYouTube(input, addedBy);
   const m = input.match(/(?:open\.spotify\.com\/(?:intl-[a-z]+\/)?|spotify:)(track|album|playlist)[/:]([A-Za-z0-9]+)/i);
   if (!m) {
-    if (!SEARCH_ENABLED) return { error: 'Search is off — paste a Spotify track/album/playlist link.' };
+    if (!SEARCH_ENABLED) return youtube.searchYouTube(input, addedBy);
     const t = await searchTrack(input, addedBy);
     return t ? { tracks: [t] } : { error: `No results for “${input}”.` };
   }
@@ -228,31 +235,100 @@ async function resolveInput(input, addedBy) {
  * *next*. That is why the player card reads live state instead of assuming its
  * own queue is authoritative.
  *
+ * YouTube tracks are the exception to that rule: while one plays, this engine
+ * *is* the source of truth, go-librespot is paused, and its events are ignored —
+ * except a `playing` event, which means someone pressed play in the Spotify
+ * app. Spotify wins: the YouTube track stops and playback is theirs.
+ *
  * @param deps - Voice helpers provided by `bot.js`.
  * @param deps.ensureVoiceForInteraction - Pull the bot into the caller's channel.
  * @param deps.leaveVoice - Disconnect from voice and stop the transcoder.
+ * @param deps.audio - The YouTube audio controls (`play`, `stop`, `active`,
+ * `paused`, `pause`, `resume`, `position`, `setVolume`).
  * @returns The engine's public surface: `handleInteraction`, `handleButton`,
- * and read-only `current` / `queue` accessors.
+ * `externalStopped`, and read-only `current` / `queue` accessors.
  */
-function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
+function createDJ({ ensureVoiceForInteraction, leaveVoice, audio }) {
   const queue = [];        // upcoming tracks (reorderable)
   let current = null;      // now playing
   let advancing = false;   // guard against double-advance
   let radioMode = false;   // radio: let go-librespot autoplay drive, don't use our queue
   let paused = false;      // playback paused state (from events)
   let playerMessage = null; // the live "now playing" card message
+  let notifyChannel = null; // where the last command came from, for YouTube errors
+  let switchedAt = 0;       // when a YouTube track last took over from Spotify
+
+  const isYT = (t) => Boolean(t && t.source === 'youtube');
+  // A YouTube track is current *and* its stream is still running.
+  const ytPlaying = () => isYT(current) && audio.active();
+
+  async function spotifyVolume() {
+    try { const v = await api.getVolume(); return v.max ? v.value / v.max : undefined; } catch { return undefined; }
+  }
 
   async function playNext() {
     const t = queue.shift();
-    if (!t) { current = null; try { await api.stop(); } catch {} return; }
+    if (!t) {
+      current = null;
+      if (audio.active()) audio.stop();
+      try { await api.stop(); } catch {}
+      updatePlayerCard();
+      return;
+    }
     current = t;
-    await api.play(t.uri);
-    log(`▶ ${t.name} — ${t.artists}`);
+    paused = false;
+    if (isYT(t)) {
+      // Pause Spotify first, so go-librespot writes nothing into the pipe while
+      // YouTube owns the player (and so its 'playing' can mean a takeover).
+      await api.pause().catch(() => {});
+      switchedAt = Date.now();
+      audio.play(t, onYouTubeEnd, await spotifyVolume());
+    } else {
+      if (audio.active()) audio.stop();
+      await api.play(t.uri);
+    }
+    log(`▶ ${isYT(t) ? '[yt] ' : ''}${t.name} — ${t.artists}`);
+    updatePlayerCard();
+  }
+
+  function onYouTubeEnd(result) {
+    if (result && !result.ok && current) {
+      log(`youtube track failed: ${current.name}: ${result.error}`);
+      let msg = `⚠️ Couldn't play **${current.name}**: ${result.error}`;
+      // Blocked by the bot check (SD-015): every other YouTube track would fail
+      // the same way, so drop them instead of posting one error per track.
+      if (/sign in|blocking the server/i.test(result.error)) {
+        const before = queue.length;
+        for (let i = queue.length - 1; i >= 0; i--) if (isYT(queue[i])) queue.splice(i, 1);
+        if (before > queue.length) msg += ` Removed the other ${before - queue.length} YouTube track(s) from the queue.`;
+      }
+      const ch = notifyChannel || playerMessage?.channel;
+      if (ch && typeof ch.send === 'function') ch.send(msg).catch(() => {});
+    }
+    if (advancing) return;
+    advancing = true;
+    playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
+  }
+
+  // bot.js left voice (👋, /leave, auto-leave) and stopped the YouTube stream.
+  function externalStopped() {
+    if (isYT(current)) { current = null; updatePlayerCard(); }
   }
 
   function onEvent(evt) {
     const type = evt.type;
     const data = evt.data || {};
+    if (ytPlaying()) {
+      // Spotify app pressed play: hand playback over. The grace period skips
+      // the echo of our own pause/play churn around the switch.
+      if (type === 'playing' && Date.now() - switchedAt > 3000) {
+        log('spotify took over from youtube');
+        audio.stop();
+        current = null;
+      } else {
+        return;
+      }
+    }
     if (type === 'playing') paused = false;
     if (type === 'paused') paused = true;
 
@@ -273,7 +349,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
 
     // Advance OUR managed queue only when we have upcoming songs (not radio, not
     // app-driven playback — those manage their own progression).
-    if (!radioMode && type === 'not_playing' && queue.length > 0 && !advancing) {
+    if (!radioMode && type === 'not_playing' && queue.length > 0 && !advancing && !audio.active()) {
       advancing = true;
       playNext().catch((e) => log('advance error:', e.message)).finally(() => { advancing = false; });
     }
@@ -284,6 +360,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   // Backstop: poll go-librespot's status so the card is accurate even for
   // app-driven playback and after missed events. Updates only on change.
   async function syncFromStatus() {
+    if (ytPlaying()) { paused = audio.paused(); return; }
     try {
       const st = await api.status();
       paused = !!st.paused;
@@ -300,12 +377,13 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
 
   // ── Live "now playing" card (embed + control buttons) ───────────────────────
   function buildPlayerEmbed() {
-    const e = new EmbedBuilder().setColor(0x1db954);
+    const e = new EmbedBuilder().setColor(isYT(current) ? 0xff0000 : 0x1db954);
     if (!current) return e.setTitle('⏹️ Nothing playing').setDescription('Start with `/play` or `/radio`.');
     e.setTitle(radioMode ? '📻 Radio' : paused ? '⏸️ Paused' : '▶️ Now Playing')
       .setDescription(`**${current.name}**\n${current.artists || ''}`);
     if (current.albumArt) e.setThumbnail(current.albumArt);
-    const foot = [radioMode ? 'Radio' : `${queue.length} queued`, current.addedBy ? `added by ${current.addedBy}` : null].filter(Boolean).join(' • ');
+    if (current.url) e.setURL(current.url);
+    const foot = [isYT(current) ? 'YouTube' : null, radioMode ? 'Radio' : `${queue.length} queued`, current.addedBy ? `added by ${current.addedBy}` : null].filter(Boolean).join(' • ');
     if (foot) e.setFooter({ text: foot });
     return e;
   }
@@ -333,16 +411,32 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     try {
       await ix.deferUpdate();
       if (action === 'playpause') {
-        // Decide from go-librespot's ACTUAL state, not a possibly-stale flag.
-        const st = await api.status().catch(() => ({}));
-        if (st.paused) { await api.resume(); paused = false; } else { await api.pause(); paused = true; }
+        if (ytPlaying()) { await togglePause(); }
+        else {
+          // Decide from go-librespot's ACTUAL state, not a possibly-stale flag.
+          const st = await api.status().catch(() => ({}));
+          if (st.paused) { await api.resume(); paused = false; } else { await api.pause(); paused = true; }
+        }
       }
       else if (action === 'skip') { if (radioMode) await api.next().catch(() => {}); else await playNext(); }
-      else if (action === 'stop') { queue.length = 0; radioMode = false; await api.pause().catch(() => {}); }
+      else if (action === 'stop') { queue.length = 0; radioMode = false; await stopPlayback(); }
       else if (action === 'leave' && leaveVoice) leaveVoice();
       await updatePlayerCard();
     } catch (e) { log('button', action, 'error:', e.message); }
     return true;
+  }
+
+  async function togglePause() {
+    if (audio.paused()) { audio.resume(); paused = false; } else { audio.pause(); paused = true; }
+  }
+  async function pausePlayback() {
+    if (ytPlaying()) { audio.pause(); paused = true; } else await api.pause().catch(() => {});
+  }
+  async function resumePlayback() {
+    if (ytPlaying()) { audio.resume(); paused = false; } else await api.resume().catch(() => {});
+  }
+  async function stopPlayback() {
+    if (audio.active()) { audio.stop(); current = null; } else await api.pause().catch(() => {});
   }
 
   // ── command implementations ────────────────────────────────────────────────
@@ -387,17 +481,19 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     if (r.error) return ix.editReply(`⚠️ ${r.error}`);
     const seed = r.tracks?.[0];
     if (!seed) return ix.editReply('⚠️ Could not find a seed track.');
+    if (isYT(seed)) return ix.editReply('⚠️ Radio runs on Spotify, so it needs a Spotify song or link. Queue YouTube videos with `/play` instead.');
     // Radio: play the seed, then let go-librespot autoplay continue with similar
     // songs. Our queue is set aside while radio is on.
     radioMode = true;
     queue.length = 0;
+    if (audio.active()) audio.stop();
     current = seed;
     await api.play(seed.uri);
     await ensurePlayerCard(ix.channel);
     return ix.editReply(`📻 Started radio from **${seed.name}** — ${seed.artists}. Similar songs will keep playing. Use \`/skip\` to move on, or \`/play\` to go back to the queue.`);
   }
-  async function cmdPause(ix) { await api.pause().catch(() => {}); return ix.reply('⏸️ Paused.'); }
-  async function cmdResume(ix) { await api.resume().catch(() => {}); return ix.reply('▶️ Resumed.'); }
+  async function cmdPause(ix) { await pausePlayback(); updatePlayerCard(); return ix.reply('⏸️ Paused.'); }
+  async function cmdResume(ix) { await resumePlayback(); updatePlayerCard(); return ix.reply('▶️ Resumed.'); }
   async function cmdClear(ix) { const n = queue.length; queue.length = 0; return ix.reply(`🗑️ Cleared ${n} queued track(s).`); }
   async function cmdShuffle(ix) {
     for (let i = queue.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [queue[i], queue[j]] = [queue[j], queue[i]]; }
@@ -424,17 +520,24 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
       const v = await api.getVolume();
       const max = v.max || 65535;
       await api.setVolume(Math.round((clamped / 100) * max));
+      audio.setVolume(clamped / 100);
       return ix.reply(`🔊 Volume set to ${clamped}%.`);
-    } catch (e) { return ix.reply({ content: `Couldn't set volume: ${e.message}`, ephemeral: true }); }
+    } catch (e) {
+      // go-librespot down should not stop a YouTube track's volume changing.
+      audio.setVolume(clamped / 100);
+      if (ytPlaying()) return ix.reply(`🔊 Volume set to ${clamped}%.`);
+      return ix.reply({ content: `Couldn't set volume: ${e.message}`, ephemeral: true });
+    }
   }
   async function cmdNowPlaying(ix) {
     if (!current) return ix.reply({ content: 'Nothing is playing.', ephemeral: true });
     let pos = 0;
-    try { const st = await api.status(); pos = st.track?.position || 0; } catch {}
+    if (ytPlaying()) pos = audio.position();
+    else { try { const st = await api.status(); pos = st.track?.position || 0; } catch {} }
     const dur = current.durationMs || 0;
-    const filled = dur ? Math.round((pos / dur) * 20) : 0;
+    const filled = dur ? Math.min(19, Math.round((pos / dur) * 20)) : 0;
     const bar = '▬'.repeat(filled) + '🔘' + '▬'.repeat(Math.max(0, 20 - filled - 1));
-    const e = new EmbedBuilder().setColor(0x1db954).setTitle('▶️ Now Playing')
+    const e = new EmbedBuilder().setColor(isYT(current) ? 0xff0000 : 0x1db954).setTitle(isYT(current) ? '▶️ Now Playing · YouTube' : '▶️ Now Playing')
       .setDescription(`**${current.name}**\n${current.artists}`)
       .addFields({ name: '​', value: `${fmtDur(pos)} ${bar} ${fmtDur(dur)}` });
     if (current.url) e.setURL?.(current.url);
@@ -444,7 +547,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   async function cmdQueue(ix) {
     const e = new EmbedBuilder().setColor(0x1db954).setTitle('🎶 Queue');
     const nowLine = current ? `**Now:** ${current.name} — ${current.artists}` : '**Now:** (nothing)';
-    const list = queue.slice(0, 15).map((t, i) => `\`${i + 1}.\` ${t.name} — ${t.artists} \`${fmtDur(t.durationMs)}\``).join('\n');
+    const list = queue.slice(0, 15).map((t, i) => `\`${i + 1}.\` ${isYT(t) ? '`YT` ' : ''}${t.name} — ${t.artists} \`${fmtDur(t.durationMs)}\``).join('\n');
     const more = queue.length > 15 ? `\n…and ${queue.length - 15} more` : '';
     e.setDescription(`${nowLine}\n\n${list || '_Queue is empty — add with_ `/play`'}${more}`);
     e.setFooter({ text: `${queue.length} track(s) queued` });
@@ -455,7 +558,9 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     const joined = await ensureVoiceForInteraction(ix).catch((e) => ({ error: e.message }));
     if (joined && joined.error) return ix.editReply(`⚠️ ${joined.error}`);
     // Make go-librespot the active device: resume/play so audio moves here.
-    if (current) { await api.resume().catch(() => {}); }
+    // A YouTube track moved with us; nothing to resume on Spotify.
+    if (ytPlaying()) { /* already playing here */ }
+    else if (current) { await api.resume().catch(() => {}); }
     else if (queue.length) { await playNext(); }
     else { try { await api.resume(); } catch {} }
     await syncFromStatus();
@@ -475,9 +580,10 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   }
   async function cmdHelp(ix) {
     const e = new EmbedBuilder().setColor(0x1db954).setTitle('🎧 Spotify Bridge — how to use it')
-      .setDescription('I play Spotify into this server. Add songs, reorder the queue, and summon me to your voice channel.')
+      .setDescription('I play Spotify and YouTube into this server. Add songs, reorder the queue, and summon me to your voice channel.')
       .addFields(
-        { name: '▶️ Play / add', value: '`/play <song name or Spotify link>` — search or add a track/album/playlist' + (SEARCH_ENABLED ? '' : ' *(links only — search not configured)*') },
+        { name: '▶️ Play / add', value: '`/play <song name or Spotify link>` — search or add a track/album/playlist' + (SEARCH_ENABLED ? '' : ' *(Spotify search not configured — song names search YouTube)*') },
+        { name: '📺 YouTube', value: '`/play <YouTube link>` — a video or a whole playlist, into the same queue\n`/play yt: <search>` — search YouTube instead of Spotify' },
         { name: '📻 Radio', value: '`/radio <song>` — endless station of similar songs from a seed track' },
         { name: '🔊 Summon', value: '`/summon` — pull me into your voice channel and move playback here\n`/leave` — disconnect me' },
         { name: '⏯️ Controls', value: '`/skip` · `/pause` · `/resume` · `/nowplaying` · `/volume <0-100>`' },
@@ -498,6 +604,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
   async function handleInteraction(ix) {
     const fn = handlers[ix.commandName];
     if (!fn) return false;
+    if (ix.channel && typeof ix.channel.send === 'function') notifyChannel = ix.channel;
     try { await fn(ix); } catch (e) {
       log(`command ${ix.commandName} error:`, e.message);
       const msg = `⚠️ ${e.message}`;
@@ -505,7 +612,7 @@ function createDJ({ ensureVoiceForInteraction, leaveVoice }) {
     }
     return true;
   }
-  return { handleInteraction, handleButton, get current() { return current; }, get queue() { return queue; } };
+  return { handleInteraction, handleButton, externalStopped, get current() { return current; }, get queue() { return queue; } };
 }
 
 /**
@@ -542,8 +649,8 @@ function connectEvents(onEvent) {
  * registering these separately would delete the others.
  */
 const SLASH_COMMANDS = [
-  new SlashCommandBuilder().setName('play').setDescription('Play or queue a song (name or Spotify link)')
-    .addStringOption((o) => o.setName('query').setDescription('Song name or Spotify track/album/playlist link').setRequired(true)),
+  new SlashCommandBuilder().setName('play').setDescription('Play or queue a song (name, Spotify link or YouTube link)')
+    .addStringOption((o) => o.setName('query').setDescription('Song name, Spotify link, YouTube link/playlist, or "yt: search"').setRequired(true)),
   new SlashCommandBuilder().setName('radio').setDescription('Start a radio of similar songs from a seed track')
     .addStringOption((o) => o.setName('query').setDescription('Seed song name or Spotify track link').setRequired(true)),
   new SlashCommandBuilder().setName('summon').setDescription('Bring me into your voice channel and play here'),
