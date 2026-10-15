@@ -50,10 +50,10 @@ if (-not $SkipUninstall) {
     }
 }
 
-Invoke-Step -Label 'Rebuilding the Cloudflare stack from the repo recovery path...' -Action {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'post-format-recovery.ps1')
+Invoke-Step -Label 'Rebuilding the Cloudflare stack with setup-cloudflare.ps1 (the one entry point)...' -Action {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'setup-cloudflare.ps1')
     if ($LASTEXITCODE -ne 0) {
-        throw "post-format-recovery.ps1 failed with exit code $LASTEXITCODE"
+        throw "setup-cloudflare.ps1 failed with exit code $LASTEXITCODE"
     }
 }
 

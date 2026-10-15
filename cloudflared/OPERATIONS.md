@@ -630,7 +630,7 @@ This is the repo-owned smoke test for fresh-machine validation. It:
 
 - syncs secrets unless `-SkipSecretSync` is passed
 - uninstalls the current Cloudflare stack unless `-SkipUninstall` is passed
-- runs `post-format-recovery.ps1`
+- runs `setup-cloudflare.ps1`
 - finishes with `verify-console.ps1`
 
 This is the staging path that should be used to prove the stack can reinstall cleanly from repo state.

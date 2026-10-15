@@ -1,79 +1,19 @@
 # Post-Format Recovery
 
-Guide the user through restoring their Windows PC configuration after a format.
+Restore this PC's Cloudflare setup after a format.
 
-## What to Restore
-
-1. **SSH Tunnel** (pc.ffxiv.be) - Remote SSH access via Cloudflare
-2. **Web Tunnel** (www.ffxiv.be) - Web proxy to localhost:9000
-3. **Claude Code Session** - Persistent tmux session with auto-start
-
-## Recovery Steps
-
-### Step 1: Check Prerequisites
-
-Ask the user to confirm they have installed:
-- [ ] **cloudflared** - https://github.com/cloudflare/cloudflared/releases (Windows amd64 .msi)
-- [ ] **Node.js** - via nvm4w or direct install
-- [ ] **Claude Code** - `npm install -g @anthropic-ai/claude-code`
-
-### Step 2: SSH Tunnel Setup (Priority - enables remote access)
-
-Run in PowerShell as Administrator:
-```powershell
-cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
-.\install-ssh-tunnel.ps1 -MacPublicKey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho heinerangarita@Heiners-MacBook-Air.local"
-```
-
-This will:
-- Install OpenSSH Server
-- Create ssh-config.yml
-- Create scheduled task (ssh-tunnel)
-- Configure SSH key authentication
-- Create desktop shortcut
-
-### Step 3: Web Tunnel Setup (Optional)
-
-If the user needs the web proxy to localhost:9000:
-```powershell
-.\install-tunnel.ps1
-```
-
-This will:
-- Create config.yml
-- Create scheduled task (ffxivbe-tunnel)
-- Create desktop shortcut
-
-### Step 4: Claude Code Persistent Sessions (Optional)
+Run the one entry point (it elevates itself, is unattended, and is safe to re-run):
 
 ```powershell
-cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
+cloudflared\setup-cloudflare.bat   # from the repo root
 ```
 
-## Verification
+It brings up the web tunnel (www/chat.ffxiv.be), the SSH tunnel (pc.ffxiv.be, with OpenSSH Server
+and the Mac key), the web console (console/dev/code/ttyd/tools/git.ffxiv.be), the ConsoleHealth
+watchdog, and then runs `verify-console.ps1`.
 
-After setup, verify everything works:
+Afterwards report: the exit code (0 verified / 1 failures listed at the end / 2 reboot pending,
+resumes at next sign-in), the tail of `%LOCALAPPDATA%\PCSetup\setup-cloudflare.log`, and any
+failing rows in `%USERPROFILE%\.cloudflared\reports\latest.md`.
 
-```powershell
-# Check scheduled tasks
-Get-ScheduledTask -TaskName "ssh-tunnel" | Select TaskName, State
-Get-ScheduledTask -TaskName "ffxivbe-tunnel" | Select TaskName, State
-
-# Test SSH from Mac
-ssh windows-remote
-```
-
-## Key Information
-
-- **SSH Tunnel ID**: `8dffdb51-77cc-43ca-8dc8-8a0c720607a5`
-- **Web Tunnel ID**: `c552cb9c-62bd-4c8b-9ec6-16627b1b8af3`
-- **Mac SSH Key**: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8m6E4YRx8s+55ZLd198jlsppY/w8MIcKtnymXLSYho`
-
-## Mac SSH Config (already configured on Mac)
-
-```
-Host windows-remote
-    HostName pc.ffxiv.be
-    User Heiner
-    ProxyCommand cloudflared access tcp --hostname %h --listener -
-```
+Prerequisite: `0-init-prereqs.bat` has run, so WSL and Ubuntu-24.04 exist.

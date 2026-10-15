@@ -1,5 +1,5 @@
 # download-video.ps1
-# One clipboard-driven downloader for Twitch VODs, YouTube videos, Instagram reels/posts and X (Twitter) posts.
+# One clipboard-driven downloader for Twitch VODs, YouTube videos, Instagram reels/posts, X (Twitter) posts and TikTok videos.
 # Reads the link from the clipboard, detects the site, installs only the tools that site needs
 # (scoop itself included, so it works on a freshly formatted PC), downloads into the Videos
 # folder (Pictures for Instagram photo posts), shows progress in the window, opens Explorer on
@@ -15,6 +15,8 @@
 #   X          yt-dlp + ffmpeg                highest quality; a post flagged sensitive is hidden from guests, so it
 #                                             falls back to the public embed services (fxtwitter, vxtwitter) whose
 #                                             CDN links need no login - or to a cookie export, like Instagram
+#   TikTok     yt-dlp + ffmpeg                highest quality, no watermark; share links (vm.tiktok.com) followed;
+#                                             a cookie export only for age-restricted videos; photo posts unsupported
 #
 # Instagram serves almost nothing without a login (X only hides sensitive-flagged posts) and no tool
 # can read Chrome/Edge cookies on current Windows, so: install the Chrome extension "Get cookies.txt
@@ -23,9 +25,12 @@
 #
 # Optional parameters (for manual runs):
 #   -Url           use this link instead of the clipboard
-#   -MaxHeight     Twitch/YouTube/X resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
+#   -MaxHeight     Twitch/YouTube/X/TikTok resolution cap in pixels, e.g. 720 (default 0 = no cap, best available)
 #   -NoCompress    keep the download as the site serves it (skip the AV1 step)
-#   -Gpu           encode AV1 with NVENC on the GPU instead of SVT-AV1 on the CPU: ~2.5x faster, ~30% bigger files at the same quality
+#   -TwitchCompressMaxHours  Twitch VODs longer than this are kept as downloaded, never AV1-compressed
+#                  (default 2: a 6-hour VOD takes ~5 hours to encode); 0 = compress every length.
+#                  -CompressFile on the finished file still compresses it on purpose.
+#   -Gpu          encode AV1 with NVENC on the GPU instead of SVT-AV1 on the CPU: ~2.5x faster, ~30% bigger files at the same quality
 #   -MinVmaf       the VMAF score (against the source) an encode must keep to replace the original; default 95 = no visible difference
 #   -Recheck       ignore the verdict stamped in a file's comment tag (see "stamps" below) and test it again
 #   -CompressFile  re-encode an existing video file to AV1 in place (any h264 .mp4, e.g. an earlier download) and stop
@@ -43,6 +48,7 @@ param(
     [string]$Url,
     [int]$MaxHeight = 0,
     [switch]$NoCompress,
+    [double]$TwitchCompressMaxHours = 2,
     [switch]$Gpu,
     [double]$MinVmaf = 95,
     [switch]$Recheck,
@@ -60,6 +66,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     $fwd = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -MaxHeight $MaxHeight"
     if ($Url)          { $fwd += " -Url `"$Url`"" }
     if ($NoCompress)   { $fwd += " -NoCompress" }
+    if ($PSBoundParameters.ContainsKey('TwitchCompressMaxHours')) { $fwd += " -TwitchCompressMaxHours $TwitchCompressMaxHours" }
     if ($Gpu)          { $fwd += " -Gpu" }
     if ($Recheck)      { $fwd += " -Recheck" }
     if ($PSBoundParameters.ContainsKey('MinVmaf')) { $fwd += " -MinVmaf $MinVmaf" }
@@ -174,6 +181,17 @@ function Resolve-VideoLink([string]$Url) {
     if ($Url -match '(?i)(?<![A-Za-z0-9-])(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com/(?:i/(?:web/)?status|[A-Za-z0-9_]{1,15}/status(?:es)?)/(\d{5,})') {
         return [pscustomobject]@{ Site = 'x'; Id = $Matches[1]; Kind = 'post' }
     }
+    # TikTok: "/@user/video/<id>" (user optional), the mobile "m.tiktok.com/v/<id>.html", the embed
+    # player, and photo posts (Kind photo - yt-dlp has no extractor for them). The share links
+    # "vm.tiktok.com/<code>", "vt.tiktok.com/<code>" and "tiktok.com/t/<code>" carry no video id
+    # until yt-dlp follows the redirect, so Kind short and the code as Id.
+    if ($Url -match '(?i)tiktok\.com/(?:@[\w.-]*/(video|photo)/|v/|embed/(?:v2/)?)(\d{10,})') {
+        $kind = if ($Matches[1] -ieq 'photo') { 'photo' } else { 'video' }
+        return [pscustomobject]@{ Site = 'tiktok'; Id = $Matches[2]; Kind = $kind }
+    }
+    if ($Url -match '(?i)(?:(?<![A-Za-z0-9-])(?:vm|vt)\.tiktok\.com|tiktok\.com/t)/([A-Za-z0-9]{5,})') {
+        return [pscustomobject]@{ Site = 'tiktok'; Id = $Matches[1]; Kind = 'short' }
+    }
     return $null
 }
 
@@ -249,7 +267,8 @@ function Get-NativeOutput([scriptblock]$Command) {
 # by the job viewer, which gets the two strings from the worker's status file.
 function New-StatusPair {
     $width = try { [Math]::Max(60, [Console]::WindowWidth) } catch { 120 }
-    $st = @{ Shown = $false; Row = -1; Cursor = $true; Width = $width; Bar = ''; Raw = '' }
+    $winWidth = try { [Console]::WindowWidth } catch { 0 }
+    $st = @{ Shown = $false; Row = -1; Cursor = $true; Width = $width; WinWidth = $winWidth; Pending = $false; Bar = ''; Raw = '' }
     $writeAt = {
         param([int]$Row, [string]$Text, [ConsoleColor]$Color)
         if ($Text.Length -gt $st.Width - 1) { $Text = $Text.Substring(0, $st.Width - 1) }
@@ -257,11 +276,30 @@ function New-StatusPair {
         Write-Host -NoNewline $Text.PadRight($st.Width - 1) -ForegroundColor $Color
     }.GetNewClosure()
     $pair = @{}
+    # Two things a person does to the window while it runs, and what each did to the fixed rows:
+    # - Scrolling up: conhost moves the view back to the cursor on every write, so a redraw five
+    #   times a second made the history impossible to read. While the pair's rows are out of view
+    #   nothing is drawn (the latest text is kept) and the next draw after scrolling back catches up.
+    # - Resizing: conhost re-wraps the buffer to the new width, so the two padded lines of the old
+    #   width break into several rows and the remembered row points into the middle of them. On a
+    #   width change the pair is started afresh below the cursor at the new width.
     $pair.Draw = {
         param([string]$Bar, [string]$Raw)
         $st.Bar = $Bar; $st.Raw = $Raw
         try {
             if ($st.Cursor) {
+                if ($st.Shown) {
+                    $w = [Console]::WindowWidth
+                    if ($w -ne $st.WinWidth) {
+                        $st.WinWidth = $w
+                        $st.Width = [Math]::Max(20, $w)
+                        $st.Shown = $false
+                    } elseif ($st.Row -lt [Console]::WindowTop -or ($st.Row + 1) -ge ([Console]::WindowTop + [Console]::WindowHeight)) {
+                        $st.Pending = $true
+                        return
+                    }
+                }
+                $st.Pending = $false
                 if (-not $st.Shown) {
                     if ([Console]::CursorLeft -gt 0) { Write-Host '' }
                     Write-Host ''; Write-Host ''
@@ -288,6 +326,7 @@ function New-StatusPair {
         $st.Shown = $false
     }.GetNewClosure()
     $pair.Redraw = { if ($st.Bar) { & $pair.Draw $st.Bar $st.Raw } }.GetNewClosure()
+    $pair.IsPending = { [bool]$st.Pending }.GetNewClosure()
     $pair.End = {
         if (-not $st.Shown) { return }
         if ($st.Cursor) { try { [Console]::SetCursorPosition(0, $st.Row + 1) } catch {} }
@@ -472,7 +511,9 @@ function Get-VideoSpec([string]$Path, [string]$Ffprobe) {
     $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams v:0 -show_entries 'stream=codec_name,height,r_frame_rate:format=duration' -of csv=p=0 $Path }
     $codec = ''; $height = 0; $fps = 0.0; $seconds = 0.0
     foreach ($line in $lines) {
-        if ($line -match '^([\w-]*),(\d+),(\d+)/(\d+)\s*$') {
+        # A trailing comma is normal: a stream carrying side data (a phone's rotation matrix)
+        # ends its csv row with an empty field, and "h264,1080,30/1," read as no video at all.
+        if ($line -match '^([\w-]*),(\d+),(\d+)/(\d+)[,\s]*$') {
             $codec  = $Matches[1]
             $height = [int]$Matches[2]
             if ([int]$Matches[4] -ne 0) { $fps = [double]$Matches[3] / [double]$Matches[4] }
@@ -646,7 +687,7 @@ function Ensure-Shortcuts {
             $s.TargetPath = $cmdExe
             $s.Arguments = "/c `"$bat`""
             $s.WorkingDirectory = $PSScriptRoot
-            $s.Description = 'Downloads the Twitch, YouTube, Instagram or X link in the clipboard'
+            $s.Description = 'Downloads the Twitch, YouTube, Instagram, X or TikTok link in the clipboard'
             $icon = Join-Path $PSScriptRoot 'download-video.ico'
             $s.IconLocation = if (Test-Path -LiteralPath $icon) { "$icon,0" } else { '%SystemRoot%\System32\imageres.dll,175' }
             $s.Save()
@@ -703,26 +744,30 @@ function Ensure-Shortcuts {
 #   1280x720 30 fps, 0.9 Mbit/s h264:   NVENC p7 hq cq36  105%  VMAF 92.8    SVT-AV1 p4 crf35   52%  VMAF 89.5
 #    608x1080 60 fps, 1.0 Mbit/s h264:  NVENC p7 hq cq36  137%  VMAF 92.1    SVT-AV1 p4 crf35   75%  VMAF 89.3
 # That is why the first Downloads batch kept 79 of 100 files: the fixed cq was both too big and,
-# unnoticed, below the 95 the step promised. So the crf is now found per file: 15 s windows spread
-# over the file are encoded and scored at a few crf values (Find-QualityCrf: bisection, ~5-6
+# unnoticed, below the 95 the step promised. So the crf is now found per file: short windows spread
+# over the file are encoded and scored at a few crf values (Find-QualityCrf: interpolation, ~3
 # probes), the highest crf that still meets the target on those samples encodes the whole file,
 # and the finished file is scored again on DIFFERENT windows before it replaces the original.
 # A file that cannot get smaller without dropping below the target is kept, and the search says
 # so before any full encode is spent on it.
 #
-# Encoder: SVT-AV1 preset 4 on the CPU by default, NVENC AV1 on the GPU with -Gpu. At the same
+# Encoder: SVT-AV1 preset 5 on the CPU by default, NVENC AV1 on the GPU with -Gpu. At the same
 # VMAF, SVT-AV1 preset 4 is ~30% smaller than NVENC (clip 1 above: NVENC cq40 = 70% at 91.7,
 # SVT-AV1 crf35 = 50% at 91.3), preset 4 is ~1% smaller than preset 6 at the same score for ~20%
-# more time, and preset 2 gains nothing more at a third of the speed. NVENC's -tune uhq,
+# more time, and preset 2 gains nothing more at a third of the speed. Preset 5 (since
+# 2026-10-12) sits between 4 and 6: a multi-hour VOD encode is the one cost the crf search cannot
+# shrink, and a fraction of a percent of size is not worth the extra hour. NVENC's -tune uhq,
 # lookahead level 3 and temporal filtering made no difference on AV1 here (identical bytes).
 # Speed on this machine: SVT-AV1 preset 4 ~80 fps at 1080p, ~140 at 720p; NVENC ~215 / ~375 fps.
+# Preset 5 on 3 minutes of 720p25 at crf 30 (2026-10-12): 17.1 s against 22.0 s for preset 4
+# (22 % less time), 0.7 % bigger, VMAF 96.33 against 96.37 - so ~100 fps at 1080p.
 # The worker runs at below-normal priority, so all cores busy still leaves the PC usable; -Gpu is
 # for when the hours matter more than the bytes (a 6 h VOD: ~5 h on the CPU, ~1.7 h on the GPU).
 # av1_nvenc needs an RTX 40/50 card and a driver at least as new as the nvenc API ffmpeg was built
 # against (596.21 failed with ffmpeg 9.0.1, 616.92 works). Windows plays AV1 .mp4 in the stock
 # player once the free "AV1 Video Extension" is installed. An AV1 source is left alone: a third
 # generation is never "without losing quality".
-$script:Av1SvtPreset = '4'
+$script:Av1SvtPreset = '5'
 function Get-Av1EncoderArgs([bool]$UseGpu, [int]$Crf) {
     if ($UseGpu) {
         return @('-c:v', 'av1_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', "$Crf", '-b:v', '0',
@@ -761,72 +806,98 @@ function Get-CompressCandidates([string]$Dir) {
 }
 
 # ---------------------------------------------------------------------------- quality search
-# The windows of a file that the crf search encodes and scores: one of $SampleSeconds per 30 s
-# of file, two at least and six at most, one per equal part of the file - so a short clip is
-# sampled densely (a 2.5-minute one: five windows, half of it) and a 6-hour VOD still costs 90 s
-# of encoding per probe, not hours. -Verify gives a second set that sits BETWEEN the search
+# The windows of a file that the crf search encodes and scores, one per equal part of the file:
+# six at least, one per 10 minutes on a long file, $MaxSamples (20) at most - and never more than
+# $MaxShare (20 %) of the file per probe. Windows are $SampleSeconds long unless that budget
+# forces them shorter (down to $MinSampleSeconds, with two windows as the floor). The old rule -
+# one 15 s window per 30 s, six at most - sampled half of a short clip on EVERY probe, so the
+# search alone encoded a 3-minute clip about three times over (11 of 15 minutes on a 1080p60
+# clip), while a 6-hour VOD got six windows = 0.4 % of it, little enough for the samples to
+# flatter the file and cost a second multi-hour encode. Many short windows cover a short clip
+# better than two long ones (two 15 s windows on a 2.5-minute clip averaged 95.9 where the
+# whole file scored 93.0), and the finished file is scored whole anyway (below).
+# -Verify gives a second set that sits BETWEEN the search
 # windows of the same file, so the check on the finished encode looks at footage the crf was not
-# tuned on. A file no longer than two windows is measured whole, both times - and so is any file
+# tuned on. A file no longer than two minimum windows is measured whole, both times - and so is any file
 # up to $WholeFileMax (30 min) when verifying: the check seeks the source AND the encode to the
 # same second, and on a clip with a start offset and jittery timestamps (an X post: start 0.083,
 # pts 0.083, 0.211, 0.128, 0.086...) the two seeks land on different frames - the finished encode
 # "scored" 37.9 while the same crf's search samples, cut from one file, scored 96.0. Scoring the
 # whole file from frame 0 needs no seek at all and is the definitive number anyway; only a VOD
 # too long for that keeps the windowed check, and a VOD is constant-rate footage that seeks true.
-function Get-SampleWindows([double]$Seconds, [int]$SampleSeconds = 15, [int]$MaxSamples = 6, [switch]$Verify, [int]$WholeFileMax = 1800) {
-    if ($Seconds -le 2 * $SampleSeconds -or ($Verify -and $Seconds -le $WholeFileMax)) { return @([pscustomobject]@{ Start = 0.0; Length = [double]$Seconds }) }
-    $count = [int][Math]::Max(2, [Math]::Min($MaxSamples, [Math]::Floor($Seconds / 30)))
-    $part  = $Seconds / $count
-    $slack = [Math]::Max(0.0, $part - 2 * $SampleSeconds)
+function Get-SampleWindows([double]$Seconds, [double]$SampleSeconds = 15, [int]$MinSamples = 6, [int]$MaxSamples = 20, [double]$MaxShare = 0.2, [double]$MinSampleSeconds = 5, [switch]$Verify, [int]$WholeFileMax = 1800) {
+    if ($Seconds -le 2 * $MinSampleSeconds -or ($Verify -and $Seconds -le $WholeFileMax)) { return @([pscustomobject]@{ Start = 0.0; Length = [double]$Seconds }) }
+    $count  = [int][Math]::Min($MaxSamples, [Math]::Max($MinSamples, [Math]::Ceiling($Seconds / 600)))
+    $length = [Math]::Min($SampleSeconds, $Seconds * $MaxShare / $count)
+    if ($length -lt $MinSampleSeconds) {
+        $length = $MinSampleSeconds
+        $count  = [int][Math]::Max(2, [Math]::Floor($Seconds * $MaxShare / $length))
+    }
+    $length = [Math]::Round($length, 1)
+    $part   = $Seconds / $count
+    $slack  = [Math]::Max(0.0, $part - 2 * $length)
     $out = @()
     for ($i = 0; $i -lt $count; $i++) {
-        $start = if ($Verify) { $i * $part + $SampleSeconds + $slack * 0.75 } else { $i * $part + $slack * 0.25 }
-        $start = [Math]::Max(0.0, [Math]::Min($start, $Seconds - $SampleSeconds))
-        $out += [pscustomobject]@{ Start = [Math]::Round($start, 1); Length = [double]$SampleSeconds }
+        $start = if ($Verify) { $i * $part + $length + $slack * 0.75 } else { $i * $part + $slack * 0.25 }
+        $start = [Math]::Max(0.0, [Math]::Min($start, $Seconds - $length))
+        $out += [pscustomobject]@{ Start = [Math]::Round($start, 1); Length = [double]$length }
     }
     return @($out)
 }
 
-# The highest crf (= smallest file) whose sample encode still scores at least $TargetVmaf, found
-# by walking out from $StartCrf in steps of $Step until a passing and a failing crf bracket the
-# answer and then bisecting - five or six probes instead of a ladder. $Measure is a scriptblock
+# The highest crf (= smallest file) whose sample encode still scores at least $TargetVmaf. VMAF
+# falls almost linearly with crf over a few points (measured: 95.4 / 94.4 / 93.7 / 92.7 / 91.3 at
+# crf 25 / 28 / 30 / 32 / 35, ~0.4 per crf), so each probe after the first is aimed at where the
+# line through the points seen so far crosses the target - $Slope stands in for the line until
+# there are two points - rounded DOWN (the side that passes) and kept strictly inside the bracket.
+# Once a crf passes, the next aim lands on the crf above it, which fails, and that closes the
+# search: typically three probes, where the walk-out-then-bisect it replaced took five or six.
+# A slope that comes out flat or upside down (noise) falls back to a step of $Step. $Measure is a scriptblock
 # taking a crf and returning @{ Vmaf; Ratio } (Ratio = encoded video bytes / source video bytes
 # over the samples). Two ways to come back empty, each with a Reason: even $MinCrf misses the
 # target, or a FAILING crf already comes out at $MaxRatio of the source or more - every lower crf
 # is bigger still, so the file cannot get smaller without visible loss and the search stops at
 # that first probe rather than encoding its way down to the floor.
-function Find-QualityCrf([scriptblock]$Measure, [double]$TargetVmaf, [int]$StartCrf = 35, [int]$MinCrf = 20, [int]$MaxCrf = 55, [double]$MaxRatio = 1.0, [int]$Step = 6) {
+function Find-QualityCrf([scriptblock]$Measure, [double]$TargetVmaf, [int]$StartCrf = 35, [int]$MinCrf = 20, [int]$MaxCrf = 55, [double]$MaxRatio = 1.0, [int]$Step = 6, [double]$Slope = 0.4, [int]$MaxProbes = 10) {
     $seen = @{}
-    $probe = { param([int]$c) if (-not $seen.ContainsKey($c)) { $seen[$c] = & $Measure $c }; return $seen[$c] }
-    $pass = $null; $fail = $null
-    $crf = [Math]::Max($MinCrf, [Math]::Min($MaxCrf, $StartCrf))
-    while ($true) {
-        $m = & $probe $crf
+    $pass = $null; $fail = $null      # highest passing crf, lowest failing crf above it
+    $crf  = [Math]::Max($MinCrf, [Math]::Min($MaxCrf, $StartCrf))
+    while ($seen.Count -lt $MaxProbes) {
+        $m = & $Measure $crf
+        $seen[$crf] = $m
         if ($m.Vmaf -ge $TargetVmaf) {
-            $pass = $crf
-            if ($crf -ge $MaxCrf -or $null -ne $fail) { break }
-            $crf = [Math]::Min($MaxCrf, $crf + $Step)
+            if ($null -eq $pass -or $crf -gt $pass) { $pass = $crf }
         } else {
-            $fail = $crf
             if ($m.Ratio -ge $MaxRatio) {
                 return [pscustomobject]@{ Crf = $null; Vmaf = $m.Vmaf; Ratio = $m.Ratio; Probes = $seen.Count
                     Reason = ('crf {0} is already not smaller ({1:0}% of the source) and only reaches VMAF {2:0.00} of the {3:0.0} the samples must show - every lower crf is bigger still' -f $crf, (100 * $m.Ratio), $m.Vmaf, $TargetVmaf) }
             }
-            if ($crf -le $MinCrf -or $null -ne $pass) { break }
-            $crf = [Math]::Max($MinCrf, $crf - $Step)
+            if ($null -eq $fail -or $crf -lt $fail) { $fail = $crf }
         }
+        # Done: the bracket is closed, or the range ran out on the side the answer lies.
+        if ($null -ne $pass -and $null -ne $fail -and $fail -le $pass) { $pass = $null; foreach ($c in $seen.Keys) { if ($seen[$c].Vmaf -ge $TargetVmaf -and $c -lt $fail -and ($null -eq $pass -or $c -gt $pass)) { $pass = $c } } }
+        if ($null -ne $pass -and ($pass -ge $MaxCrf -or ($null -ne $fail -and $fail - $pass -le 1))) { break }
+        if ($null -eq $pass -and $null -ne $fail -and $fail -le $MinCrf) { break }
+        $lo = if ($null -ne $pass) { $pass + 1 } else { $MinCrf }
+        $hi = if ($null -ne $fail) { $fail - 1 } else { $MaxCrf }
+        # Aim: the line through the two seen points nearest the target, else $Slope from this one.
+        $pts = @($seen.Keys | Sort-Object { [Math]::Abs($seen[$_].Vmaf - $TargetVmaf) } | Select-Object -First 2)
+        $k = $Slope
+        if ($pts.Count -eq 2 -and $pts[0] -ne $pts[1]) {
+            $fit = ($seen[$pts[0]].Vmaf - $seen[$pts[1]].Vmaf) / ($pts[1] - $pts[0])
+            $k = if ($fit -gt 0.02) { $fit } else { 0 }
+        }
+        $from = $pts[0]
+        $aim  = if ($k -gt 0) { [Math]::Floor($from + ($seen[$from].Vmaf - $TargetVmaf) / $k + 1e-9) } elseif ($seen[$from].Vmaf -ge $TargetVmaf) { $from + $Step } else { $from - $Step }
+        $next = [int][Math]::Max($lo, [Math]::Min($hi, $aim))
+        if ($seen.ContainsKey($next)) { break }
+        $crf = $next
     }
     if ($null -eq $pass) {
-        $m = $seen[$MinCrf]
+        $low = @($seen.Keys | Sort-Object)[0]
+        $m = $seen[$low]
         return [pscustomobject]@{ Crf = $null; Vmaf = $m.Vmaf; Ratio = $m.Ratio; Probes = $seen.Count
-            Reason = ('even crf {0} only reaches VMAF {1:0.0} (target {2:0.0})' -f $MinCrf, $m.Vmaf, $TargetVmaf) }
-    }
-    if ($null -ne $fail) {
-        while ($fail - $pass -gt 1) {
-            $mid = [int][Math]::Floor(($pass + $fail) / 2)
-            $m = & $probe $mid
-            if ($m.Vmaf -ge $TargetVmaf) { $pass = $mid } else { $fail = $mid }
-        }
+            Reason = ('even crf {0} only reaches VMAF {1:0.0} (target {2:0.0})' -f $low, $m.Vmaf, $TargetVmaf) }
     }
     $best = $seen[$pass]
     return [pscustomobject]@{ Crf = $pass; Vmaf = $best.Vmaf; Ratio = $best.Ratio; Probes = $seen.Count; Reason = $null }
@@ -947,6 +1018,9 @@ function Measure-Vmaf([string]$Ffmpeg, [string]$Reference, [double]$ReferenceSta
     $logName = 'pcsetup-vmaf-' + [guid]::NewGuid().ToString('N') + '.json'
     $log     = Join-Path $env:TEMP $logName
     $threads = [Math]::Max(2, [Environment]::ProcessorCount)
+    # Every frame is scored. libvmaf's n_subsample looks like a free speed-up and is not: on a
+    # 3-minute 25 fps clip (2026-10-12) the same encode scored 96.37 in full, 96.60 at every 2nd
+    # frame and 96.73 at every 4th - always HIGHER, i.e. it would pass encodes that miss the target.
     $graph = "[0:v]settb=AVTB,setpts=N/$fpsArg/TB,format=yuv420p10le[r];[1:v]settb=AVTB,setpts=N/$fpsArg/TB,format=yuv420p10le[d];[d][r]libvmaf=n_threads=${threads}:log_fmt=json:log_path=$logName"
     $ffArgs = @('-hide_banner', '-loglevel', 'warning', '-stats', '-nostdin', '-y',
                 '-ss', ('{0:0.###}' -f $ReferenceStart), '-t', ('{0:0.###}' -f $Length), '-i', $Reference,
@@ -965,6 +1039,44 @@ function Measure-Vmaf([string]$Ffmpeg, [string]$Reference, [double]$ReferenceSta
         Pop-Location
         Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
     }
+}
+
+# The presentation time of every video frame, in display order, or $null when ffprobe fails. Read
+# from the packet index (no decoding): ~20 s for a 5h45 VOD of 1.24 M frames.
+function Get-FrameTimes([string]$Ffprobe, [string]$Path) {
+    $lines = Get-NativeOutput { & $Ffprobe -v error -select_streams v:0 -show_entries packet=pts_time -of csv=p=0 $Path }
+    $list = New-Object System.Collections.Generic.List[double]
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    foreach ($l in $lines) {
+        $t = 0.0
+        if ([double]::TryParse(([string]$l).Trim().TrimEnd(','), [Globalization.NumberStyles]::Float, $inv, [ref]$t)) { $list.Add($t) }
+    }
+    if ($list.Count -eq 0) { return $null }
+    $a = $list.ToArray()
+    [Array]::Sort($a)
+    return ,$a
+}
+
+# Where to seek in $Distorted so a check window starting at $Start in the reference begins on the
+# SAME frame, as @{ Reference; Distorted } seconds. Seeking both files to the same second is not
+# enough: on 2026-10-12 a 5h45 Twitch VOD (source pts duplicated once at 9.967 s) came out of the
+# encoder with every frame 1/60 s later than in the source - same 1,243,069 frames, same order -
+# so "-ss 10092.4" landed one frame apart in the two files and a crf 37 encode that scored 96.4 in
+# the search "scored" 77.2 (lowest window 58.4, single frames at 0); shifted by one frame the same
+# window read 98. The check then re-encoded the whole VOD at crf 20 (19 GB from 15) for nothing.
+# Matching by frame index fixes it: find the reference frame at $Start and seek the distorted file
+# to the time of its frame with that index. Both starts are moved back half a frame so rounding
+# the seek to milliseconds can never skip the intended frame. Without matching frame counts the
+# plain same-second seek is used.
+function Get-MatchedStart([double[]]$ReferenceTimes, [double[]]$DistortedTimes, [double]$Start, [double]$Fps) {
+    $half = 0.5 / [Math]::Max(1.0, $Fps)
+    if (-not $ReferenceTimes -or -not $DistortedTimes -or $ReferenceTimes.Count -ne $DistortedTimes.Count) {
+        return @{ Reference = $Start; Distorted = $Start; Matched = $false }
+    }
+    $i = [Array]::BinarySearch($ReferenceTimes, $Start - $half)
+    if ($i -lt 0) { $i = -bnot $i }
+    if ($i -ge $ReferenceTimes.Count) { $i = $ReferenceTimes.Count - 1 }
+    return @{ Reference = [Math]::Max(0.0, $ReferenceTimes[$i] - $half); Distorted = [Math]::Max(0.0, $DistortedTimes[$i] - $half); Matched = $true }
 }
 
 # Re-encodes $Path to AV1 in place and returns a one-line summary, or $null when nothing changed.
@@ -1020,7 +1132,7 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
     Write-Ok "Encoder : $encName"
     Write-Ok ("Target  : VMAF {0:0.0} or better against the source (95+ = no visible difference), at the smallest size that still gets there" -f $target)
     $frames  = [long]($before.Seconds * $before.Fps)
-    $typical = if ($useGpu) { 215 } else { 80 }
+    $typical = if ($useGpu) { 215 } else { 100 }
     Write-Ok ("Work    : {0:N0} frames; a crf search on sample windows first, then at the usual ~{1} fps about {2} for the encode, then the quality check" -f $frames, $typical, (Format-Duration ([int]($frames / $typical))))
     Write-Info "Progress below. $(Get-CancelHint) - the original file is kept either way."
     Write-Host ''
@@ -1107,9 +1219,20 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
             $checked = $null
             if (-not $problem) {
                 $scores = @()
+                # Windows that seek (a long file) start on the same frame INDEX in both files, not
+                # the same second - see Get-MatchedStart. Scoring from 0 needs no seek.
+                $refTimes = $null; $encTimes = $null
+                if (@($checks | Where-Object { $_.Start -gt 0 }).Count -gt 0) {
+                    $refTimes = Get-FrameTimes $ffprobe $Path
+                    $encTimes = Get-FrameTimes $ffprobe $temp
+                    if (-not $refTimes -or -not $encTimes -or $refTimes.Count -ne $encTimes.Count) {
+                        Write-Warn ('Frame counts differ (source {0}, encode {1}): the check windows are matched by time only.' -f $(if ($refTimes) { $refTimes.Count } else { '?' }), $(if ($encTimes) { $encTimes.Count } else { '?' }))
+                    }
+                }
                 for ($i = 0; $i -lt $checks.Count; $i++) {
                     $w = $checks[$i]
-                    $v = Measure-Vmaf $Ffmpeg $Path $w.Start $temp $w.Start $w.Length ('Checking crf {0} quality {1}/{2}' -f $crf, ($i + 1), $checks.Count) $pair $before.Fps
+                    $m = if ($w.Start -gt 0) { Get-MatchedStart $refTimes $encTimes $w.Start $before.Fps } else { @{ Reference = 0.0; Distorted = 0.0 } }
+                    $v = Measure-Vmaf $Ffmpeg $Path $m.Reference $temp $m.Distorted $w.Length ('Checking crf {0} quality {1}/{2}' -f $crf, ($i + 1), $checks.Count) $pair $before.Fps
                     if ($null -eq $v) { $problem = "VMAF could not be measured on check window $($i + 1)"; break }
                     $scores += $v
                 }
@@ -1175,6 +1298,13 @@ function Compress-Video([string]$Path, [string]$Ffmpeg) {
 }
 
 # ============================================================================ site: Twitch
+# A Twitch VOD longer than -TwitchCompressMaxHours is kept as downloaded: the AV1 step costs about
+# the VOD's own length in encode time (5h45 at 1080p60: ~5 h on the CPU) and needs ~80 % of the
+# file free again next to it. 0 or less = no limit.
+function Test-TooLongToCompress([double]$Seconds, [double]$MaxHours) {
+    return ($MaxHours -gt 0 -and $Seconds -gt $MaxHours * 3600)
+}
+
 function Invoke-Twitch([string]$VodId) {
     Write-Step 'Checking tools'
     Ensure-Shortcuts
@@ -1200,6 +1330,14 @@ function Invoke-Twitch([string]$VodId) {
     Write-Ok "Streamed: $date"
     Write-Ok "Length  : $(Format-Duration $length)"
     if ($video.game.displayName) { Write-Ok "Game    : $($video.game.displayName)" }
+    $tooLong = (-not $NoCompress) -and (Test-TooLongToCompress $length $TwitchCompressMaxHours)
+    $compressTwitch = {
+        param([string]$File)
+        if (-not $tooLong) { return (Compress-Video $File $ffmpeg) }
+        Write-Step 'Compressing to AV1'
+        Write-Info "Skipped: the VOD is longer than $TwitchCompressMaxHours h, so it is kept as downloaded (the encode would take about as long as the VOD). To compress it anyway: -CompressFile on the file, or -TwitchCompressMaxHours 0."
+        return $null
+    }
 
     # Available qualities come from the m3u8 part of the info output:
     #   #EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="720p60",NAME="720p60",...
@@ -1241,21 +1379,29 @@ function Invoke-Twitch([string]$VodId) {
     # An earlier download of this exact quality that predates the AV1 step is compressed before
     # its folder is opened, so re-running the link on an old h264 file is the way to shrink it.
     Resolve-ExistingVersions -Dir $videosDir -Id $VodId -BaseName $baseName -Tag $tag -ExpectedSeconds $expected -Ffprobe (Get-FfprobePath $ffmpeg) `
-        -BeforeShowExisting { param($existing) $null = Compress-Video $existing $ffmpeg }
+        -BeforeShowExisting { param($existing) $null = & $compressTwitch $existing }
 
     $tempDir = Join-Path $env:TEMP 'TwitchDownloader'
     New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
     # The CLI writes every .ts part into a fresh "<id>_<ticks>" folder under the temp path and never
     # reuses or removes it when a run fails - two failed attempts at a 5-hour VOD left 15 GB behind.
-    # Nothing in there is resumable, so clear it before and after every run.
+    # Nothing in there is resumable, so clear it before and after every run - but never a folder another
+    # run is still writing: a second run (an -Inline test next to a job) deleted a live download's
+    # finished parts on 2026-10-14. Before the run, a folder written in the last 10 minutes is left
+    # alone; after it, only folders that appeared during this run are removed.
+    $isLive  = { param($dir) $newest = Get-ChildItem -LiteralPath $dir.FullName -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                 ($newest -and $newest.LastWriteTime -gt (Get-Date).AddMinutes(-10)) -or $dir.LastWriteTime -gt (Get-Date).AddMinutes(-10) }
     $clearTemp = {
+        param([string[]]$Only)
         Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($Only) { if ($Only -notcontains $_.Name) { return } }
+            elseif (& $isLive $_) { Write-Info "Leaving temp folder $($_.Name) alone: it was written in the last 10 minutes (another download?)"; return }
             try { [IO.Directory]::Delete($_.FullName, $true) } catch { Write-Warn "Could not remove old temp parts $($_.Name): $($_.Exception.Message)" }
         }
     }
-    $stale = @(Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue)
+    $stale = @(Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not (& $isLive $_) })
     if ($stale.Count) {
-        $staleGb = [Math]::Round((Get-ChildItem -LiteralPath $tempDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 1)
+        $staleGb = [Math]::Round(($stale | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Recurse -File -ErrorAction SilentlyContinue } | Measure-Object Length -Sum).Sum / 1GB, 1)
         Write-Warn "Removing $($stale.Count) leftover temp folder(s) from earlier runs ($staleGb GB)"
         & $clearTemp
     }
@@ -1278,7 +1424,7 @@ function Invoke-Twitch([string]$VodId) {
         }
         # The AV1 step afterwards holds the h264 file and its encode side by side until the encode
         # is verified. Not a reason to refuse the download - the step skips itself if space is short.
-        if (-not $NoCompress) {
+        if (-not $NoCompress -and -not $tooLong) {
             $videosRoot = [IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $videosDir).ProviderPath)
             $videosFree = (New-Object IO.DriveInfo $videosRoot).AvailableFreeSpace
             if ($videosFree -lt $needBytes * 1.8) { Write-Warn "AV1 compression afterwards needs ~$([Math]::Round($needBytes * 0.8 / 1GB, 1)) GB more on $videosRoot and will be skipped if that is not free by then." }
@@ -1291,10 +1437,12 @@ function Invoke-Twitch([string]$VodId) {
     $cliArgs = @('videodownload', '--id', $VodId, '-o', $outPath, '-q', $pick.Name, '--threads', '24',
                  '--ffmpeg-path', $ffmpeg, '--temp-path', $tempDir, '--collision', 'Overwrite', '--banner', 'false')
     if ($Ending) { $cliArgs += @('-e', $Ending) }
+    $tempBefore = @(Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $exit = Invoke-Streaming -Tool 'TwitchDownloaderCLI' { & $cli @cliArgs }
     $sw.Stop()
-    & $clearTemp
+    $tempOurs = @(Get-ChildItem -LiteralPath $tempDir -Directory -ErrorAction SilentlyContinue | Where-Object { $tempBefore -notcontains $_.Name } | ForEach-Object { $_.Name })
+    if ($tempOurs.Count) { & $clearTemp -Only $tempOurs }
 
     if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 1MB) {
         $freeNow = [Math]::Round((New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($videosDir))).AvailableFreeSpace / 1GB, 1)
@@ -1303,7 +1451,7 @@ function Invoke-Twitch([string]$VodId) {
     if ($exit -ne 0) { Write-Warn "TwitchDownloaderCLI exited with code $exit but the file exists - check it plays." }
     $downloaded = "{0} MB downloaded in {1} at {2}" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB), (Format-Duration ([int]$sw.Elapsed.TotalSeconds)), $pick.Name
 
-    $compressed = Compress-Video $outPath $ffmpeg
+    $compressed = & $compressTwitch $outPath
     $summary = if ($compressed) { "$downloaded; $compressed" } else { $downloaded }
     Finish $outPath $summary
 }
@@ -1746,6 +1894,99 @@ function Invoke-X([string]$TweetId) {
     Finish $paths[0] $summary
 }
 
+# ============================================================================ site: TikTok
+# yt-dlp's TikTok extractor, which picks the formats without the watermark. Public videos need no
+# login; an age-restricted one does, so the same cookie chain as X/Instagram is tried. TikTok's
+# edge drops the TLS handshake now and then (curl 35 "Connection was reset" / "WRONG_VERSION_NUMBER"
+# on 2 of ~10 calls from this PC on 2026-10-01, the identical call fine a second later), so a
+# network-shaped error is retried before it counts.
+function Invoke-TikTok([string]$Id, [string]$Kind) {
+    if ($Kind -eq 'photo') { Fail "This is a TikTok photo post (slideshow), not a video.`n`nyt-dlp has no support for photo posts, so this tool does not download them." }
+    $cleanUrl = if ($Kind -eq 'short') { "https://vm.tiktok.com/$Id/" } else { "https://www.tiktok.com/@/video/$Id" }
+    Write-Step 'Checking tools'
+    Ensure-Shortcuts
+    Ensure-Scoop
+    $ytdlp  = Resolve-ScoopTool 'yt-dlp' 'yt-dlp'
+    $ffmpeg = Resolve-ScoopTool 'ffmpeg' 'ffmpeg'
+    $cookieSets = Get-LoginSources -CookieFile (Join-Path $env:APPDATA 'PCSetup\tiktok-cookies.txt') -ExportFilters @('*tiktok.com_cookies*.txt') -DomainPattern 'tiktok\.com'
+    $loginHelp = "TikTok only shows this video to a logged-in account (usually an age restriction), and Chrome does not let tools read its login.`n`n" +
+                 "One-time setup (about a minute):`n" +
+                 "1. In Chrome install the extension 'Get cookies.txt LOCALLY' (open source, works offline).`n" +
+                 "2. Open tiktok.com while logged in, click the extension icon, click Export.`n" +
+                 "3. Leave the file in Downloads (www.tiktok.com_cookies.txt) - this tool picks it up on the next run.`n`n" +
+                 "The export stays valid until you log out of TikTok in Chrome. Re-export if downloads start failing again."
+    $netPattern  = 'curl: \(\d+\)|Connection (?:was )?reset|timed out|SSL|TLS|Unable to download webpage'
+    $wallPattern = 'log ?in|cookies|age.?restrict|confirm your age|403|401'
+
+    Write-Step 'Fetching video info'
+    $resKey  = if ($MaxHeight -gt 0) { "res:$MaxHeight" } else { 'res' }
+    $capNote = if ($MaxHeight -gt 0) { "max allowed ${MaxHeight}p" } else { 'best available' }
+    $common  = @('--no-playlist', '-f', 'bv*+ba/b', '-S', "$resKey,fps,vcodec:h264,acodec:m4a,ext:mp4", '--ffmpeg-location', $ffmpeg)
+    $info = $null; $used = $null; $lastErr = ''; $sawLoginWall = $false
+    foreach ($set in $cookieSets) {
+        for ($try = 1; $try -le 3 -and -not $info; $try++) {
+            if ($try -gt 1) { Start-Sleep -Seconds 2 }
+            $raw = Get-NativeOutput { & $ytdlp @common @($set.Args) --no-download --no-warnings --dump-single-json $cleanUrl }
+            $line = $raw | Where-Object { $_ -like '{*' } | Select-Object -First 1
+            if ($line) { $info = ConvertFrom-Json $line; $used = $set; break }
+            $lastErr = ($raw | Where-Object { $_ -match 'ERROR' } | Select-Object -Last 1)
+            if ($lastErr -notmatch $netPattern) { break }
+            Write-Warn "TikTok dropped the connection (attempt $try of 3) - retrying"
+        }
+        if ($info) { break }
+        Write-Warn "yt-dlp with $($set.Name): $lastErr"
+        if ($lastErr -match 'Unsupported URL') { break }
+        if ($lastErr -match $wallPattern -and $lastErr -notmatch $netPattern) { $sawLoginWall = $true } else { break }
+    }
+    if (-not $info) {
+        if ($sawLoginWall) { Fail "$loginHelp`n`nLast error: $lastErr" }
+        Fail "Could not read this TikTok.`n`n$lastErr`n`nThe video may be private or deleted, or TikTok is blocking right now - try again in a minute."
+    }
+    if ($used.Args.Count) { Write-Ok "Using $($used.Name)" }
+    $videoId = if ($info.id) { [string]$info.id } else { $Id }    # a share link's id is only known now
+    $author  = if ($info.uploader) { [string]$info.uploader } elseif ($info.channel) { [string]$info.channel } else { 'tiktok' }
+    $text    = if ($info.description) { [string]$info.description } elseif ($info.title) { [string]$info.title } else { '' }
+    $date    = if ($info.upload_date -match '^(\d{4})(\d{2})(\d{2})$') { "$($Matches[1])-$($Matches[2])-$($Matches[3])" } else { Get-Date -Format 'yyyy-MM-dd' }
+    Write-Ok "Account : $author"
+    Write-Ok "Text    : $(Get-SafeName $text 100)"
+    Write-Ok "Posted  : $date"
+    if ([int]$info.duration) { Write-Ok "Length  : $(Format-Duration ([int]$info.duration))" }
+    Write-Ok "Quality : $($info.format_id) $($info.width)x$($info.height) $($info.vcodec) + $($info.acodec) ($capNote)"
+
+    Write-Step 'Preparing output'
+    $videosDir = Get-KnownFolder 'MyVideos' 'Videos'
+    $safeText  = Get-SafeName $text 60
+    $baseName  = if ($safeText) { "$date $(Get-SafeName $author 40) - $safeText [$videoId]" } else { "$date $(Get-SafeName $author 40) [$videoId]" }
+    $outPath   = Join-Path $videosDir "$baseName.mp4"
+    Write-Ok "Folder  : $videosDir"
+    Write-Ok "File    : $baseName.mp4"
+    if (Test-Path -LiteralPath $outPath) { $null = Compress-Video $outPath $ffmpeg; Show-Existing $outPath }   # an earlier h264 download is shrunk first
+
+    Write-Step 'Downloading'
+    Write-Info "Progress below. $(Get-CancelHint)."
+    Write-Host ''
+    # The resolved page URL, so a share link is not followed a second time.
+    $target   = if ($info.webpage_url) { [string]$info.webpage_url } else { $cleanUrl }
+    $template = $baseName -replace '%', '%%'
+    $dlArgs   = $common + $used.Args + @('--merge-output-format', 'mp4', '-N', '8', '--no-mtime', '--progress', '--force-overwrites',
+                                         '-o', (Join-Path $videosDir "$template.%(ext)s"))
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    for ($try = 1; $try -le 3; $try++) {
+        if ($try -gt 1) { Write-Warn "Retrying the download (attempt $try of 3)"; Start-Sleep -Seconds 2 }
+        $exit = Invoke-Streaming -Tool 'yt-dlp' { & $ytdlp @dlArgs $target }
+        if ((Test-Path -LiteralPath $outPath) -and (Get-Item -LiteralPath $outPath).Length -ge 50KB) { break }
+    }
+    $sw.Stop()
+    if (-not (Test-Path -LiteralPath $outPath) -or (Get-Item -LiteralPath $outPath).Length -lt 50KB) {
+        Fail "Download did not produce a usable file (exit code $exit).`n`nExpected: $outPath`n`nScroll up in the window for yt-dlp's error."
+    }
+    if ($exit -ne 0) { Write-Warn "yt-dlp exited with code $exit but the file exists - check it plays." }
+    $downloaded = "{0} MB downloaded in {1}s at {2}p" -f [Math]::Round((Get-Item -LiteralPath $outPath).Length / 1MB, 1), [int]$sw.Elapsed.TotalSeconds, $info.height
+    $compressed = Compress-Video $outPath $ffmpeg
+    $summary = if ($compressed) { "$downloaded; $compressed" } else { $downloaded }
+    Finish $outPath $summary
+}
+
 # ============================================================================ folder mode
 # Every video directly inside a folder through Compress-Video, largest first, as one job: the same
 # check -> encode -> verify -> swap per file, so a file that would not get smaller (already lean
@@ -1872,7 +2113,9 @@ function Start-BackgroundJob([string]$Description) {
     if ($NoCompress)   { $wargs += '-NoCompress' }
     if ($Gpu)          { $wargs += '-Gpu' }
     if ($Recheck)      { $wargs += '-Recheck' }
-    if ($PSBoundParameters.ContainsKey('MinVmaf')) { $wargs += @('-MinVmaf', "$MinVmaf") }
+    # Always forwarded: $PSBoundParameters in here is this function's, not the script's, so a
+    # ContainsKey test never saw -MinVmaf and the worker ran at the default.
+    $wargs += @('-MinVmaf', "$MinVmaf", '-TwitchCompressMaxHours', "$TwitchCompressMaxHours")
     if ($NoMessageBox) { $wargs += '-NoMessageBox' }
     $p = Start-Process powershell -ArgumentList $wargs -WindowStyle Hidden -RedirectStandardOutput $script:JobLog -RedirectStandardError $script:JobErr -PassThru
     try { $p.PriorityClass = 'BelowNormal' } catch {}
@@ -1919,7 +2162,10 @@ function Watch-BackgroundJob($Job) {
     # so the lines that follow it in the log print underneath rather than above it.
     $applyStatus = {
         $status = try { [IO.File]::ReadAllText($script:JobStatus, $utf8) } catch { $st.LastStatus }
-        if ($status -eq $st.LastStatus) { return }
+        if ($status -eq $st.LastStatus) {
+            if (& $pair.IsPending) { & $pair.Redraw }    # scrolled back into view: catch up
+            return
+        }
         $st.LastStatus = $status
         $parts = $status -split "`n"
         if ($parts[0]) {
@@ -2014,7 +2260,7 @@ if (-not $Inline -and -not $Worker) {
         }
         Watch-BackgroundJob $running
     }
-    if (-not $Url -and -not $CompressFile -and -not $CompressFolder) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link (or a video file path) and run this again.' }
+    if (-not $Url -and -not $CompressFile -and -not $CompressFolder) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post, X post or TikTok link (or a video file path) and run this again.' }
     $desc = if ($CompressFolder) { "compress every video in $CompressFolder" } elseif ($CompressFile) { "compress $(Split-Path $CompressFile -Leaf)" } else { $Url }
     Write-Step 'Starting'
     Write-Ok "Job     : $desc"
@@ -2038,18 +2284,19 @@ try {
     }
 
     Write-Step 'Reading link'
-    if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post or X post link and run this again.' }
+    if (-not $Url) { Fail 'The clipboard is empty. Copy a Twitch VOD, YouTube video, Instagram reel/post, X post or TikTok link and run this again.' }
 
     $link = Resolve-VideoLink $Url
     if (-not $link) {
         $preview = if ($Url.Length -gt 80) { $Url.Substring(0, 80) + '...' } else { $Url }
-        Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)`n  https://x.com/<user>/status/123456789  (also twitter.com)"
+        Fail "The clipboard does not contain a link this tool understands.`n`nClipboard: $preview`n`nSupported:`n  https://www.twitch.tv/videos/123456789`n  https://www.youtube.com/watch?v=XXXXXXXXXXX  (also youtu.be, shorts, live)`n  https://www.instagram.com/reel/XXXXXXXXXXX/  (also /p/ posts)`n  https://x.com/<user>/status/123456789  (also twitter.com)`n  https://www.tiktok.com/@<user>/video/1234567890123456789  (also vm.tiktok.com share links)"
     }
     switch ($link.Site) {
         'twitch'    { Write-Ok "Twitch VOD $($link.Id)";              Invoke-Twitch $link.Id }
         'youtube'   { Write-Ok "YouTube video $($link.Id)";           Invoke-YouTube $link.Id }
         'instagram' { Write-Ok "Instagram $($link.Kind) $($link.Id)"; Invoke-Instagram $link.Id $link.Kind }
         'x'         { Write-Ok "X post $($link.Id)";                  Invoke-X $link.Id }
+        'tiktok'    { Write-Ok "TikTok $($link.Kind) $($link.Id)";    Invoke-TikTok $link.Id $link.Kind }
     }
 }
 finally {

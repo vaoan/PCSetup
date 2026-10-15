@@ -219,7 +219,10 @@ Write-Host "[4/5] Creating scheduled task..." -ForegroundColor Yellow
 
 $taskName = "ffxivbe-tunnel"
 
-# Remove existing task if present
+# Stop the running instance (supervisor + cloudflared) first, then remove the task. Unregistering
+# alone leaves the old supervisor running, and every re-run added one more (Stop-SupervisedTunnel).
+$stopped = Stop-SupervisedTunnel -TaskName $taskName -ConfigPath $configPath
+if ($stopped -gt 0) { Write-Host "  OK Stopped $stopped process(es) from the previous install" -ForegroundColor Gray }
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
 # Deploy the self-healing supervisor next to the config. It waits for the

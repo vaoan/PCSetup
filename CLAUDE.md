@@ -840,7 +840,7 @@ Game-related applications setup. Installs gaming platforms, launchers, and tools
 verified after install (`scoop prefix`, `winget list`, or a known install path) rather than trusted
 to have worked, and the script exits non-zero listing whatever failed.
 
-**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge (via winget), Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
+**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge and PURPLE (NCSOFT, `NCSoft.Purple`) via winget, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
 
 > **The `games` Scoop bucket is added here, not by `0-init-prereqs.bat`.** `steam`,
 > `epic-games-launcher`, and `prismlauncher` live only in `games`; without it Scoop cannot resolve
@@ -856,6 +856,17 @@ to have worked, and the script exits non-zero listing whatever failed.
 > hash the download), and the script still reports success. `set "PSModulePath="` before the
 > `powershell` call makes it rebuild the correct default. Symptom to watch for: installs fail only
 > when the script is launched from a pwsh terminal, and work when launched from Explorer or cmd.
+
+> **PURPLE (NCSOFT) installs through winget but is verified by file, not by `winget list`.**
+> `NCSoft.Purple` is a Nullsoft installer, so `--silent` passes `/S`: measured on 2026-10-06 it
+> installs in ~45 s with no dialog and launches nothing. But the uninstall entry it writes
+> (`HKLM\...\WOW6432Node\...\Uninstall\Purple_plaync`) has **no `DisplayVersion`**, so winget never
+> correlates it — `winget list --id NCSoft.Purple -e` says "No installed package found" right after
+> a successful install, and `Install-WingetApp` would wait 90 s, record a failure and reinstall on
+> every run. The script checks for `PurpleLauncher.exe` instead, in that entry's `InstallLocation`
+> (falling back to `Program Files (x86)\NC\Purple`). Verified under 5.1 on the CMD-generated file:
+> skip when present; uninstall (`Uninstall.exe /S`) → install → verified; then skip again. The same
+> blind spot means `update-all.bat`'s winget step never sees it — the launcher updates itself.
 
 > **TexTools ships zip-only since v3.1.1.3b.** The `Install_TexTools.exe` release asset is gone, so
 > the script prefers the installer if present and otherwise extracts the portable zip (no top-level
@@ -1035,8 +1046,8 @@ file size — a 0-byte backup is refused rather than silently restoring an empty
 > target-derived.
 
 ### optional/download-video.bat
-One clipboard-driven downloader for **Twitch VODs, YouTube videos, Instagram reels/posts and X
-(Twitter) posts**
+One clipboard-driven downloader for **Twitch VODs, YouTube videos, Instagram reels/posts, X
+(Twitter) posts and TikTok videos** (TikTok added 2026-10-01)
 (it replaced three per-site scripts on 2026-09-14). Double-click with a link in the clipboard; the
 `.bat` only elevates, clears `PSModulePath`, and runs `download-video.ps1`, which detects the site
 from the URL, installs only what that site needs (scoop itself first on a fresh PC — same
@@ -1047,8 +1058,12 @@ message box. Output names are `<date> <channel> - <title> [<id>] [<quality>].mp4
 built from height and rounded fps, not from Twitch's `1080p60 (source)` label) and
 `<date> <handle> - <text> [<id>].mp4` for Instagram and X (a multi-video X post gets ` (n of N)`).
 Every video download is then AV1-compressed (see "AV1 compression"). Manual runs accept `-Url`,
-`-MaxHeight` (Twitch/YouTube/X resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
-(keep the file as the site served it), `-Gpu` (AV1 with NVENC instead of SVT-AV1 on the CPU: ~2.5× faster,
+`-MaxHeight` (Twitch/YouTube/X/TikTok resolution cap; default 0 = no cap, highest quality available), `-NoCompress`
+(keep the file as the site served it), `-TwitchCompressMaxHours <h>` (Twitch VODs longer than this
+are kept as downloaded and never AV1-compressed; default 2, `0` = compress every length — added
+2026-10-14 on the user's ask, after a 5h45 VOD spent ~5 h encoding and then, on a bad quality
+check, a second full encode; `-CompressFile` on the finished file still compresses it on purpose,
+and a re-run of such a link no longer compresses the existing file either), `-Gpu` (AV1 with NVENC instead of SVT-AV1 on the CPU: ~2.5× faster,
 ~30 % bigger at the same score), `-MinVmaf <n>` (the score an encode must keep, default 95), `-CompressFile <path>`
 (AV1-compress an existing file in place and stop), `-Ending` (test aid: Twitch `20s`, YouTube seconds —
 YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so tests cannot block).
@@ -1059,6 +1074,7 @@ YouTube re-encodes the section) and `-NoMessageBox` (console-only failures so te
 | YouTube | `yt-dlp`, `deno` (JS runtime yt-dlp 2026.x needs), `ffmpeg` | `-f 'bv*+ba/b' -S "res,fps,vcodec:h264,acodec:m4a,ext:mp4"` (`res:N` with `-MaxHeight`) — highest resolution wins, h264 only breaks ties at equal resolution so a VP9/AV1-only 1440p/4K is still taken; a 720p-and-below video gets h264, which the stock player can play | `-N 16`: 154 Mbit/s; 10-min 720p60 in ~5 s + merge |
 | Instagram | `yt-dlp`, `gallery-dl`, `ffmpeg` | best quality (reels are VP9-only DASH, no h264 exists); photo posts/carousels fall to gallery-dl into **Pictures** as `<name> (n of N).<ext>` | `-N 8` |
 | X | `yt-dlp`, `ffmpeg` | yt-dlp with the cookie chain (same `-S` as YouTube, `res:N` with `-MaxHeight`); when X hides the post from guests, the best mp4 the embed services list (`Select-TweetFormat`: largest at or under `-MaxHeight`, else the smallest) | `-N 8`; a 17 MB 720p post in 2-3 s either way |
+| TikTok | `yt-dlp`, `ffmpeg` | yt-dlp's TikTok extractor (no-watermark formats, same `-S` as YouTube); cookie chain from `Get-LoginSources` (`*tiktok.com_cookies*.txt` → `%APPDATA%\PCSetup\tiktok-cookies.txt`) only matters for age-restricted videos. Share links (`vm.`/`vt.tiktok.com`, `/t/`) are routed with `Kind = short` and the real id comes from yt-dlp. Photo posts are refused with a message: yt-dlp has no extractor for them. TikTok's edge drops yt-dlp's TLS handshake on ~2 of 10 calls (`curl: (35)`), so network-shaped errors are retried 3× before they count | `-N 8`; a 10 s 720p clip in 3 s |
 
 **Background job.** The work never runs in the window you see. The launcher starts a hidden,
 detached copy of the script (`-Worker`) at **below-normal priority** — ffmpeg and the downloaders
@@ -1221,8 +1237,9 @@ up front when `bandwidth / 8 × length × 1.15` exceeds free space on the Videos
 drive, naming both numbers, and deletes every `<id>_<ticks>` folder before and after each run. `Z:`
 holds the profile folders and is often near full (`$RECYCLE.BIN` alone was 25 GB).
 
-**AV1 compression (every site).** Every video download — Twitch, YouTube, Instagram and X — is
-re-encoded to 10-bit AV1 afterwards (`Compress-Video`; Twitch-only until 2026-09-20, extended on the
+**AV1 compression (every site).** Every video download — Twitch, YouTube, Instagram, X and TikTok — is
+re-encoded to 10-bit AV1 afterwards — except a Twitch VOD longer than `-TwitchCompressMaxHours`
+(default 2 h, see above) — (`Compress-Video`; Twitch-only until 2026-09-20, extended on the
 user's call), same name, same `[1080p60]` tag, audio copied, **at the smallest size that still
 measures VMAF ≥ 95 against the source** (`-MinVmaf`, 95 = "no visible difference"). A download
 that is already AV1 is left alone (a third generation is never "without losing quality"). The step
@@ -1239,10 +1256,9 @@ Instagram and X just before `Show-Existing`), so old h264 downloads shrink on de
 > encode-then-compare-sizes approach could only ever refuse; it could not tell that no crf reaches
 > 95 below the source size, which for these clips is the truth (1922×962 30 fps at 2.4 Mbit/s: SVT-AV1
 > preset 4 needs crf 25 for VMAF 95.4 and that is 100 % of the source; 1280×720 at 0.9 Mbit/s: crf 25
-> is 102 % at 93.1). `Compress-Video` now works like `ab-av1`: `Get-SampleWindows` picks 15 s
-> windows spread over the file (one per 30 s, two to six), `Find-QualityCrf` bisects the crf on
-> them (walk out from 35 in steps of 6 until a pass and a fail bracket the answer, then halve —
-> 5–6 probes, each an encode + a `libvmaf` score per window), and the highest crf that still meets
+> is 102 % at 93.1). `Compress-Video` now works like `ab-av1`: `Get-SampleWindows` picks windows
+> spread over the file, `Find-QualityCrf` searches the crf on them (each probe an encode + a
+> `libvmaf` score per window), and the highest crf that still meets
 > the target *plus a point of margin* encodes the whole file. Two early outs save the full encode:
 > a failing crf whose samples are already ≥ 97 % of the source (every lower crf is bigger still —
 > that is what the three clips above hit on their first probe, in ~30 s per file), and a chosen crf
@@ -1254,8 +1270,32 @@ Instagram and X just before `Show-Existing`), so old h264 downloads shrink on de
 > averaged 95.9 at crf 31 while the whole file scored 93.0 (one window was a near-static 98.2) —
 > hence also the denser sampling on short files. The helpers are pure and unit-tested with a fake
 > encoder in `setup.tests.ps1` (`download-video`), including the "stop at the first probe" case.
+>
+> **The search used to cost more than the encode, so on 2026-10-12 it was cut down.** Baseline on
+> a 3-minute 720p25 h264 clip: 153 s in all, **110 s of it searching** (five probes, each encoding
+> six 15 s windows = half the clip), i.e. the clip was encoded about three times before the real
+> encode started — while a 6-hour VOD got the same six windows, 0.4 % of it, which is exactly where
+> samples flatter a file and the retry costs a second multi-hour encode. Now:
+> - **Windows:** at least six, one per 10 minutes on a long file, at most 20, and never more than
+>   20 % of the file per probe — shorter windows (down to 5 s) rather than fewer, since spread
+>   matters more than length. 3 min: 6 × 6 s; 10 min: 6 × 15 s; 5h45: 20 × 15 s (1.4 %).
+> - **Search:** each probe aims where the line through the points seen so far crosses the target
+>   (0.4 VMAF per crf until there are two points, from the measured curve), rounded down and kept
+>   inside the pass/fail bracket; the probe after the first pass lands on the crf above it and
+>   closes the search. 3–4 probes instead of 5–6, still ending on the exact highest passing crf
+>   (tested on a straight and a curved fake, and on a noisy point).
+> - **Preset 5** instead of 4 (below).
+>
+> Same clip afterwards: **81 s, search 42 s**, crf 29 instead of 30 (57 % instead of 55 % of the
+> size: the shorter windows read crf 30 as 95.98 against the 96 the samples need), whole-file VMAF
+> 96.4 both times. A 48 s phone clip that cannot shrink was refused in 15 s instead of 46 s.
+> **`libvmaf`'s `n_subsample` was tried and rejected:** the same encode scored 96.37 on every
+> frame, 96.60 on every 2nd and 96.73 on every 4th — always higher, so it would pass encodes
+> that miss the target. `setup.tests.ps1` fails if it comes back.
 
-Encoder: **SVT-AV1 preset 4 on the CPU** by default, NVENC AV1 with `-Gpu`. Measured 2026-09-22
+Encoder: **SVT-AV1 preset 5 on the CPU** by default (preset 4 until 2026-10-12: on 3 min of
+720p25 at crf 30, preset 5 took 17.1 s against 22.0 s, came out 0.7 % bigger and scored 96.33
+against 96.37 — on a multi-hour VOD that is an hour saved for under 1 %), NVENC AV1 with `-Gpu`. Measured 2026-09-22
 on 30 s of the three kept clips, ffmpeg 9.0.1 (gyan full build: libsvtav1 4.2.0, av1_nvenc,
 libvvenc, libvmaf), Ryzen 9 9950X3D + RTX 5080, driver 616.92, VMAF `vmaf_v0.6.1` against the
 h264 source:
@@ -1308,6 +1348,21 @@ player because `Microsoft.AV1VideoExtension` is installed.
 > frame 0 needs no seek, and the whole-file mean is the definitive number anyway; only a file
 > longer than that keeps the between-windows check (`Get-SampleWindows -Verify -WholeFileMax`),
 > and those are Twitch VODs, constant-rate footage that seeks true.
+>
+> **They did not seek true either: the check windows are now matched by frame index.** First run
+> with the 2026-10-12 search, on a 5h45 1080p60 VOD: crf 37 scored 96.0 on the 20 search samples,
+> the finished encode "scored" **77.2** on the 20 check windows (lowest 58.4, single frames at 0),
+> and the retry re-encoded the whole VOD at crf 20 — 19 GB from 15, so the file was kept after
+> ~5 h of encoding. Cause: the source has one duplicated pts (9.967 s) and the encoder output
+> carries every frame **1/60 s later** than the source — same 1,243,069 frames, same order (read
+> from the packet index of both files). `-ss <same second>` therefore landed one frame apart and
+> libvmaf compared each frame with its neighbour; on one window the offsets −1/+1/+2 read
+> 64/**98**/73. `Get-FrameTimes` reads every frame's pts from the packet index (~25 s per file
+> for 1.24 M frames, no decoding) and `Get-MatchedStart` seeks each file to half a frame before
+> the frame with the same index. On the kept crf 20 file that moved the check from 77 to **97.7**
+> (all 20 windows 97.0–98.3). Different frame counts fall back to the same-second seek with a
+> warning. Two windows re-encoded alone at crf 37 scored the same 96.4 as in context, which is
+> what ruled out real quality loss before the cause was found.
 
 Check → search → act → verify → swap: the encode goes to `<file>.av1-tmp` (not `.mp4`, so a crash
 leaves nothing the version scan mistakes for a download), is probed for codec `av1`, the same
@@ -1401,7 +1456,13 @@ non-progress line replaces the techy line, except lines that look like errors
 (`error|fail|warn|denied|cannot|...`), which are printed above the pair so the next raw line
 cannot erase them. A host whose cursor cannot be moved falls back to the old single `\r` line.
 Verified in a real console through a harness that runs the script and then dumps
-`GetBufferContents`: exactly two lines, bar then raw, followed by the result. The tools refresh with ``,
+`GetBufferContents`: exactly two lines, bar then raw, followed by the result.
+**The pair leaves the window alone while it is scrolled or resized** (2026-10-12, reported during a
+5 h encode): conhost moves the view back to the cursor on every write, so five redraws a second
+made scrolling up impossible. Now nothing is drawn while the pair's rows are out of view, and the
+next draw after scrolling back catches up. A width change (conhost re-wraps the buffer, breaking
+the padded rows) starts the pair afresh below the cursor. Tested in a spawned conhost: scrolled to
+row 10 and drawn five times, the view stayed at 10 (the old code snapped it back to 172). The tools refresh with ``,
 but through PowerShell's pipe every refresh arrives as its own line, so the window used to scroll
 hundreds of `[download]` / `[STATUS]` lines. Recognised shapes were captured from the real tools
 under 5.1: TwitchDownloaderCLI `[STATUS] - Downloading 45% [2/4]` (some stages carry no `%`),
@@ -1414,6 +1475,9 @@ remainder is printed as its own line. Non-progress lines print above the bar. Wh
 redirected (tests) the bar is a plain line emitted only when the whole percentage or stage changes.
 
 Gotchas that bit while building it:
+- A phone video's stream carries side data (the rotation matrix), so ffprobe's csv row ends in an
+  empty field: `h264,1080,30/1,`. `Get-VideoSpec` anchored on `\s*$` and reported "ffprobe cannot
+  read the file" for every such clip (found 2026-10-12 on an `Img NNNN.mp4`); it accepts the comma now.
 - Output names carry `[id]`, so every path check uses `-LiteralPath` — `Test-Path` treats brackets as
   wildcards and reported a finished file as missing.
 - `2>&1` on a native command under `$ErrorActionPreference = 'Stop'` is fatal: any stderr line
@@ -1446,6 +1510,52 @@ no-verification shape:
 Downloads and installs Re:MakePlace (community-maintained fork) directly from GitHub. Re:MakePlace is a standalone FFXIV housing layout preview/editor tool that lets you design and share housing layouts. Installs to `%LOCALAPPDATA%\ReMakePlace` since the app requires write permissions. Downloads 7-Zip portable if not already installed. Does not require Chocolatey. Launches the app after installation.
 
 **Installed packages:** Re:MakePlace (from GitHub), 7-Zip (signed installer, if needed)
+
+### optional/unlock-pdf.bat
+**Unlock PDF** - a small Java window (added 2026-09-30): drop PDFs or folders in; **every row has its
+own Password cell and its own `PDF` and `Pictures` buttons**. `PDF` -> `<name> (unlocked).pdf`;
+`Pictures` -> folder `<name> (pages)\<name> - page 001.png` (PNG or JPG, 100-300 dpi, rendered by
+PDFBox's `PDFRenderer`, zero-padded so they sort). Below the list: a **password for all files**
+(used where a row's cell is empty; the row's own wins) and **All -> unlocked PDF / All -> pictures**,
+which skip rows that already have that output. Dropping only *checks* each file (needs a password /
+restrictions only / not protected - the last greys out its PDF button, pictures still work); nothing
+is produced until a button is pressed. One background worker, in click order. Nothing is
+overwritten (`(unlocked 2)`, `(pages 2)`), originals never touched, picture format remembered
+(`java.util.prefs`). Pictures are rendered before the copy is saved, because saving with security
+removed changes the document. The flow (shared vs own password, wrong password then fixed, batch
+skipping finished rows) was driven through a never-shown window from a same-package harness, which
+is why `run`/`runAll`/`model`/`sharedPassword` are package-private.
+
+- **The app is `optional/unlock-pdf/dist/unlock-pdf.jar`**, committed and self-contained (Apache
+  PDFBox 3.0.8 inside), so it runs on any OS with Java 8+: `java -jar unlock-pdf.jar`. The user asked
+  for something reusable on other systems, which is why it is Java and not PowerShell, a .NET exe,
+  or qpdf (native per OS). `--cli` mode for scripts/tests takes the password from
+  `UNLOCK_PDF_PASSWORD`, never from the command line. Details for other machines:
+  `optional/unlock-pdf/README.md`.
+- **`optional/unlock-pdf.bat` is the Windows setup**, run once: builds the jar when it is missing or
+  older than `src/` (`unlock-pdf/build.ps1`), writes "Unlock PDF" shortcuts (gold padlock,
+  `imageres.dll,54`) on the Desktop and in Start pointing at Temurin 17's `javaw` through Scoop's
+  `current` junction, and opens the app. PDFs dropped on the shortcut land in the list.
+- **The app must never run elevated.** Windows blocks drag-and-drop from Explorer into an elevated
+  window (UIPI), and every script here elevates - so the setup opens the app through `explorer.exe`
+  with a shortcut, which starts it at normal integrity. Tested: `Start-Process explorer.exe`, never
+  `Start-Process $javaw`.
+- **Build:** the four jars (pdfbox, pdfbox-io, fontbox 3.0.8, commons-logging 1.4.0 - the version
+  pdfbox-parent pins) come from Maven Central into `%LOCALAPPDATA%\PCSetup\unlock-pdf-lib`, each
+  checked against Maven's published `.sha1`; `javac --release 8` (JDK 17) or `-source/-target 8`
+  (JDK 8); the fat jar is written with `System.IO.Compression` (manifest first, signature files and
+  `module-info.class` dropped); and the new jar must run `--cli` before it replaces the old one.
+- **Verified** on Java 8 and Java 17 with PDFs made by qpdf (right / wrong / missing password,
+  restriction-only, unprotected, a non-ASCII password, a whole folder), every output re-checked with
+  `qpdf --is-encrypted`; `setup.tests.ps1` (`unlock-pdf`) repeats the real unlock when java and qpdf
+  are present. The window itself was checked by eye - rows, colours, the drawn padlock icon.
+
+> **It replaced a first version the same day** that prompted for the password in a console and ran
+> qpdf. Kept here because the trap is general: .NET Framework builds a child's stdin writer from
+> `[Console]::InputEncoding`, which on this PC is UTF-8 **with** a BOM, and appends `EF BB BF` when
+> the writer closes - so anything piped to a native tool from Windows PowerShell 5.1 that way gets
+> three extra bytes (every password came out "invalid"; the identical code worked in pwsh). Set a
+> BOM-less `UTF8Encoding($false)` before `Process.Start`, and use `Write`, not `WriteLine`.
 
 ### optional/repair-discord.bat
 Repairs a Discord install that **opens and closes itself** or dies at first launch with
@@ -1547,23 +1657,10 @@ Browser (Cloudflare Access auth)
 
 ### First-time setup (after a fresh Windows install)
 
-1. **Run WSL setup (once):**
-   ```
-   wsl -d Ubuntu-24.04 --user root bash /mnt/z/Users/Heiner/Documents/PCSetup/cloudflared/setup-console-wsl.sh
-   ```
-2. **Authenticate cloudflared** (one-time, browser login):
-   ```
-   cloudflared tunnel login
-   ```
-3. **Populate secrets** — run `cloudflared\sync-secrets.bat` (requires `SSHWIFTY_CONF_B64` in GitHub Secrets).
-4. **Run Windows setup** (creates tunnel, DNS, and downloads sshwifty automatically):
-   ```
-   cloudflared\setup-console-windows.ps1
-   ```
-5. **Start the console:**
-   ```
-   cloudflared\start-console.bat
-   ```
+One double-click: **`cloudflared\setup-cloudflare.bat`**. It is the whole Cloudflare setup - the
+console *and* the two direct tunnels - see "Post-Format Recovery" below for what it runs. There is
+no browser login any more: `cert.pem` comes from `FFXIVBE_PEM_B64` in `.secrets`, and `.secrets` is
+synced from GitHub only when it is missing.
 
 ### Daily use
 
@@ -1928,19 +2025,67 @@ Config lives at `cloudflared/.cloudflared/config.yml` in this repo and is deploy
 
 ### Post-Format Recovery
 
-Run after a fresh Windows install to restore tunnels and Claude Code sessions:
+**One entry point: `cloudflared\setup-cloudflare.bat`.** Run it after a fresh Windows install
+(after `0-init-prereqs.bat`, so WSL and Ubuntu exist), and run it again to repair anything - every
+step checks before it acts. In order:
 
-```powershell
-cd "Z:\Users\Heiner\Documents\PCSetup\cloudflared"
-.\post-format-recovery.ps1
-```
+| Step | Runs | Verified by |
+|---|---|---|
+| 1 Secrets | `sync-secrets.ps1`, only if `CLOUDFLARE_ACCOUNT_API_TOKEN` / `FFXIVBE_PEM_B64` / `SSHWIFTY_CONF_B64` are missing | the three keys present |
+| 2 cloudflared | official MSI (Smart App Control) | `C:\Program Files (x86)\cloudflared\cloudflared.exe` runs |
+| 3 web tunnel | `install-tunnel.ps1` | task `ffxivbe-tunnel` Running |
+| 4 SSH tunnel | `install-ssh-tunnel.ps1 -MacPublicKey <key>`, the key read at run time from `MAC_SSH_PUBLIC_KEY` in `.secrets`, else the one already in `administrators_authorized_keys` (never written in the script: its comment names the owner) | task `ssh-tunnel` Running, `sshd` Running |
+| 5 WSL | `wsl --install -d Ubuntu-24.04` only if the distro does not start | `wsl -d Ubuntu-24.04 -- echo ok` |
+| 6 console, WSL | `setup-console-wsl.sh` as root | exit code |
+| 7 console, Windows | `setup-console-windows.ps1 -SkipVerification`, then `console-health.ps1 -Install` | tasks `web-console`, `UpdateWSLPortProxy`, `WSLKeepAlive`, `ConsoleHealth` exist |
+| 8 verify | `verify-console.ps1` | exit 0; report `%USERPROFILE%\.cloudflared\reports\latest.md` |
 
-Or run individual steps:
+Failures are collected and listed at the end (exit 1); nothing pauses. Log:
+`%LOCALAPPDATA%\PCSetup\setup-cloudflare.log`. If the distro does not start (WSL enabled but not
+rebooted yet) it writes an HKCU `RunOnce` entry for itself and exits 2 with "REBOOT NOW": the next
+sign-in finishes the console, so it is still one thing to run.
 
-```powershell
-.\install-ssh-tunnel.ps1    # SSH tunnel + OpenSSH
-.\install-tunnel.ps1        # Web tunnel
-```
+> **It replaced `install-all.bat`/`.ps1` and `post-format-recovery.ps1` (2026-09-30), on the user's
+> ask for one install instead of several.** Those two had drifted into a worse copy of the pieces:
+> `post-format-recovery.ps1` re-implemented the web and SSH tunnel installs itself, registering
+> tasks that launched cloudflared through a `.vbs` **without** `tunnel-supervisor.ps1` - exactly
+> the setup that dies in the reboot network race documented above - and paused on `ReadKey`.
+> `install-tunnel.ps1` and `install-ssh-tunnel.ps1` already did it right, so the orchestrator
+> calls them instead of copying them. `setup.tests.ps1` fails if either old file comes back.
+> The building blocks can still be run alone, but the docs no longer offer them as installs.
+>
+> **Every building block runs in its own `powershell.exe`**, so a block's own `exit` cannot end the
+> orchestrator, and its exit code is re-checked against the real state (task running, service
+> running) rather than trusted. `$ErrorActionPreference` is `Continue` in the orchestrator for the
+> 5.1 reason in the Script Conventions: under `Stop`, a stderr line from `wsl`/`cloudflared`/`curl`
+> is a terminating error.
+>
+> **What six real runs on 2026-09-30 found** (the first live use; each is fixed and most are tested):
+> - **Never read a building block's output through a pipe.** `setup-console-windows.ps1` starts
+>   long-lived services (sshwifty, node proxies, cloudflared) that inherit its stdout; with
+>   `| Out-Host` - or `$rc = & ...` inside a function, which captures too - the orchestrator waited
+>   for EOF, i.e. until those services exit, and hung for good after step 7. Each block now writes
+>   to its own file under `%LOCALAPPDATA%\PCSetup\setup-cloudflare-parts\` (unique per run, since a
+>   service keeps it open) which is tailed live into the window and the transcript.
+> - **QuickEdit froze run 3** at step 3: a click in the window, title `Select Administrator: ...`,
+>   every write blocked. The orchestrator now switches QuickEdit off for its console at start.
+> - **The Cloudflare API times out now and then** (`Client.Timeout exceeded while awaiting
+>   headers`) - a different hostname each run, the rest fine. `Invoke-CloudflaredDnsRoute`
+>   retries each route up to 4 times, and steps 3/4 retry their installer once.
+> - **Re-running piled up tunnel connectors.** `Unregister-ScheduledTask` does not stop the running
+>   instance, so every `install-tunnel.ps1` / `install-ssh-tunnel.ps1` run added a supervisor and a
+>   cloudflared (4 + 3 after five runs). `Stop-SupervisedTunnel` (in `shared-cloudflare-auth.ps1`)
+>   stops the task, then the supervisors, then their cloudflared - supervisors first, or they
+>   relaunch it. After the fix: exactly one supervisor and one cloudflared per tunnel.
+> - **`setup-console-windows.ps1 -SkipVerification` still ran `verify-console.ps1`**, so every
+>   setup verified twice (the public leg flips Access off and on each time). It now leaves
+>   verification to the caller.
+> - **pnpm on PATH is not pnpm that runs:** nvm 2.x's `pnpm.exe` shim answers `CommandNotFound`
+>   until pnpm is installed into the active Node version, which failed the public check.
+>   `verify-public-routes.ps1` now runs `pnpm --version` and installs it with npm when needed.
+> - **`www.ffxiv.be` 502 is reported as a warning, not a failure**, when it and its local origin are
+>   the only failed checks: the 7542 web app is not installed by this repo. Anything else failing
+>   still fails the run.
 
 > **`install-ssh-tunnel.ps1` aborted at step 2 of 6 on any machine without OpenSSH, and said the
 > opposite of what happened.** It ran `Add-WindowsCapability` and then tested `$LASTEXITCODE`. That
@@ -2004,7 +2149,7 @@ Already set up, survives PC formats:
 
 | File | Purpose |
 |---|---|
-| `cloudflared/post-format-recovery.ps1` | Master recovery script — does everything |
+| `cloudflared/setup-cloudflare.bat` / `.ps1` | **The** Cloudflare install - the only entry point. Runs everything below in order and verifies it |
 | `cloudflared/install-tunnel.ps1` | Web tunnel installer (standalone). Registers the `ffxivbe-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals; survives the reboot network race). |
 | `cloudflared/install-ssh-tunnel.ps1` | SSH tunnel + OpenSSH installer. Registers the `ssh-tunnel` task to run `tunnel-supervisor.ps1` (waits for edge + self-heals). Pass `-MacPublicKey 'ssh-ed25519 ...'` or step 6 skips and Mac SSH is denied. |
 | `cloudflared/tunnel-supervisor.ps1` | Self-healing cloudflared wrapper shared by all 3 tunnels — see the Web Console section. |

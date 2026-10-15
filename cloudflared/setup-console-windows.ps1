@@ -13,7 +13,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # First-time setup for the web console on Windows.
-# Run AFTER: install-all.ps1 or sync-secrets.bat plus the base Windows setup.
+# Run by setup-cloudflare.ps1 (the one entry point); not meant to be run on its own.
 #
 # What this does:
 #   1. Creates %USERPROFILE%\Documents\Cloudflare\{sshwifty,launcher} dirs
@@ -231,7 +231,7 @@ if (Test-Path $sshwiftyKeyDir) {
 
 # -- 3. Provision Cloudflare tunnel + DNS records -----------------------------
 Write-Log "Provisioning Cloudflare dev tunnel..."
-if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
+if (-not (Test-Path $cfExe))   { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\setup-cloudflare.bat first." }
 
 $tunnelId = $null
 
@@ -494,6 +494,14 @@ if (Test-Path $startConsoleScript) {
     exit 1
 }
 
+# -SkipVerification: setup-cloudflare.ps1 runs verify-console.ps1 itself as its last step, so this
+# script must not run it too - it used to verify twice (the public leg flips Access gating off and
+# on each time) and fail step 7 over the same two checks step 8 then reported again.
+if ($SkipVerification) {
+    Write-Log "Verification left to the caller (-SkipVerification)."
+    exit 0
+}
+
 Write-Log "Giving the console stack time to settle before verification..."
 Start-Sleep -Seconds 15
 
@@ -509,19 +517,4 @@ if (Test-Path $verifyConsoleScript) {
 } else {
     Write-Log "Console verification skipped: verify-console.ps1 not found."
 }
-
-if (-not $SkipVerification) {
-    $verifyScript = Join-Path $PSScriptRoot "verify-public-routes.ps1"
-    if (Test-Path $verifyScript) {
-        Write-Log "Running post-install public-route verification..."
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Verification passed. Report saved under $env:USERPROFILE\.cloudflared\reports."
-        } else {
-            Write-Log "Verification failed. Check the report under $env:USERPROFILE\.cloudflared\reports."
-            exit $LASTEXITCODE
-        }
-    } else {
-        Write-Log "Verification skipped: verify-public-routes.ps1 not found."
-    }
-}
+# No separate verify-public-routes.ps1 run: verify-console.ps1 already includes the public leg.

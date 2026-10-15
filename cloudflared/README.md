@@ -4,13 +4,18 @@ Cloudflare Tunnel setup for web proxying and SSH remote access.
 
 ## Quick Setup
 
-After a format, run one script:
+After a format there is exactly **one** thing to run:
 
 ```powershell
-.\install-all.bat
+.\setup-cloudflare.bat
 ```
 
-It syncs secrets when needed, installs `cloudflared` from the official MSI location, configures the web and SSH tunnels, restores the WSL-backed console tunnel, starts the stack, installs the boot/logon scheduled tasks, and runs verification.
+It checks `.secrets` (syncing them when missing), installs `cloudflared` from the official MSI,
+then brings up, in order: the web tunnel (`www`/`chat`), the SSH tunnel (`pc`, with OpenSSH Server
+and the Mac key), the WSL console services, the console tunnel with DNS and Access gating, the
+`ConsoleHealth` watchdog - and finally runs `verify-console.ps1`. Every step checks before it acts,
+so re-running it is also the repair. If WSL still needs a reboot it registers itself to run again
+at the next sign-in. Log: `%LOCALAPPDATA%\PCSetup\setup-cloudflare.log`.
 
 Run the repo-level prereq bootstrap first on a fresh Windows install:
 
@@ -20,7 +25,10 @@ Run the repo-level prereq bootstrap first on a fresh Windows install:
 
 That script keeps Chocolatey available for compatibility, but the current setup prefers Scoop/winget and centralizes shared prerequisites such as WSL, Git, nvm/Node, .NET desktop runtimes, Java, redistributables, and package-manager buckets.
 
-## Maintenance Installers
+## Building Blocks
+
+`setup-cloudflare.ps1` runs these; they are listed so you know what each piece does, not as
+separate installs. Re-run `setup-cloudflare.bat` instead of picking one.
 
 ### Web Tunnel (www.ffxiv.be)
 ```powershell
@@ -85,7 +93,8 @@ Reports are written to:
 
 ## Setup After Format
 
-Run `install-all.bat`. Use the individual installers only when repairing one specific piece.
+Run `setup-cloudflare.bat`. It replaced `install-all.bat` and `post-format-recovery.ps1`
+(2026-09-30); re-running it is also how you repair a single piece.
 
 See **[SETUP_GUIDE.md](SETUP_GUIDE.md)** for detailed steps.
 See **[INSTALL.md](INSTALL.md)** for installer details.

@@ -50,6 +50,28 @@ function Ensure-CloudflareCertPem {
     return $certPath
 }
 
+function Stop-SupervisedTunnel {
+    # Before a tunnel task is re-registered, everything the previous one started has to go.
+    # Unregister-ScheduledTask removes the definition but NOT the running instance, so each re-run
+    # of install-tunnel.ps1 / install-ssh-tunnel.ps1 left its supervisor alive and started another:
+    # after five setup runs on 2026-09-30 there were 4 ffxivbe-tunnel and 3 ssh-tunnel supervisors,
+    # each with its own cloudflared. Order matters: supervisors first, or they relaunch the
+    # cloudflared that is killed next.
+    param(
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)][string]$ConfigPath
+    )
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $configLeaf = [regex]::Escape((Split-Path -Leaf $ConfigPath))
+    $supervisors = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'tunnel-supervisor\.ps1' -and $_.CommandLine -match "\\$configLeaf" })
+    foreach ($s in $supervisors) { Stop-Process -Id $s.ProcessId -Force -ErrorAction SilentlyContinue }
+    $tunnels = @(Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "\\$configLeaf" })
+    foreach ($t in $tunnels) { Stop-Process -Id $t.ProcessId -Force -ErrorAction SilentlyContinue }
+    return ($supervisors.Count + $tunnels.Count)
+}
+
 function Invoke-CloudflaredDnsRoute {
     param(
         [Parameter(Mandatory = $true)]
@@ -60,20 +82,31 @@ function Invoke-CloudflaredDnsRoute {
         [string[]]$Hostnames
     )
 
+    # Up to 4 attempts per hostname. The route call is a Cloudflare API PUT, and on 2026-09-30 it
+    # timed out ("request canceled while waiting for connection (Client.Timeout exceeded while
+    # awaiting headers)") in two of three consecutive setup runs - a different hostname each time,
+    # the rest of the same run fine. One blip used to abort a whole installer. The call is
+    # idempotent (--overwrite-dns), so repeating it is safe.
     foreach ($hostname in @($Hostnames | Select-Object -Unique)) {
         if (-not $hostname) { continue }
-        $stdoutPath = Join-Path $env:TEMP ("cloudflared-route-" + [Guid]::NewGuid().ToString('N') + ".out")
-        $stderrPath = Join-Path $env:TEMP ("cloudflared-route-" + [Guid]::NewGuid().ToString('N') + ".err")
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        $maxAttempts = 4
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            $stdoutPath = Join-Path $env:TEMP ("cloudflared-route-" + [Guid]::NewGuid().ToString('N') + ".out")
+            $stderrPath = Join-Path $env:TEMP ("cloudflared-route-" + [Guid]::NewGuid().ToString('N') + ".err")
+            Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 
-        $args = @('tunnel', 'route', 'dns', '--overwrite-dns', $TunnelName, $hostname)
-        $process = Start-Process -FilePath $CloudflaredPath -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
-        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+            $args = @('tunnel', 'route', 'dns', '--overwrite-dns', $TunnelName, $hostname)
+            $process = Start-Process -FilePath $CloudflaredPath -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
+            $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+            Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 
-        if ($process.ExitCode -ne 0) {
-            throw "cloudflared tunnel route dns failed for $hostname (exit $($process.ExitCode)): $stderr$stdout"
+            if ($process.ExitCode -eq 0) { break }
+            if ($attempt -eq $maxAttempts) {
+                throw "cloudflared tunnel route dns failed for $hostname after $maxAttempts attempts (exit $($process.ExitCode)): $stderr$stdout"
+            }
+            Write-Host "  DNS route for $hostname failed (attempt $attempt of $maxAttempts); retrying in $(5 * $attempt) s..." -ForegroundColor DarkYellow
+            Start-Sleep -Seconds (5 * $attempt)
         }
     }
 }

@@ -31,24 +31,34 @@ function Fail {
     throw "[verify-public-routes] $Message"
 }
 
-function Ensure-Pnpm {
+# "On PATH" is not "works": nvm 2.x puts a pnpm.exe forwarding shim on PATH that answers
+# `error: CommandNotFound` until pnpm is installed into the active Node version (seen on a fresh
+# install 2026-09-30 - the public check died at "pnpm install failed"). So run it, and install
+# pnpm with npm when it does not answer with a version.
+function Test-PnpmRuns {
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
-    if ($pnpmCmd) {
-        return [string](@($pnpmCmd)[0].Source)
-    }
+    if (-not $pnpmCmd) { return $null }
+    $source = [string](@($pnpmCmd)[0].Source)
+    $version = (& $source --version 2>&1 | Select-Object -First 1 | Out-String).Trim()
+    if ($version -match '^\d+\.\d+') { return $source }
+    return $null
+}
 
-    Write-Log "pnpm not found; installing globally with npm..."
+function Ensure-Pnpm {
+    $pnpm = Test-PnpmRuns
+    if ($pnpm) { return $pnpm }
+
+    Write-Log "pnpm is missing or does not run; installing it globally with npm..."
     & npm install -g pnpm | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         Fail "Failed to install pnpm via npm."
     }
 
-    $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
-    if (-not $pnpmCmd) {
-        Fail "pnpm install reported success but pnpm is still not on PATH."
+    $pnpm = Test-PnpmRuns
+    if (-not $pnpm) {
+        Fail "pnpm was installed but still does not run (check nvm's shims: nvm use lts)."
     }
-
-    return [string](@($pnpmCmd)[0].Source)
+    return $pnpm
 }
 
 function Ensure-PlaywrightDependencies {

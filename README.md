@@ -21,22 +21,19 @@ Run these in order from `Z:\Users\Heiner\Documents\PCSetup`:
    .\run-all.bat
    ```
    The init step is the required first pass for package managers and shared prerequisites. It keeps Chocolatey available, but prefers Scoop/winget for current installs and prepares WSL, Node, Git, nvm, .NET desktop runtimes, Java, redistributables, and other common prerequisites before the later scripts run.
-2. Install, start, and schedule the full Cloudflare stack.
+2. Bring the whole Cloudflare setup online - **one** double-click, nothing else to run:
    ```powershell
-   .\cloudflared\install-all.bat
+   .\cloudflared\setup-cloudflare.bat
    ```
-   This syncs secrets when needed, installs cloudflared from the official MSI path, configures the web/SSH/console tunnels, starts them, installs scheduled tasks, verifies WSL console readiness, and runs verification.
-3. If you only need the web and SSH tunnel tasks, reinstall those directly.
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\cloudflared\install-tunnel.ps1
-   powershell -ExecutionPolicy Bypass -File .\cloudflared\install-ssh-tunnel.ps1
-   powershell -ExecutionPolicy Bypass -File .\cloudflared\install-scheduled-tasks.ps1
-   ```
-4. Restore the console tools only if needed.
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\cloudflared\setup-console-windows.ps1
-   ```
-   This ends by running `cloudflared\verify-console.ps1` and writing a report to `%USERPROFILE%\.cloudflared\reports\`.
+   It checks `.secrets` (syncing them when missing), installs cloudflared from the official MSI,
+   sets up the web tunnel (`www`/`chat`), the SSH tunnel (`pc`, with OpenSSH Server and the Mac key),
+   the web console (`console`/`dev`/`code`/`ttyd`/`tools`/`git`, WSL side and Windows side, Access
+   gating), the `ConsoleHealth` watchdog, and then runs `verify-console.ps1`. Safe to re-run: every
+   step checks before it acts. If WSL still needs a reboot it says so and runs itself again at the
+   next sign-in. Log: `%LOCALAPPDATA%\PCSetup\setup-cloudflare.log`; verification report:
+   `%USERPROFILE%\.cloudflared\reports\latest.md`.
+
+   The other scripts in `cloudflared\` are its building blocks, not separate installs.
 
 ## Clean-Image Staging
 
@@ -49,7 +46,7 @@ powershell -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
 What it does:
 - syncs `.secrets` from the GitHub encrypted artifact
 - uninstalls the existing console/web/ssh Cloudflare stack
-- runs `cloudflared\post-format-recovery.ps1`
+- runs `cloudflared\setup-cloudflare.ps1`
 - runs the full `cloudflared\verify-console.ps1` report
 
 The browser-verification leg now auto-installs `pnpm`, restores the local Playwright dependency set, and installs Chromium if they are missing.
@@ -101,13 +98,10 @@ This is optional and belongs to the dev-console workflow. Install it only if tha
 
 ## Suggested Reinstall Order
 
-1. Install Windows packages and base tooling.
-2. Sync secrets.
-3. Restore Cloudflared authentication.
-4. Run `cloudflared\install-all.bat`.
-5. Start Docker Desktop if the local origin stack needs it.
-6. Start the console stack with `cloudflared\start-console.bat`.
-7. Verify with `cloudflared\verify-console.ps1`.
+1. Install Windows packages and base tooling (`0-init-prereqs.bat`, `run-all.bat`).
+2. Run `cloudflared\setup-cloudflare.bat`. It syncs secrets if needed, authenticates from
+   `.secrets` (no browser login), starts everything, and verifies.
+3. Start Docker Desktop if the local origin stack for `www` needs it.
 
 ## Verification
 
@@ -135,4 +129,4 @@ That script installs and loads Pester 5 automatically so the repo tests run cons
 - `cloudflared/README.md`
 - `cloudflared/INSTALL.md`
 - `cloudflared/SETUP_GUIDE.md`
-- `cloudflared/post-format-recovery.ps1`
+- `cloudflared/setup-cloudflare.ps1`

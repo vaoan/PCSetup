@@ -11,7 +11,7 @@ Complete guide to set up the Cloudflare Tunnel after formatting your computer or
    Run this from the repo root before Cloudflare setup on a fresh machine. It keeps Chocolatey installed for compatibility, but uses Scoop/winget for most current installs and prepares the shared base: Scoop buckets including `extras`, WSL/Ubuntu 24.04, Git, GitHub CLI, nvm/Node/npm, .NET desktop runtimes, Java, Visual C++ redistributables, and related prerequisites.
 
 2. **Cloudflared CLI**
-   - `cloudflared\install-all.bat` installs the official MSI when missing
+   - `cloudflared\setup-cloudflare.bat` installs the official MSI when missing
    - Expected path: `C:\Program Files (x86)\cloudflared\cloudflared.exe`
    - Verify: `cloudflared --version`
 
@@ -23,7 +23,7 @@ Complete guide to set up the Cloudflare Tunnel after formatting your computer or
 After a format, use the single installer instead of piecing together tunnel commands manually:
 
 ```powershell
-.\cloudflared\install-all.bat
+.\cloudflared\setup-cloudflare.bat
 ```
 
 It syncs secrets if needed, restores `cert.pem` from `FFXIVBE_PEM_B64`, installs cloudflared from the official MSI, installs WSL prerequisites, configures the web/SSH/console tunnels, starts them, installs boot/logon scheduled tasks, checks console stack readiness, and runs verification.
@@ -97,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File .\cloudflared\test-clean-install.ps1
 That script:
 - optionally syncs `.secrets`
 - uninstalls the current Cloudflare stack
-- reruns `post-format-recovery.ps1`
+- reruns `setup-cloudflare.ps1`
 - finishes with `verify-console.ps1`
 
 The verifier now bootstraps `pnpm`, reinstalls the Playwright dependency set, and installs Chromium automatically if those browser-test dependencies are missing.

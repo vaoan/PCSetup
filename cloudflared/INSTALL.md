@@ -4,12 +4,13 @@
 
 | Script | Purpose | Sets up |
 |--------|---------|---------|
-| `install-all.bat` / `install-all.ps1` | Full post-format install | Syncs secrets if needed, installs cloudflared, configures tunnels, starts them, installs scheduled tasks, runs verification |
-| `install-tunnel.ps1` | Web tunnel | www.ffxiv.be + chat hostname, hidden boot/logon task |
-| `install-ssh-tunnel.ps1` | SSH tunnel | pc.ffxiv.be for remote SSH, hidden boot/logon task |
-| `install-scheduled-tasks.ps1` | Auto-start only | Reinstall hidden boot/logon tasks for both tunnels |
+| `setup-cloudflare.bat` / `setup-cloudflare.ps1` | **The** install - the only entry point | Secrets, cloudflared MSI, web + SSH tunnels, WSL console, console tunnel + DNS + Access, ConsoleHealth watchdog, verification |
+| `install-tunnel.ps1` | building block (step 3) | www.ffxiv.be + chat hostname, supervised boot/logon task |
+| `install-ssh-tunnel.ps1` | building block (step 4) | pc.ffxiv.be for remote SSH, supervised boot/logon task |
+| `install-scheduled-tasks.ps1` | building block | Reinstall hidden boot/logon tasks for both tunnels |
 
-Use `install-all.bat` after a format. The lower-level installers are for targeted repairs.
+Run `setup-cloudflare.bat` after a format, and again to repair anything - finished steps are
+skipped. The building blocks are what it runs, not separate installs.
 
 The web/SSH installers only manage the `ffxivbe-tunnel` and `ssh-tunnel` tasks. They do not stop or rewrite other Cloudflare tunnels used by other apps.
 
@@ -23,7 +24,7 @@ On a fresh Windows install, run the repo prereq bootstrap first:
 
 That bootstrap keeps Chocolatey installed for compatibility, but current package ownership is Scoop/winget-first where practical. It prepares Scoop buckets including `extras`, WSL/Ubuntu 24.04, Git, GitHub CLI, nvm/Node/npm, .NET desktop runtimes, Java, Visual C++ redistributables, and other shared prerequisites expected by the later scripts.
 
-`install-all.bat` also checks WSL installability and will install **cloudflared** from the official MSI if it is missing.
+`setup-cloudflare.bat` also checks WSL installability and will install **cloudflared** from the official MSI if it is missing.
 
 For browser verification:
 1. **Node.js / npm** available on PATH
@@ -35,7 +36,7 @@ For browser verification:
 ## Full Install After Format
 
 ```powershell
-.\install-all.bat
+.\setup-cloudflare.bat
 ```
 
 This is the normal recovery path. It:
@@ -134,7 +135,7 @@ This script:
 
 Use this after a format if you've restored the `.cloudflared` config files but lost the scheduled tasks.
 
-For a full rebuild after formatting the PC, use `cloudflared\install-all.bat` from the repo root instead of running the tunnel installers one by one.
+For a full rebuild after formatting the PC, use `cloudflared\setup-cloudflare.bat` from the repo root instead of running the tunnel installers one by one.
 
 ## Verification bootstrap
 

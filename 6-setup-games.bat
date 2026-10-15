@@ -101,6 +101,26 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo Install-WingetApp "Overwolf.CurseForge" "CurseForge"
 >>"%SCRIPT%" echo Install-WingetApp "goatcorp.XIVLauncher" "XIVLauncher"
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # NCSOFT's PURPLE launcher (purple.plaync.com/download). Installed by winget (Nullsoft, so
+>>"%SCRIPT%" echo # --silent passes /S; no dialog, nothing launched) but NOT verified by it: the uninstall
+>>"%SCRIPT%" echo # entry it writes (Purple_plaync) has no DisplayVersion, so "winget list --id NCSoft.Purple"
+>>"%SCRIPT%" echo # never finds it and Install-WingetApp would report a good install as failed every run.
+>>"%SCRIPT%" echo function Get-PurpleLauncher {
+>>"%SCRIPT%" echo     $dirs = @()
+>>"%SCRIPT%" echo     $loc = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Purple_plaync' -ErrorAction SilentlyContinue).InstallLocation
+>>"%SCRIPT%" echo     if ($loc) { $dirs += $loc }
+>>"%SCRIPT%" echo     $dirs += "${env:ProgramFiles(x86)}\NC\Purple"
+>>"%SCRIPT%" echo     foreach ($d in $dirs) { $exe = Join-Path $d 'PurpleLauncher.exe'; if (Test-Path -LiteralPath $exe) { return $exe } }
+>>"%SCRIPT%" echo     return $null
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo if (Get-PurpleLauncher) { Write-Host "PURPLE (NCSOFT) already installed, skipping..." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo else {
+>>"%SCRIPT%" echo     Write-Host "Installing PURPLE (NCSOFT) via winget..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing PURPLE (winget)" -FilePath winget.exe -ArgumentList "install", "--id", "NCSoft.Purple", "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { [bool](Get-PurpleLauncher) }) { Write-Host "PURPLE (NCSOFT) installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     else { Write-Host "PURPLE (NCSOFT) FAILED to install." -ForegroundColor Red; $null = $failures.Add("PURPLE (NCSOFT)") }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # FFXIV TexTools (Modding Tool) - not on any package manager
 >>"%SCRIPT%" echo $ttPath = "$env:LOCALAPPDATA\TexTools"
 >>"%SCRIPT%" echo $ttExe = Join-Path $ttPath "FFXIV_TexTools.exe"

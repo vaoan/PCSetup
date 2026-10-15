@@ -1070,8 +1070,8 @@ Describe "download-video" {
         $script:dvAst = [System.Management.Automation.Language.Parser]::ParseFile($script:dvScript, [ref]$tokens, [ref]$errors)
         $script:dvParseErrors = $errors
         foreach ($name in 'Resolve-VideoLink', 'ConvertFrom-TweetApi', 'Select-TweetFormat', 'Get-SafeName', 'Get-CompressCandidates', 'Get-Av1TargetPath',
-                          'Get-SampleWindows', 'Find-QualityCrf', 'Get-PredictedBytes',
-                          'New-PcSetupStamp', 'ConvertFrom-PcSetupStamp', 'Join-PcSetupComment') {
+                          'Get-SampleWindows', 'Find-QualityCrf', 'Get-PredictedBytes', 'Get-MatchedStart',
+                          'New-PcSetupStamp', 'ConvertFrom-PcSetupStamp', 'Join-PcSetupComment', 'Test-TooLongToCompress') {
             $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true) | Select-Object -First 1
             if ($fn) { Invoke-Expression $fn.Extent.Text }
         }
@@ -1097,6 +1097,22 @@ Describe "download-video" {
         $out = & powershell.exe -NoProfile -NonInteractive -Command $probe 2>&1 | Out-String
         $LASTEXITCODE | Should -Be 0 -Because $out
     }
+    It "keeps Twitch VODs over the length limit as downloaded" {
+        Get-Command Test-TooLongToCompress -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        Test-TooLongToCompress -Seconds 20700 -MaxHours 2 | Should -BeTrue     # the 5h45 VOD
+        Test-TooLongToCompress -Seconds 7200  -MaxHours 2 | Should -BeFalse    # exactly the limit is still compressed
+        Test-TooLongToCompress -Seconds 3600  -MaxHours 2 | Should -BeFalse
+        Test-TooLongToCompress -Seconds 20700 -MaxHours 0 | Should -BeFalse    # 0 = no limit
+        # Invoke-Twitch must go through the limit for both the new download and an existing file.
+        $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Twitch' }, $true) | Select-Object -First 1
+        $calls = @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Compress-Video' }, $true))
+        $calls.Count | Should -Be 1 -Because 'the only direct call is inside $compressTwitch, behind the length check'
+        $fn.Extent.Text | Should -Match 'Test-TooLongToCompress \$length \$TwitchCompressMaxHours'
+        # Temp cleanup must not delete another run's live parts (it did once, 2026-10-14).
+        $fn.Extent.Text | Should -Match '& \$clearTemp -Only \$tempOurs'
+        $fn.Extent.Text | Should -Match "Where-Object \{ -not \(& \`$isLive \`$_\) \}"
+        (Get-Content -LiteralPath $script:dvScript -Raw) | Should -Match "'-TwitchCompressMaxHours', `"\`$TwitchCompressMaxHours`""
+    }
     It "routes every supported link shape to its site" {
         Get-Command Resolve-VideoLink -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
         $cases = @(
@@ -1112,7 +1128,15 @@ Describe "download-video" {
             @{ Url = 'https://x.com/i/status/2100353858320859279';                       Site = 'x';         Id = '2100353858320859279' },
             @{ Url = 'https://x.com/i/web/status/2100353858320859279';                   Site = 'x';         Id = '2100353858320859279' },
             @{ Url = 'https://fxtwitter.com/mlmgay86/status/2100353858320859279';        Site = 'x';         Id = '2100353858320859279' },
-            @{ Url = 'https://vxtwitter.com/mlmgay86/status/2100353858320859279';        Site = 'x';         Id = '2100353858320859279' }
+            @{ Url = 'https://vxtwitter.com/mlmgay86/status/2100353858320859279';        Site = 'x';         Id = '2100353858320859279' },
+            @{ Url = 'https://www.tiktok.com/@scout2015/video/6718335390845095173?is_from_webapp=1'; Site = 'tiktok'; Id = '6718335390845095173'; Kind = 'video' },
+            @{ Url = 'https://www.tiktok.com/@scout2015.fan_/video/6718335390845095173'; Site = 'tiktok';    Id = '6718335390845095173'; Kind = 'video' },
+            @{ Url = 'https://m.tiktok.com/v/6718335390845095173.html';                  Site = 'tiktok';    Id = '6718335390845095173'; Kind = 'video' },
+            @{ Url = 'https://www.tiktok.com/embed/v2/6718335390845095173';              Site = 'tiktok';    Id = '6718335390845095173'; Kind = 'video' },
+            @{ Url = 'https://www.tiktok.com/@scout2015/photo/7412345678901234567';      Site = 'tiktok';    Id = '7412345678901234567'; Kind = 'photo' },
+            @{ Url = 'https://vm.tiktok.com/ZMreR5Uuv/';                                 Site = 'tiktok';    Id = 'ZMreR5Uuv';           Kind = 'short' },
+            @{ Url = 'https://vt.tiktok.com/ZSabc123/';                                  Site = 'tiktok';    Id = 'ZSabc123';            Kind = 'short' },
+            @{ Url = 'https://www.tiktok.com/t/ZTabc123/';                               Site = 'tiktok';    Id = 'ZTabc123';            Kind = 'short' }
         )
         foreach ($c in $cases) {
             $link = Resolve-VideoLink $c.Url
@@ -1121,7 +1145,7 @@ Describe "download-video" {
             $link.Id   | Should -Be $c.Id   -Because $c.Url
             if ($c.Kind) { $link.Kind | Should -Be $c.Kind -Because $c.Url }
         }
-        foreach ($bad in 'https://www.netflix.com/title/status/12345', 'https://x.com/mlmgay86', 'https://x.com/home', 'C:\Videos\clip [1080p60].mp4', '') {
+        foreach ($bad in 'https://www.netflix.com/title/status/12345', 'https://x.com/mlmgay86', 'https://x.com/home', 'https://www.tiktok.com/@scout2015', 'https://www.tiktok.com/foryou', 'C:\Videos\clip [1080p60].mp4', '') {
             Resolve-VideoLink $bad | Should -BeNullOrEmpty -Because $bad
         }
     }
@@ -1208,12 +1232,13 @@ Describe "download-video" {
     }
     It "spreads the quality samples over the file, and verifies on different windows than it searched" {
         Get-Command Get-SampleWindows -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
-        # A clip no longer than two samples is measured whole, for the search and the check alike.
-        $short = @(Get-SampleWindows -Seconds 25 -SampleSeconds 15)
+        # A clip no longer than two minimum windows is measured whole, for the search and the check alike.
+        $short = @(Get-SampleWindows -Seconds 9)
         $short.Count | Should -Be 1
         $short[0].Start | Should -Be 0
-        $short[0].Length | Should -Be 25
-        @(Get-SampleWindows -Seconds 25 -SampleSeconds 15 -Verify)[0].Start | Should -Be 0
+        $short[0].Length | Should -Be 9
+        @(Get-SampleWindows -Seconds 25 -Verify)[0].Start | Should -Be 0
+        @(Get-SampleWindows -Seconds 25 -Verify)[0].Length | Should -Be 25
         # A 10-minute file: several windows, each inside the file, in order, none overlapping.
         $w = @(Get-SampleWindows -Seconds 600 -SampleSeconds 15)
         $w.Count | Should -BeGreaterThan 2
@@ -1234,12 +1259,41 @@ Describe "download-video" {
             $v[$i].Start | Should -BeGreaterThan ($w[$i].Start + 15)
             ($v[$i].Start + 15) | Should -BeLessOrEqual 7200
         }
-        # A 6-hour VOD is capped at six windows, so the search stays minutes, not hours; a short clip
-        # is sampled densely (one window per 30 s), because two windows on a 2.5-minute test clip
+        # A long VOD gets one window per 10 minutes, capped at 20 (the search is still ~1-2 % of the
+        # encode, and six windows on 6 h were too few to trust); every file gets six at least while
+        # they fit, shortened rather than fewer, because two windows on a 2.5-minute test clip
         # averaged 95.9 where the whole file scored 93.0.
-        @(Get-SampleWindows -Seconds 22800 -SampleSeconds 15).Count | Should -Be 6
-        @(Get-SampleWindows -Seconds 150 -SampleSeconds 15).Count | Should -Be 5
-        @(Get-SampleWindows -Seconds 61 -SampleSeconds 15).Count | Should -Be 2
+        @(Get-SampleWindows -Seconds 22800).Count | Should -Be 20
+        @(Get-SampleWindows -Seconds 7200).Count | Should -Be 12
+        $c = @(Get-SampleWindows -Seconds 150)
+        $c.Count | Should -Be 6
+        $c[0].Length | Should -Be 5
+        @(Get-SampleWindows -Seconds 61).Count | Should -Be 2
+        # One probe never encodes more than a fifth of the file: the old rule sampled half of a
+        # short clip on every probe, so the search cost several times the encode itself.
+        foreach ($len in 61, 150, 180, 300, 600, 1800, 7200, 22800) {
+            $sum = (@(Get-SampleWindows -Seconds $len) | Measure-Object Length -Sum).Sum
+            $sum | Should -BeLessOrEqual ($len * 0.2 + 0.5) -Because "a $len s file must not be sampled beyond 20 %"
+        }
+    }
+    It "starts each check window on the same frame index in both files, not the same second" {
+        Get-Command Get-MatchedStart -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        # The 5h45 VOD of 2026-10-12: same frames, but every encoded frame 1/60 s later than its
+        # source. Seeking both to the same second compared each frame with its neighbour.
+        $ref = [double[]](0..999 | ForEach-Object { $_ / 60 })
+        $enc = [double[]](0..999 | ForEach-Object { ($_ + 1) / 60 })
+        $m = Get-MatchedStart $ref $enc 10.0 60
+        # Each start sits half a frame before frame 600 of its own file, so the seek lands on it.
+        $m.Reference | Should -BeGreaterThan ($ref[599]); $m.Reference | Should -BeLessThan ($ref[600])
+        $m.Distorted | Should -BeGreaterThan ($enc[599]); $m.Distorted | Should -BeLessThan ($enc[600])
+        $m.Matched | Should -BeTrue
+        # Different frame counts: fall back to the same second on both sides.
+        $f = Get-MatchedStart $ref ([double[]]$enc[0..900]) 10.0 60
+        $f.Matched | Should -BeFalse; $f.Reference | Should -Be 10.0; $f.Distorted | Should -Be 10.0
+        # And the check on the finished file really uses it.
+        $cv = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Compress-Video' }, $true) | Select-Object -First 1
+        $cv.Extent.Text | Should -Match 'Get-MatchedStart \$refTimes \$encTimes'
+        $cv.Extent.Text | Should -Match 'Measure-Vmaf \$Ffmpeg \$Path \$m\.Reference \$temp \$m\.Distorted'
     }
     It "finds the highest crf that still meets the VMAF target, with few measurements, and gives up when nothing fits" {
         Get-Command Find-QualityCrf -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
@@ -1249,10 +1303,26 @@ Describe "download-video" {
         $r = Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 35 -MinCrf 20 -MaxCrf 55
         $r.Crf | Should -Be 28          # 99 - 0.5*8 = 95.0 passes, crf 29 = 94.5 fails
         $r.Vmaf | Should -Be 95
-        $script:probed.Count | Should -BeLessOrEqual 7 -Because "a bisection needs a handful of sample encodes, not a ladder of 35"
-        # Start above the answer or below it - the same crf comes out.
-        (Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 22 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 28
-        (Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf 50 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 28
+        $script:probed.Count | Should -BeLessOrEqual 4 -Because "aiming each probe where the line crosses the target needs three or four sample encodes; bisection took six"
+        # Start above the answer or below it - the same crf comes out, just as fast.
+        foreach ($start in 22, 50) {
+            $script:probed = @()
+            (Find-QualityCrf -Measure $measure -TargetVmaf 95 -StartCrf $start -MinCrf 20 -MaxCrf 55).Crf | Should -Be 28
+            $script:probed.Count | Should -BeLessOrEqual 4
+        }
+        # A curve that is not a straight line (steeper at high crf, as real encodes are) still
+        # ends on the exact highest passing crf, never one below or above it.
+        $curved = { param([int]$crf) $script:probed += $crf; [pscustomobject]@{ Vmaf = 99 - 0.02 * [Math]::Pow($crf - 15, 2); Ratio = 0.5 } }
+        foreach ($t in 97, 95, 93, 90) {
+            $script:probed = @()
+            $expect = 20; while (99 - 0.02 * [Math]::Pow($expect + 1 - 15, 2) -ge $t) { $expect++ }
+            (Find-QualityCrf -Measure $curved -TargetVmaf $t -StartCrf 35 -MinCrf 20 -MaxCrf 55).Crf | Should -Be $expect
+            $script:probed.Count | Should -BeLessOrEqual 6
+        }
+        # Noise: a lower crf that scores worse than a higher one must not end in a crf that failed.
+        $noisy = { param([int]$crf) [pscustomobject]@{ Vmaf = $(if ($crf -eq 27) { 94 } else { 99 - 0.5 * ($crf - 20) }); Ratio = 0.5 } }
+        $n = Find-QualityCrf -Measure $noisy -TargetVmaf 95 -StartCrf 35 -MinCrf 20 -MaxCrf 55
+        $n.Vmaf | Should -BeGreaterOrEqual 95
         # Everything passes: the top of the range is the answer.
         (Find-QualityCrf -Measure $measure -TargetVmaf 80 -StartCrf 35 -MinCrf 20 -MaxCrf 55).Crf | Should -Be 55
         # Nothing reaches the target, even at the floor: no crf, and the reason names the best it saw.
@@ -1277,11 +1347,11 @@ Describe "download-video" {
         # No audio: the whole file scales.
         Get-PredictedBytes -SourceBytes 100000000 -Seconds 60 -AudioBitsPerSecond 0 -VideoRatio 0.5 | Should -Be ([long]50000000)
     }
-    It "compresses with SVT-AV1 preset 4 by default, NVENC only on -Gpu, and never swaps in an encode that failed the quality check" {
+    It "compresses with SVT-AV1 preset 5 by default, NVENC only on -Gpu, and never swaps in an encode that failed the quality check" {
         $text = Get-Content $script:dvScript -Raw
         $text | Should -Match '\[switch\]\$Gpu'
         $text | Should -Not -Match '\[switch\]\$Cpu'
-        $text | Should -Match "Av1SvtPreset = '4'"
+        $text | Should -Match "Av1SvtPreset = '5'"
         $text | Should -Match 'MinVmaf'
         $fn = $script:dvAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Compress-Video' }, $true) | Select-Object -First 1
         $fn | Should -Not -BeNullOrEmpty
@@ -1297,6 +1367,8 @@ Describe "download-video" {
         $vm | Should -Not -BeNullOrEmpty
         ([regex]::Matches($vm.Extent.Text, 'settb=AVTB,setpts=N/')).Count | Should -Be 2
         $vm.Extent.Text | Should -Not -Match 'log_path=[A-Za-z]:'
+        # Every frame is scored: n_subsample inflated the same encode's score by 0.2-0.4 (2026-10-12).
+        $vm.Extent.Text | Should -Not -Match 'n_subsample='
     }
     It "stamps its verdict into the file's own comment tag and reads it back, so a re-run needs no cache" {
         Get-Command New-PcSetupStamp -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
@@ -1508,8 +1580,12 @@ Describe "cloudflared scheduled tasks" {
         $script | Should -Match 'New-ScheduledTaskTrigger -AtStartup'
         $script | Should -Match 'New-ScheduledTaskTrigger -AtLogOn -User \$env:USERNAME'
         $script | Should -Match 'MultipleInstances IgnoreNew'
-        $script | Should -Match 'wscript\.exe'
-        $script | Should -Match 'launcher\.vbs'
+        # Supervised since the reboot-race fix: the task runs tunnel-supervisor.ps1 itself (it waits
+        # for the edge, relaunches cloudflared), so it must never be time-limited. The old
+        # wscript + .vbs launcher started cloudflared directly and died at every reboot.
+        $script | Should -Match 'tunnel-supervisor\.ps1'
+        $script | Should -Match '-ExecutionTimeLimit 0'
+        $script | Should -Not -Match 'Execute "wscript\.exe"'
     }
 
     It "ssh installer uses boot plus logon triggers" {
@@ -1517,15 +1593,154 @@ Describe "cloudflared scheduled tasks" {
         $script | Should -Match 'New-ScheduledTaskTrigger -AtStartup'
         $script | Should -Match 'New-ScheduledTaskTrigger -AtLogOn -User \$env:USERNAME'
         $script | Should -Match 'MultipleInstances IgnoreNew'
-        $script | Should -Match 'wscript\.exe'
-        $script | Should -Match 'launcher\.vbs'
+        # Supervised since the reboot-race fix: the task runs tunnel-supervisor.ps1 itself (it waits
+        # for the edge, relaunches cloudflared), so it must never be time-limited. The old
+        # wscript + .vbs launcher started cloudflared directly and died at every reboot.
+        $script | Should -Match 'tunnel-supervisor\.ps1'
+        $script | Should -Match '-ExecutionTimeLimit 0'
+        $script | Should -Not -Match 'Execute "wscript\.exe"'
     }
 }
 
+Describe "unlock-pdf" {
+    BeforeAll {
+        $script:UnlockDir = Join-Path $PSScriptRoot "..\optional"
+        $script:Jar = Join-Path $script:UnlockDir "unlock-pdf\dist\unlock-pdf.jar"
+        $script:Java = Get-Command java -ErrorAction SilentlyContinue
+        $script:Qpdf = Get-Command qpdf -ErrorAction SilentlyContinue
+    }
+
+    It "setup and build scripts parse under Windows PowerShell 5.1; the launcher is CRLF and forwards a dropped file" {
+        foreach ($p in "unlock-pdf.ps1", "unlock-pdf\build.ps1") {
+            $err = $null; [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $script:UnlockDir $p), [ref]$null, [ref]$err)
+            $err.Count | Should -Be 0 -Because "$p must parse"
+        }
+        $bat = [IO.File]::ReadAllText((Join-Path $script:UnlockDir "unlock-pdf.bat"))
+        $bat | Should -Not -Match '[^\r]\n' -Because 'a .bat with LF line endings breaks goto/labels'
+        $bat | Should -Match '-Path "%~1"'
+    }
+
+    It "the build pins its libraries and verifies each download against Maven's SHA-1" {
+        $build = Get-Content (Join-Path $script:UnlockDir "unlock-pdf\build.ps1") -Raw
+        $build | Should -Match "Artifact = 'pdfbox';\s+Version = '3\.\d+\.\d+'"
+        $build | Should -Match '\.sha1'
+        $build | Should -Match 'SHA-1 mismatch'
+        $build | Should -Match '--release'
+    }
+
+    It "the app is opened unelevated through explorer.exe, never started from the elevated setup" {
+        # Windows blocks drag-and-drop from Explorer into an elevated window (UIPI).
+        $setup = Get-Content (Join-Path $script:UnlockDir "unlock-pdf.ps1") -Raw
+        $setup | Should -Match 'Start-Process explorer\.exe'
+        $setup | Should -Not -Match 'Start-Process \$javaw'
+    }
+
+    It "the committed jar runs and unlocks a real encrypted PDF without touching the original" {
+        if (-not $script:Java -or -not $script:Qpdf -or -not (Test-Path -LiteralPath $script:Jar)) {
+            Set-ItResult -Skipped -Because 'needs java, qpdf (to make the encrypted test file) and the built jar'
+            return
+        }
+        $dir = Join-Path $env:TEMP ("unlock-pdf-test [" + [Guid]::NewGuid().ToString('N').Substring(0, 6) + "]")
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        try {
+            & $script:Qpdf.Source --empty (Join-Path $dir "plain.pdf")
+            & $script:Qpdf.Source --encrypt pw1 owner 256 -- (Join-Path $dir "plain.pdf") (Join-Path $dir "locked file.pdf")
+            $env:UNLOCK_PDF_PASSWORD = 'pw1'
+            $out = & $script:Java.Source -jar $script:Jar --cli (Join-Path $dir "locked file.pdf") 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            $out | Should -Match '^DONE\t.*\tcopy='
+            & $script:Qpdf.Source --is-encrypted (Join-Path $dir "locked file (unlocked).pdf")
+            $LASTEXITCODE | Should -Be 2 -Because 'the copy must have no encryption'
+            & $script:Qpdf.Source --is-encrypted (Join-Path $dir "locked file.pdf")
+            $LASTEXITCODE | Should -Be 0 -Because 'the original must stay encrypted'
+            $env:UNLOCK_PDF_PASSWORD = 'wrong'
+            $out = & $script:Java.Source -jar $script:Jar --cli (Join-Path $dir "locked file.pdf") 2>&1 | Out-String
+            $out | Should -Match '^WRONG_PASSWORD\t'
+        } finally {
+            $env:UNLOCK_PDF_PASSWORD = $null
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "turns a protected PDF into one picture per page, numbered, in a '(pages)' folder" {
+        if (-not $script:Java -or -not $script:Qpdf -or -not (Test-Path -LiteralPath $script:Jar)) {
+            Set-ItResult -Skipped -Because 'needs java, qpdf (to make the encrypted test file) and the built jar'
+            return
+        }
+        $dir = Join-Path $env:TEMP ("unlock-pdf-pics [" + [Guid]::NewGuid().ToString('N').Substring(0, 6) + "]")
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        try {
+            # Two blank US Letter pages, written by hand; qpdf rebuilds the xref and encrypts it.
+            $raw = "%PDF-1.4`n1 0 obj`n<< /Type /Catalog /Pages 2 0 R >>`nendobj`n2 0 obj`n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>`nendobj`n" +
+                   "3 0 obj`n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>`nendobj`n4 0 obj`n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>`nendobj`n" +
+                   "trailer << /Root 1 0 R /Size 5 >>`n%%EOF`n"
+            [IO.File]::WriteAllText((Join-Path $dir "raw.pdf"), $raw, [Text.Encoding]::ASCII)
+            & $script:Qpdf.Source (Join-Path $dir "raw.pdf") (Join-Path $dir "two.pdf") 2>$null
+            & $script:Qpdf.Source --encrypt pw2 owner 256 -- (Join-Path $dir "two.pdf") (Join-Path $dir "two locked.pdf")
+            $env:UNLOCK_PDF_PASSWORD = 'pw2'
+            $out = & $script:Java.Source -jar $script:Jar --cli --pictures --no-copy --dpi 72 (Join-Path $dir "two locked.pdf") 2>&1 | Out-String
+            $LASTEXITCODE | Should -Be 0 -Because $out
+            $out | Should -Match '\tpictures=2\t'
+            $pics = @(Get-ChildItem -LiteralPath (Join-Path $dir "two locked (pages)") | ForEach-Object Name)
+            $pics | Should -Be @('two locked - page 001.png', 'two locked - page 002.png')
+            Test-Path -LiteralPath (Join-Path $dir "two locked (unlocked).pdf") | Should -BeFalse -Because '--no-copy writes pictures only'
+        } finally {
+            $env:UNLOCK_PDF_PASSWORD = $null
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+Describe "cloudflared re-runs are idempotent" {
+    It "both tunnel installers stop the running supervisor before re-registering the task" {
+        # Unregister-ScheduledTask leaves the running instance alive; five setup runs left four
+        # ffxivbe-tunnel and three ssh-tunnel supervisors, each with its own cloudflared.
+        foreach ($name in 'install-tunnel.ps1', 'install-ssh-tunnel.ps1') {
+            $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\$name") -Raw
+            $stop = $script.IndexOf('Stop-SupervisedTunnel')
+            $unreg = $script.IndexOf('Unregister-ScheduledTask')
+            $stop | Should -BeGreaterThan -1 -Because "$name must stop the previous supervisor"
+            $stop | Should -BeLessThan $unreg -Because "$name must stop the old instance before removing its task"
+        }
+        $shared = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\shared-cloudflare-auth.ps1") -Raw
+        $shared | Should -Match 'Stop-ScheduledTask'
+        $shared.IndexOf("'tunnel-supervisor\.ps1'") | Should -BeLessThan $shared.IndexOf("Name='cloudflared.exe'") -Because 'supervisors must die first or they relaunch cloudflared'
+    }
+
+    It "DNS routes are retried, because one Cloudflare API timeout used to abort an installer" {
+        $shared = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\shared-cloudflare-auth.ps1") -Raw
+        $shared | Should -Match '\$maxAttempts = \d'
+        $shared | Should -Match '--overwrite-dns'
+    }
+}
 Describe "cloudflared staging recovery" {
-    It "single full installer entrypoint exists" {
-        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\install-all.bat") | Should -BeTrue
-        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\install-all.ps1") | Should -BeTrue
+    It "single full installer entrypoint exists, and it is the only one" {
+        # setup-cloudflare.bat replaced install-all.* + post-format-recovery.ps1 (2026-09-30). The
+        # user asked for ONE thing to run; a second orchestrator coming back is how the old pair drifted.
+        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\setup-cloudflare.bat") | Should -BeTrue
+        Test-Path (Join-Path $PSScriptRoot "..\cloudflared\setup-cloudflare.ps1") | Should -BeTrue
+        foreach ($old in 'install-all.bat', 'install-all.ps1', 'post-format-recovery.ps1') {
+            Test-Path (Join-Path $PSScriptRoot "..\cloudflared\$old") | Should -BeFalse -Because "$old was folded into setup-cloudflare.ps1"
+        }
+    }
+
+    It "the entrypoint runs every building block, supervised tunnels first, verification last" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\setup-cloudflare.ps1") -Raw
+        $order = 'install-tunnel\.ps1', 'install-ssh-tunnel\.ps1', 'setup-console-wsl\.sh', 'setup-console-windows\.ps1', 'console-health\.ps1', 'verify-console\.ps1'
+        $last = -1
+        foreach ($part in $order) {
+            $m = [regex]::Match($script, "'$part'|/$part'")
+            $m.Success | Should -BeTrue -Because "setup-cloudflare.ps1 must run $part"
+            $m.Index | Should -BeGreaterThan $last -Because "$part runs out of order"
+            $last = $m.Index
+        }
+        $script | Should -Match "'-Install'" -Because 'the ConsoleHealth watchdog must be registered'
+        $script | Should -Not -Match 'ReadKey|Read-Host' -Because 'the setup must run unattended'
+    }
+
+    It "the entrypoint resumes itself after a reboot instead of asking for a second run" {
+        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\setup-cloudflare.ps1") -Raw
+        $script | Should -Match 'CurrentVersion\\RunOnce'
+        $script | Should -Match 'Complete 2'
     }
 
     It "clean-install smoke test script exists" {
@@ -1538,12 +1753,7 @@ Describe "cloudflared staging recovery" {
         $script | Should -Match 'uninstall-console\.ps1'
         $script | Should -Match 'uninstall-tunnel\.ps1'
         $script | Should -Match 'uninstall-ssh-tunnel\.ps1'
-        $script | Should -Match 'post-format-recovery\.ps1'
-        $script | Should -Match 'verify-console\.ps1'
-    }
-
-    It "post-format recovery ends with full verification" {
-        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\post-format-recovery.ps1") -Raw
+        $script | Should -Match 'setup-cloudflare\.ps1'
         $script | Should -Match 'verify-console\.ps1'
     }
 
@@ -1568,48 +1778,6 @@ Describe "cloudflared staging recovery" {
         $script | Should -Match 'npm uninstall -g ungit'
         $script | Should -Match 'npm install -g ungit@1\.5\.30'
         $script | Should -Match 'Ungit started'
-    }
-
-    It "post-format recovery exits incomplete when WSL blocks console setup" {
-        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\post-format-recovery.ps1") -Raw
-        $script | Should -Match 'Ensure-WslPrerequisites'
-        $script | Should -Match 'Complete-WithConsoleBlocked'
-        $script | Should -Match 'exit 2'
-        $script | Should -Match 'Public console routes will keep failing'
-        $script | Should -Match 'Microsoft\.WSL'
-        $script | Should -Match 'Canonical\.Ubuntu\.2404'
-        $script | Should -Match 'ubuntu2404\.exe'
-        $script | Should -Match "install', '--root"
-        $script | Should -Match 'HypervisorPlatform'
-        $script | Should -Match 'Microsoft-Hyper-V-All'
-        $script | Should -Match "--install', '--no-distribution"
-        $script | Should -Match "--install'\)"
-        $script | Should -Not -Match 'setup-console-fallback\.ps1'
-        $script | Should -Not -Match 'Fallback public routes are online'
-    }
-
-    It "install-all gates completion on console stack readiness" {
-        $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\install-all.ps1") -Raw
-        $script | Should -Match 'Assert-ConsoleStackReady'
-        $script | Should -Match 'Test-ConsoleStackReady'
-        $script | Should -Match 'AllowIncompleteConsole'
-        $script | Should -Not -Match 'Test-ConsoleFallbackReady'
-        $script | Should -Not -Match 'ConsoleFallbackActive'
-        $script | Should -Match 'Ensure-WslInstallables'
-        $script | Should -Match 'foreach \(\$scope in ''CurrentUser'', ''LocalMachine''\)'
-        $script | Should -Match 'Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope \$scope -Force -ErrorAction Stop'
-        $script | Should -Match 'Get-ExecutionPolicy -Scope \$scope'
-        $script | Should -Match 'process-scope override'
-        $script | Should -Match 'Microsoft\.WSL'
-        $script | Should -Match 'Canonical\.Ubuntu\.2404'
-        $script | Should -Match 'ubuntu2404\.exe'
-        $script | Should -Match "install', '--root"
-        $script | Should -Match 'HypervisorPlatform'
-        $script | Should -Match 'Microsoft-Hyper-V-All'
-        $script | Should -Match 'hypervisorlaunchtype auto'
-        $script | Should -Match 'dev-config\.yml'
-        $script | Should -Match '7687'
-        $script.IndexOf('Assert-ConsoleStackReady') | Should -BeLessThan $script.IndexOf('Cloudflare full install complete')
     }
 
     It "public verifier rejects console fallback placeholders" {
@@ -1650,9 +1818,10 @@ Describe "cloudflared staging recovery" {
 
     It "public route verifier temporarily disables Access during checks" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.ps1") -Raw
-        $script | Should -Match 'New-CloudflareEveryoneBypassPolicy'
-        $script | Should -Match 'Remove-CloudflareAccessPolicy'
-        $script | Should -Match 'Temporary public route verifier bypass'
+        # One temp reusable everyone-bypass attached to each app, then the canonical gate restored.
+        $script | Should -Match 'New-CloudflareReusablePolicy'
+        $script | Should -Match 'everyone = @\{\}'
+        $script | Should -Match 'Restore-CanonicalGate'
         $script | Should -Match 'Start-Sleep -Seconds 60'
         $script | Should -Match 'finally'
     }
@@ -1667,12 +1836,12 @@ Describe "cloudflared staging recovery" {
     It "public route verifier exercises code-server folder switching" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\cloudflared\verify-public-routes.mjs") -Raw
         $script | Should -Match 'codeFolderChecks'
-        $script | Should -Match 'code\.ffxivbe\.org folder switch PCSetup'
+        $script | Should -Match 'code\.ffxiv\.be folder switch PCSetup'
         $script | Should -Match 'folder=/mnt/z/Users/Heiner/Documents/PCSetup'
         $script | Should -Match 'failOnSubresourceErrors'
         $script | Should -Match 'subresource 5xx'
         $script | Should -Match 'expected folder content missing'
-        $script | Should -Match "name === 'code\.ffxivbe\.org' && lastResult\.Passed"
+        $script | Should -Match "name === 'code\.ffxiv\.be' && lastResult\.Passed"
     }
 
     It "public installable endpoints pass full verifier" -Skip:($IsCI) {

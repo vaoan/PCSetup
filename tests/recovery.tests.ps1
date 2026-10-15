@@ -217,8 +217,6 @@ Describe 'Recovery scripts - configuration agreement' {
         $install = Get-ScriptText 'install-tunnel.ps1'
         if ($install -match 'hostname:\s*www\.[^\s]+\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['install-tunnel.ps1'] = $Matches[1] }
 
-        $recovery = Get-ScriptText 'post-format-recovery.ps1'
-        if ($recovery -match 'hostname:\s*www\.\$webHostname\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['post-format-recovery.ps1'] = $Matches[1] }
 
         $ports.Count | Should -BeGreaterThan 1 -Because 'the port should be declared in more than one place for this test to mean anything'
         ($ports.Values | Select-Object -Unique).Count | Should -Be 1 -Because "ports disagree: $($ports.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })"
@@ -235,13 +233,11 @@ Describe 'Recovery scripts - configuration agreement' {
         $install = Get-ScriptText 'install-tunnel.ps1'
         if ($install -match 'hostname:\s*chat\.[^\s]+\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['install-tunnel.ps1'] = $Matches[1] }
 
-        $recovery = Get-ScriptText 'post-format-recovery.ps1'
-        if ($recovery -match 'hostname:\s*chat\.\$webHostname\s*\r?\n\s*service:\s*http://127\.0\.0\.1:(\d+)') { $ports['post-format-recovery.ps1'] = $Matches[1] }
 
         $proxy = Get-Content (Join-Path $script:CfDir 'chat-proxy.js') -Raw
         if ($proxy -match 'const PROXY_PORT = (\d+);') { $ports['chat-proxy.js'] = $Matches[1] }
 
-        $ports.Count | Should -Be 4 -Because 'config.yml, install-tunnel.ps1, post-format-recovery.ps1 and chat-proxy.js all declare the chat port'
+        $ports.Count | Should -Be 3 -Because 'config.yml, install-tunnel.ps1 and chat-proxy.js all declare the chat port'
         ($ports.Values | Select-Object -Unique).Count | Should -Be 1 -Because "ports disagree: $($ports.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })"
     }
 
@@ -260,18 +256,6 @@ Describe 'Recovery scripts - configuration agreement' {
         $ungated | Should -BeNullOrEmpty -Because 'a tunnelled hostname with no Access app is exposed to the internet'
     }
 
-    It 'hostname variables are zone roots, so subdomain composition cannot double up' {
-        # $webHostname was briefly "www.ffxiv.be" while the template composed
-        # "www.$webHostname" -> www.www.ffxiv.be.
-        $recovery = Get-ScriptText 'post-format-recovery.ps1'
-        if ($recovery -match '(?m)^\$webHostname\s*=\s*"([^"]+)"') {
-            $value = $Matches[1]
-            $composed = [regex]::Matches($recovery, '(?:www|chat|map)\.\$webHostname').Count
-            if ($composed -gt 0) {
-                $value | Should -Not -Match '^(www|chat|map)\.' -Because "`$webHostname is composed as e.g. www.`$webHostname, so it must be a zone root, not '$value'"
-            }
-        }
-    }
 }
 
 Describe 'Recovery scripts - deployed copies are drift-checked' {

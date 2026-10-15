@@ -355,7 +355,7 @@ if (Test-Path $chatProxyScript) {
 # The supervisor waits for the Cloudflare edge to be reachable before launching
 # cloudflared and relaunches it if it ever exits - this is what makes the console
 # survive a reboot where the network/ProtonVPN isn't ready yet at logon.
-if (-not (Test-Path $cfExe))         { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\install-all.ps1 first." }
+if (-not (Test-Path $cfExe))         { Fail "cloudflared.exe not found at $cfExe. Run cloudflared\setup-cloudflare.bat first." }
 if (-not (Test-Path $devConfigPath)) { Fail "dev-config.yml not found. Run setup-console-windows.ps1 first." }
 if (-not (Test-Path $cfSupervisor))  { Fail "tunnel-supervisor.ps1 not found: $cfSupervisor. Run setup-console-windows.ps1 first." }
 
