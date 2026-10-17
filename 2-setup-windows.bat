@@ -192,7 +192,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'CodecGuide.K-LiteCodecPack.Mega'; Name = 'K-Lite Codec Pack Mega' },
 >>"%SCRIPT%" echo     @{ Id = 'pCloudAG.pCloudDrive';            Name = 'pCloud Drive' },
 >>"%SCRIPT%" echo     @{ Id = 'Devolutions.RemoteDesktopManager'; Name = 'Remote Desktop Manager' },
->>"%SCRIPT%" echo     @{ Id = 'Cloudflare.Warp';                 Name = 'Cloudflare WARP' },
 >>"%SCRIPT%" echo     @{ Id = 'AdGuard.AdGuard';                 Name = 'AdGuard' },
 >>"%SCRIPT%" echo     @{ Id = 'Proton.ProtonVPN';                Name = 'ProtonVPN' },
 >>"%SCRIPT%" echo     @{ Id = 'Microsoft.DirectX';               Name = 'DirectX Runtime' },

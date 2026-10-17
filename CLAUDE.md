@@ -675,7 +675,7 @@ optional `Source` for msstore-only packages). Every entry is verified after inst
 that failed is listed at the end, with the script exiting non-zero.
 
 **Scoop:** Chrome, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet (HKCU Run entry added, since the Scoop build has no autostart), Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
-**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, Cloudflare WARP, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, Driver Booster, NVIDIA App (msstore)
+**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, Driver Booster, NVIDIA App (msstore)
 
 > **Driver Booster is installed, then stripped of everything it starts on its own.** The IObit
 > installer (14.0.1) registers three scheduled tasks, all `RunLevel Highest`: *Driver Booster
