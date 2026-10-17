@@ -216,9 +216,12 @@ Describe "0-init-prereqs" {
         foreach ($bat in '2-setup-windows.bat', '6-setup-games.bat') {
             $text = Get-Content (Join-Path $PSScriptRoot "..\$bat") -Raw
             $text | Should -Not -Match '\^& winget install'
-            $text | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$displayName \(winget\)" -FilePath winget\.exe'
+            $text | Should -Match 'Invoke-CommandWithStatus -Label "Installing (\$displayName|Steam) \(winget\)" -FilePath winget\.exe'
             $text | Should -Match '--disable-interactivity'
         }
+        # The sign-in installer runs hidden, so it has no status line - but it must never prompt.
+        $perUser = Get-Content (Join-Path $PSScriptRoot "..\sources\per-user-apps.ps1") -Raw
+        $perUser | Should -Match "'--disable-interactivity'"
     }
     It "QuickEdit is switched off for the console so a stray click cannot pause an unattended run" {
         # QuickEdit selection ("Select Administrator: Windows PowerShell" in the title) blocks
@@ -255,8 +258,10 @@ Describe "0-init-prereqs" {
         $bat | Should -Match '"/c npm install -g \$package'
         $bat | Should -Match '"npm prefix -g"'
         ($bat -split "`r?`n" | Where-Object { $_ -notmatch 'echo #' }) -join "`n" | Should -Not -Match 'npm\.cmd'
-        # nvm 2.x's global prefix (the version folder) is not on PATH; script 3 puts it there once.
-        $bat | Should -Match 'SetEnvironmentVariable\(''Path'', \(@\(\$npmPrefix\) \+ \$userPathParts -join '';''\), ''User''\)'
+        # nvm 2.x's global prefix (the version folder) is not on PATH; script 3 puts it there once,
+        # on the MACHINE PATH, because nvm is installed for all users.
+        $bat | Should -Match 'SetEnvironmentVariable\(''Path'', \(@\(\$npmPrefix\) \+ \$machinePathParts -join '';''\), ''Machine''\)'
+        $bat | Should -Not -Match '\$npmPrefix\) \+ \$userPathParts'
     }
     It "NetFx3 is enabled from install media when sources\sxs is reachable, else Windows Update" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
@@ -453,15 +458,17 @@ Describe "2-setup-windows" {
         # winget said "Successfully installed", the check taken the instant it returned said
         # FAILED, and the app was there seconds later (Discord and Claude Desktop, seen in the VM).
         $bat | Should -Match 'function Wait-InstalledCheck'
-        $bat | Should -Match 'if \(Wait-InstalledCheck \{ Test-WingetApp \$id \}\)'
-        (($bat -split "`r?`n") | Where-Object { $_ -match 'Wait-InstalledCheck \{ Test-Path \$installedPath \}' }).Count | Should -Be 2
+        $bat | Should -Match 'if \(Wait-InstalledCheck \{ Test-WingetApp \$id \$scope \}\)'
+        (($bat -split "`r?`n") | Where-Object { $_ -match 'Wait-InstalledCheck \{ Test-Path \$installedPath \}' }).Count | Should -Be 1
         $bat | Should -Not -Match 'if \(Test-WingetApp \$id\) \{ Write-Host "\$displayName installed\."'
         # `& $check` inside an echo line: the & MUST be escaped or CMD splits the line there and
         # the generated function reads `if ($` (a real parse error that shipped for one round).
         $bat | Should -Match 'if \(\^& \$check\)'
         $games = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
-        $games | Should -Match 'if \(Wait-InstalledCheck \{ Test-WingetApp \$id \}\)'
+        $games | Should -Match 'if \(Wait-InstalledCheck \{ Test-Path -LiteralPath \$steamExe \}\)'
         $games | Should -Match 'if \(\^& \$check\)'
+        $perUser = Get-Content (Join-Path $PSScriptRoot "..\sources\per-user-apps.ps1") -Raw
+        $perUser | Should -Match 'if \(Wait-InstalledCheck \$check\)'
         # Nothing may kill an app the installer opened: the fix is to not open it in the first place.
         $bat | Should -Not -Match 'Stop-LaunchedApp|Stop-Process -Name Discord'
     }
@@ -499,7 +506,7 @@ Describe "2-setup-windows" {
         $bat | Should -Match "Name = 'NVIDIA App'; Source = 'msstore'; RequiresGpu = 'NVIDIA'; Optional = \`$true"
         $bat | Should -Match 'if \(\$requiresGpu -and -not \(Test-GpuVendor \$requiresGpu\)\)'
         $bat | Should -Match 'elseif \(\$optional\) \{ Write-Host "\$displayName did not install; optional, continuing\."'
-        $bat | Should -Match 'Install-WingetApp \$entry\.Id \$entry\.Name \$entry\.Source \$entry\.RequiresGpu \(\[bool\]\$entry\.Optional\)'
+        $bat | Should -Match 'Install-WingetApp \$entry\.Id \$entry\.Name \$entry\.Source \$entry\.RequiresGpu \(\[bool\]\$entry\.Optional\) \$entry\.Scope'
     }
     It "Discord and Discord Canary install silently with -s from Discord's x64 endpoint, not through winget" {
         # winget runs Discord's installer with NO switches (its maintainers removed -s), so it shows
@@ -508,11 +515,15 @@ Describe "2-setup-windows" {
         # shortcuts + the uninstall entry, launches nothing, and the app runs on first start (its
         # updater builds the version database then). The generic api/download URL serves the x86
         # build even with arch=x64; only the distributions endpoint honours the architecture.
+        # Discord only installs per user, so it lives in the sign-in installer, not in script 2.
+        $ps1 = Get-Content (Join-Path $PSScriptRoot "..\sources\per-user-apps.ps1") -Raw
+        $ps1 | Should -Match "Install-DirectExe 'Discord' `"https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=stable&platform=win&arch=\`$discordArch`" '-s' `"\`$env:LOCALAPPDATA\\Discord\\Update\.exe`""
+        $ps1 | Should -Match "Install-DirectExe 'Discord Canary' `"https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=canary&platform=win&arch=\`$discordArch`" '-s' `"\`$env:LOCALAPPDATA\\DiscordCanary\\Update\.exe`""
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
-        $bat | Should -Match 'Install-DirectExe "Discord" "https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=stable&platform=win&arch=\$discordArch" "-s" "\$env:LOCALAPPDATA\\Discord"'
-        $bat | Should -Match 'Install-DirectExe "Discord Canary" "https://discord\.com/api/downloads/distributions/app/installers/latest\?channel=canary&platform=win&arch=\$discordArch" "-s" "\$env:LOCALAPPDATA\\DiscordCanary"'
-        $bat | Should -Not -Match "Id = 'Discord\.Discord"
-        $bat | Should -Not -Match 'discord\.com/api/download\?platform=win|api/download/canary\?platform=win'
+        foreach ($text in $bat, $ps1) {
+            $text | Should -Not -Match "Id = 'Discord\.Discord"
+            $text | Should -Not -Match 'discord\.com/api/download\?platform=win|api/download/canary\?platform=win'
+        }
         # winget still recognises the installed app and would "upgrade" it interactively; Discord
         # updates itself, so update-all must leave both alone.
         $upd = Get-Content (Join-Path $PSScriptRoot "..\update-all.bat") -Raw
@@ -523,7 +534,7 @@ Describe "2-setup-windows" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
         $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
         $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
-        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$name" -FilePath \$tmp'
+        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing \$name \(msi\)" -FilePath msiexec\.exe'
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing Dokan \(msi\)"[^\r\n]*-WatchProcess msiexec -WatchService msiserver'
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing IceDrive"'
     }
@@ -803,15 +814,168 @@ Describe "5-move-profile-folders" {
 }
 
 # ─────────────────────────────────────────────
+# All-users installs: one install per PC, not per account
+# ─────────────────────────────────────────────
+Describe "all-users installs" {
+    It "scoop-global installs machine-wide, carries settings over and removes the per-user copy (5.1)" {
+        # Real helper, fake scoop: "install --global" creates apps\<name>\current\manifest.json under
+        # SCOOP_GLOBAL (except 'broken'), "uninstall" deletes the per-user app (except 'running',
+        # which is what Scoop does when the app is open). Run under 5.1, like the setup.
+        $root = Join-Path $env:TEMP ("pcsetup-scoopglobal-" + [guid]::NewGuid().ToString('N'))
+        $helper = (Resolve-Path (Join-Path $PSScriptRoot '..\sources\scoop-global.ps1')).Path
+        $probe = Join-Path $root 'probe.ps1'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        @'
+param($root, $helper)
+$env:SCOOP = Join-Path $root 'user'; $env:SCOOP_GLOBAL = Join-Path $root 'global'
+$global:calls = New-Object System.Collections.ArrayList
+function scoop {
+    $a = @($args); $null = $global:calls.Add($a -join ' ')
+    if ($a[0] -eq 'install' -and $a[1] -eq '--global') {
+        $name = ($a[2] -split '/')[-1]
+        if ($name -ne 'broken') {
+            New-Item -ItemType Directory -Path "$env:SCOOP_GLOBAL\apps\$name\current" -Force | Out-Null
+            Set-Content -Path "$env:SCOOP_GLOBAL\apps\$name\current\manifest.json" -Value '{}'
+        }
+    }
+    elseif ($a[0] -eq 'uninstall' -and $a[1] -ne 'running') { Remove-Item "$env:SCOOP\apps\$($a[1])" -Recurse -Force }
+}
+function New-UserApp($name, [switch]$Persist) {
+    New-Item -ItemType Directory -Path "$env:SCOOP\apps\$name\current" -Force | Out-Null
+    Set-Content -Path "$env:SCOOP\apps\$name\current\manifest.json" -Value '{}'
+    if ($Persist) { New-Item -ItemType Directory -Path "$env:SCOOP\persist\$name" -Force | Out-Null; Set-Content "$env:SCOOP\persist\$name\cfg.txt" 'mine' }
+}
+. $helper
+New-UserApp 'tool' -Persist; New-UserApp 'running'; New-UserApp 'gone'
+$r = [ordered]@{}
+$r.toolOk = Install-ScoopGlobalApp -Package 'tool' 6>$null
+$r.toolGlobal = Test-ScoopGlobalApp 'tool'
+$r.toolUserGone = -not (Test-ScoopUserApp 'tool')
+$r.persistCopied = (Get-Content "$env:SCOOP_GLOBAL\persist\tool\cfg.txt" -ErrorAction SilentlyContinue) -eq 'mine'
+$r.userPersistKept = Test-Path "$env:SCOOP\persist\tool\cfg.txt"
+$before = $global:calls.Count
+$r.secondOk = Install-ScoopGlobalApp -Package 'tool' 6>$null
+$r.secondNoCalls = $global:calls.Count -eq $before
+$r.brokenOk = Install-ScoopGlobalApp -Package 'broken' 6>$null
+$r.runningOk = Install-ScoopGlobalApp -Package 'running' 6>$null
+$r.runningUserKept = Test-ScoopUserApp 'running'
+$r.bucketOk = Install-ScoopGlobalApp -Package 'games/epic' 6>$null
+$r.bucketGlobal = Test-ScoopGlobalApp 'epic'
+$r.removeOk = Remove-ScoopUserApp -Package 'gone' 6>$null
+$r.removeGone = -not (Test-ScoopUserApp 'gone')
+$r.removeMissingOk = Remove-ScoopUserApp -Package 'never' 6>$null
+[pscustomobject]$r | ConvertTo-Json -Compress
+'@ | Set-Content -Path $probe -Encoding ASCII
+        try {
+            $json = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $probe $root $helper | Select-Object -Last 1
+            $r = $json | ConvertFrom-Json
+            $r.toolOk | Should -BeTrue
+            $r.toolGlobal | Should -BeTrue
+            $r.toolUserGone | Should -BeTrue
+            $r.persistCopied | Should -BeTrue -Because 'settings carry over to the global persist folder'
+            $r.userPersistKept | Should -BeTrue -Because 'the old data is never deleted'
+            $r.secondOk | Should -BeTrue
+            $r.secondNoCalls | Should -BeTrue -Because 'an app already installed for all users is left alone'
+            $r.brokenOk | Should -BeFalse -Because 'a failed install is verified, not trusted'
+            $r.runningOk | Should -BeTrue -Because 'a per-user copy that cannot be removed is a warning only'
+            $r.runningUserKept | Should -BeTrue
+            $r.bucketOk | Should -BeTrue
+            $r.bucketGlobal | Should -BeTrue -Because "'games/epic' lives under the bare name"
+            $r.removeOk | Should -BeTrue
+            $r.removeGone | Should -BeTrue
+            $r.removeMissingOk | Should -BeTrue
+        }
+        finally { Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "every Scoop install in the setup scripts is global, except Telegram on purpose" {
+        $init = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $init | Should -Match "\. \(Join-Path \`$PSScriptRoot 'scoop-global\.ps1'\)"
+        $init | Should -Match 'Install-ScoopGlobalApp -Package \$Package'
+        # A bare (per-user) "scoop install" appears exactly once: inside Install-ScoopUserOnlyApp.
+        foreach ($case in @(@{ File = '2-setup-windows.bat'; Bare = 1 }, @{ File = '6-setup-games.bat'; Bare = 0 })) {
+            $bat = Get-Content (Join-Path $PSScriptRoot "..\$($case.File)") -Raw
+            $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\scoop-global\.ps1"'
+            @(($bat -split "`r?`n") | Where-Object { $_ -match '\^& scoop install ' -and $_ -notmatch 'echo #' }).Count | Should -Be $case.Bare
+        }
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match "Install-ScoopUserOnlyApp 'telegram' 'Telegram'"
+        # Apps whose Scoop persist folder holds a login or upload accounts are never global Scoop.
+        $list = [regex]::Match($bat, '\$scoopApps = @\(([^)]*)\)').Groups[1].Value
+        foreach ($app in 'firefox', 'sharex', 'telegram', 'steam') { $list | Should -Not -Match "'$app'" }
+        $bat | Should -Match "Id = 'Mozilla\.Firefox';\s+Name = 'Firefox'; Scope = 'machine'"
+        $bat | Should -Match "Id = 'ShareX\.ShareX';\s+Name = 'ShareX'; Scope = 'machine'"
+        $upd = Get-Content (Join-Path $PSScriptRoot "..\update-all.bat") -Raw
+        $upd | Should -Match 'scoop update \* --global' -Because "without --global 'update *' skips the all-users apps"
+    }
+    It "only the global Scoop shims go on the machine PATH" {
+        # Each account that ran setup used to add its own %USERPROFILE%\scoop\shims there.
+        $init = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $init | Should -Not -Match 'Set-PathEntryFirst "\$env:USERPROFILE\\scoop\\shims"'
+        $init | Should -Match 'Set-PathEntryFirst "\$env:ProgramData\\scoop\\shims" ''Machine'''
+        $init | Should -Match '-notlike "\$env:SystemDrive\\Users\\\*\\scoop\\shims"'
+    }
+    It "per-user-only apps install at every sign-in through a Users-group task, never elevated" {
+        $reg = Get-Content (Join-Path $PSScriptRoot "..\sources\register-per-user-apps.ps1") -Raw
+        $reg | Should -Match "New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited"
+        $reg | Should -Match 'New-ScheduledTaskTrigger -AtLogOn'
+        $reg | Should -Match "Join-Path \`$env:ProgramData 'PCSetup'" -Because 'the temp workspace is deleted after setup'
+        $reg | Should -Match 'New-ScheduledTaskPrincipal -UserId \$user -LogonType Interactive -RunLevel Limited'
+        $reg | Should -Match '-File \$installed -AllowElevated' -Because 'no interactive session falls back to running in place'
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match '>>"%SCRIPT%" echo \^& "%~dp0sources\\register-per-user-apps\.ps1" -RunNow'
+        $ps1 = Get-Content (Join-Path $PSScriptRoot "..\sources\per-user-apps.ps1") -Raw
+        $ps1 | Should -Not -Match 'Start-Process PowerShell[^\r\n]*-Verb RunAs' -Because 'it installs into the signed-in profile'
+        $ps1 | Should -Match "Local\\PCSetup-per-user-apps"
+        # Claude Desktop, Kiro, Rufus and 2FAGuard moved here from script 2's winget table.
+        foreach ($id in 'Anthropic.Claude', 'Amazon.Kiro', 'Rufus.Rufus', 'timokoessler.2FAGuard') {
+            $ps1 | Should -Match ([regex]::Escape("'$id'"))
+            $bat | Should -Not -Match ([regex]::Escape("Id = '$id'"))
+        }
+        foreach ($f in 'per-user-apps.ps1', 'register-per-user-apps.ps1', 'scoop-global.ps1') {
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "..\sources\$f"), [ref]$null, [ref]$errors)
+            $errors | Should -BeNullOrEmpty
+        }
+    }
+    It "per-user-apps refuses to run elevated without -AllowElevated" -Skip:(-not $IsAdmin -or $IsCI) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\sources\per-user-apps.ps1') | Out-Null
+        $LASTEXITCODE | Should -Be 2
+    }
+}
+
+# ─────────────────────────────────────────────
 # 6 — setup-games (skipped in CI)
 # ─────────────────────────────────────────────
 Describe "6-setup-games" {
-    It "TexTools and FFLogs installers run behind the shared status line" {
+    It "installs Steam machine-wide through Valve's installer and the launchers through the sign-in task" {
+        # Steam has to write to its own folder; a global Scoop install (%ProgramData%\scoop) is
+        # admin-only, so Steam could not update itself or download for a normal account.
         $bat = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
         $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\status-line\.ps1"'
+        $bat | Should -Match '>>"%SCRIPT%" echo \. "%~dp0sources\\scoop-global\.ps1"'
         $bat | Should -Not -Match 'Start-Process[^\r\n]*-Wait'
-        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing TexTools"'
-        $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing FFLogs Uploader"'
+        $bat | Should -Match '"Valve\.Steam", "-e", "--scope", "machine"'
+        $bat | Should -Not -Match 'Install-ScoopApp "steam"'
+        $bat | Should -Match "Remove-ScoopUserApp 'steam' 'Steam'"
+        $code = (($bat -split "`r?`n") | Where-Object { $_ -notmatch 'echo #' }) -join "`n"
+        $code | Should -Not -Match 'TexTools|FFLogs-Setup|goatcorp\.XIVLauncher|Overwolf\.CurseForge' -Because 'per-user-only installers live in sources\per-user-apps.ps1'
+        $ps1 = Get-Content (Join-Path $PSScriptRoot "..\sources\per-user-apps.ps1") -Raw
+        foreach ($needle in 'FFXIV_TexTools.exe', 'RPGLogs/Uploaders-fflogs', "'goatcorp.XIVLauncher'", "'Overwolf.CurseForge'") {
+            $ps1 | Should -Match ([regex]::Escape($needle))
+        }
+    }
+    It "carries the old Scoop Steam library list over with the install path rewritten" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
+        $bat | Should -Match "\`$oldPath = \(Join-Path \(Get-ScoopUserDir\) 'apps\\steam\\current'\)\.Replace\('\\', '\\\\'\)"
+        $bat | Should -Match 'if \(Get-Process steam -ErrorAction SilentlyContinue\)'
+        # The rewrite as the generated code does it, against a real libraryfolders.vdf shape.
+        $old = 'C:\Users\someone\scoop\apps\steam\current'
+        $vdf = "`"libraryfolders`"`n{`n`t`"0`"`n`t{`n`t`t`"path`"`t`t`"$($old.Replace('\', '\\'))`"`n`t}`n`t`"1`"`n`t{`n`t`t`"path`"`t`t`"D:\\SteamLibrary`"`n`t}`n}"
+        $new = 'C:\Program Files (x86)\Steam'
+        $out = $vdf.Replace($old.Replace('\', '\\'), $new.Replace('\', '\\'))
+        $out | Should -Match ([regex]::Escape('"C:\\Program Files (x86)\\Steam"'))
+        $out | Should -Match ([regex]::Escape('"D:\\SteamLibrary"'))
+        $out | Should -Not -Match 'scoop'
     }
     It "Steam installed" -Skip:($IsCI) {
         $installed = (Get-Command steam -ErrorAction SilentlyContinue) -or (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")

@@ -46,15 +46,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     $env:Path = (@($machinePath, $userPath) + $extra ^| Where-Object { -not [string]::IsNullOrWhiteSpace($_) } ^| Select-Object -Unique) -join ';'
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # Detection is by "scoop prefix", NOT by matching the text of "scoop list".
->>"%SCRIPT%" echo # A failed install STAYS in "scoop list" forever with an empty Version and
->>"%SCRIPT%" echo # Info='Install failed', so the old regex matched it and reported "already installed,
->>"%SCRIPT%" echo # skipping" on every subsequent run - vlc was stuck uninstalled for exactly this reason.
->>"%SCRIPT%" echo # "scoop prefix" resolves the 'current' junction, which a failed install does not have.
->>"%SCRIPT%" echo function Test-ScoopApp([string]$package) {
->>"%SCRIPT%" echo     $prefix = ^& scoop prefix $package 2^>$null 6^>$null
->>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0 -and $prefix -and (Test-Path $prefix))
->>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Scoop apps go in for ALL users (scoop --global, %ProgramData%\scoop), and a per-user copy from
+>>"%SCRIPT%" echo # before is moved over - see sources\scoop-global.ps1. Detection is by the 'current' manifest,
+>>"%SCRIPT%" echo # NOT by matching "scoop list": a failed install stays listed forever (vlc sat uninstalled
+>>"%SCRIPT%" echo # for weeks because the old regex matched it), and has no 'current' junction.
+>>"%SCRIPT%" echo . "%~dp0sources\scoop-global.ps1"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Add-ScoopBucket([string]$bucket) {
 >>"%SCRIPT%" echo     $names = @(^& scoop bucket list 2^>$null ^| ForEach-Object { $_.Name })
@@ -65,16 +61,26 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Install-ScoopApp([string]$package, [string]$displayName = $package) {
 >>"%SCRIPT%" echo     Refresh-SetupEnvironment
->>"%SCRIPT%" echo     if (Test-ScoopApp $package) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
->>"%SCRIPT%" echo     Write-Host "Installing $displayName via Scoop..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     # scoop install self-heals a previous failed install (it purges and retries).
+>>"%SCRIPT%" echo     if (-not (Install-ScoopGlobalApp -Package $package -DisplayName $displayName)) { Add-Failure $displayName }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Telegram is the one Scoop app kept per-user on purpose: Scoop runs it in portable mode with its
+>>"%SCRIPT%" echo # login (tdata) in the persist folder, which a global install would share with every account.
+>>"%SCRIPT%" echo function Install-ScoopUserOnlyApp([string]$package, [string]$displayName = $package) {
+>>"%SCRIPT%" echo     Refresh-SetupEnvironment
+>>"%SCRIPT%" echo     if (Test-ScoopUserApp $package) { Write-Host "$displayName already installed for this user, skipping..." -ForegroundColor Yellow; return }
+>>"%SCRIPT%" echo     Write-Host "Installing $displayName for this user only via Scoop..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     try { ^& scoop install $package } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-ScoopApp $package) { Write-Host "$displayName installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Test-ScoopUserApp $package) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; Add-Failure $displayName }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo function Test-WingetApp([string]$id) {
->>"%SCRIPT%" echo     ^& winget list --id $id -e --accept-source-agreements ^> $null 2^>^&1
+>>"%SCRIPT%" echo # With a Scope the check asks for that scope only, so a per-user copy of an app that should be
+>>"%SCRIPT%" echo # machine-wide does not count as installed.
+>>"%SCRIPT%" echo function Test-WingetApp([string]$id, [string]$scope) {
+>>"%SCRIPT%" echo     $listArgs = @('list', '--id', $id, '-e', '--accept-source-agreements', '--disable-interactivity')
+>>"%SCRIPT%" echo     if ($scope) { $listArgs += @('--scope', $scope) }
+>>"%SCRIPT%" echo     ^& winget @listArgs ^> $null 2^>^&1
 >>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0)
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
@@ -103,38 +109,26 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     return [bool]($gpus ^| Where-Object { $_ -match $vendor })
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName = $id, [string]$source, [string]$requiresGpu, [bool]$optional = $false) {
+>>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName = $id, [string]$source, [string]$requiresGpu, [bool]$optional = $false, [string]$scope) {
 >>"%SCRIPT%" echo     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { Write-Host "winget missing; cannot install $displayName." -ForegroundColor Red; Add-Failure $displayName; return }
->>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
+>>"%SCRIPT%" echo     if (Test-WingetApp $id $scope) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     if ($requiresGpu -and -not (Test-GpuVendor $requiresGpu)) { Write-Host "$displayName skipped: no $requiresGpu GPU in this machine." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     # Never trust winget's exit code: it returns nonzero for "no applicable upgrade"
 >>"%SCRIPT%" echo     # and other benign states. Verify with winget list instead.
 >>"%SCRIPT%" echo     $wingetArgs = @('install', '--id', $id, '-e', '--accept-source-agreements', '--accept-package-agreements', '--silent', '--disable-interactivity')
 >>"%SCRIPT%" echo     if ($source) { $wingetArgs += @('--source', $source) }
+>>"%SCRIPT%" echo     if ($scope) { $wingetArgs += @('--scope', $scope) }
 >>"%SCRIPT%" echo     # winget prints nothing while captured, so the status line (net rate, installer cpu, its last line) is the only movement.
 >>"%SCRIPT%" echo     try { $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList $wingetArgs -WatchProcess msiexec -WatchService msiserver } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id }) { Write-Host "$displayName installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id $scope }) { Write-Host "$displayName installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     elseif ($optional) { Write-Host "$displayName did not install; optional, continuing." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; Add-Failure $displayName }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Direct installers record a failure and let the run continue. They used to "throw",
 >>"%SCRIPT%" echo # which aborted the whole script - one bad download meant every app after it (including
->>"%SCRIPT%" echo # Claude Code and the WSL setup) was never installed at all.
->>"%SCRIPT%" echo function Install-DirectExe([string]$name, [string]$url, [string]$silentArgs, [string]$installedPath) {
->>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name already installed, skipping..." -ForegroundColor Yellow; return }
->>"%SCRIPT%" echo     Write-Host "Installing $name..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     try {
->>"%SCRIPT%" echo         $tmp = $env:TEMP + '\' + ($name -replace '\W', '') + 'Setup.exe'
->>"%SCRIPT%" echo         if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
->>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $tmp $url
->>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing $name" -FilePath $tmp -ArgumentList $silentArgs
->>"%SCRIPT%" echo     } catch { Write-Host "$name install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-Path $installedPath }) { Write-Host "$name installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "$name FAILED to install." -ForegroundColor Red; Add-Failure $name }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # the WSL setup) was never installed at all.
 >>"%SCRIPT%" echo function Install-DirectMsi([string]$name, [string]$url, [string]$installedPath) {
 >>"%SCRIPT%" echo     if (Test-Path $installedPath) { Write-Host "$name already installed, skipping..." -ForegroundColor Yellow; return }
 >>"%SCRIPT%" echo     Write-Host "Installing $name..." -ForegroundColor Cyan
@@ -162,10 +156,15 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # repackage that lagged the official client by months (1.0.9232 vs 1.0.9251) and
 >>"%SCRIPT%" echo # redirects Discord's data dir and self-updater. Discord force-updates and refuses to
 >>"%SCRIPT%" echo # connect on stale builds, so the lag is a recurring breakage, not a cosmetic detail.
->>"%SCRIPT%" echo $scoopApps = @('googlechrome','winrar','vlc','spotify','handbrake','sharex','notepadplusplus','telegram','qbittorrent','cloudflared','firefox','putty','winscp','bleachbit','wiztree','eartrumpet','sourcetree','vscode','github','ontopreplica','onlyoffice-desktopeditors','streamlabs-obs','clink')
+>>"%SCRIPT%" echo # Not in this list, on purpose: firefox and sharex keep their profile/upload accounts in Scoop's
+>>"%SCRIPT%" echo # persist folder, which a global install shares with every account, so they come from their own
+>>"%SCRIPT%" echo # machine-wide installers below (winget, data in each user's AppData). telegram stays per-user
+>>"%SCRIPT%" echo # Scoop (see Install-ScoopUserOnlyApp).
+>>"%SCRIPT%" echo $scoopApps = @('googlechrome','winrar','vlc','spotify','handbrake','notepadplusplus','qbittorrent','cloudflared','putty','winscp','bleachbit','wiztree','eartrumpet','sourcetree','vscode','github','ontopreplica','onlyoffice-desktopeditors','streamlabs-obs','clink')
 >>"%SCRIPT%" echo foreach ($app in $scoopApps) { Install-ScoopApp $app }
 >>"%SCRIPT%" echo Install-ScoopApp 'bulk-crap-uninstaller' 'Bulk Crap Uninstaller'
 >>"%SCRIPT%" echo Install-ScoopApp 'JetBrainsMono-NF' 'JetBrainsMono Nerd Font'
+>>"%SCRIPT%" echo Install-ScoopUserOnlyApp 'telegram' 'Telegram'
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo Refresh-SetupEnvironment
 >>"%SCRIPT%" echo if (Get-Command clink -ErrorAction SilentlyContinue) { Write-Host "Enabling Clink autorun for cmd.exe..." -ForegroundColor Cyan; ^& clink autorun install ^| Out-Null }
@@ -173,11 +172,12 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # EarTrumpet from Scoop has no autostart: the Store build registers its own startup task, the
 >>"%SCRIPT%" echo # portable one does not, so the tray mixer was gone after every reboot. The Run value points at
->>"%SCRIPT%" echo # Scoop's 'current' junction, so it survives "scoop update". Check, act, read back.
->>"%SCRIPT%" echo $earPrefix = ^& scoop prefix eartrumpet 2^>$null 6^>$null
->>"%SCRIPT%" echo $earExe = if ($earPrefix) { Join-Path $earPrefix 'EarTrumpet.exe' } else { $null }
->>"%SCRIPT%" echo if ($earExe -and (Test-Path $earExe)) {
->>"%SCRIPT%" echo     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+>>"%SCRIPT%" echo # Scoop's 'current' junction, so it survives "scoop update". Check, act, read back. HKLM, so every
+>>"%SCRIPT%" echo # account gets the tray mixer; the old per-user value would start a second copy and goes.
+>>"%SCRIPT%" echo $earExe = Join-Path (Get-ScoopGlobalDir) 'apps\eartrumpet\current\EarTrumpet.exe'
+>>"%SCRIPT%" echo Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'EarTrumpet' -ErrorAction SilentlyContinue
+>>"%SCRIPT%" echo if (Test-Path $earExe) {
+>>"%SCRIPT%" echo     $runKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
 >>"%SCRIPT%" echo     $earValue = '"' + $earExe + '"'
 >>"%SCRIPT%" echo     if ((Get-ItemProperty -Path $runKey -Name 'EarTrumpet' -ErrorAction SilentlyContinue).EarTrumpet -ne $earValue) {
 >>"%SCRIPT%" echo         Set-ItemProperty -Path $runKey -Name 'EarTrumpet' -Value $earValue
@@ -187,8 +187,14 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo else { Write-Host "EarTrumpet not installed; skipping autostart." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # Add an app by adding a row. Source is only needed for msstore-only packages.
+>>"%SCRIPT%" echo # Add an app by adding a row. Source is only needed for msstore-only packages. Scope = 'machine'
+>>"%SCRIPT%" echo # forces the all-users installer and checks for that scope only; leave it out for packages whose
+>>"%SCRIPT%" echo # manifest declares no scope (winget then finds "no applicable installer" for --scope machine) -
+>>"%SCRIPT%" echo # those below install to Program Files anyway. Per-user-only packages (Claude Desktop, Kiro,
+>>"%SCRIPT%" echo # Rufus, 2FAGuard, Discord, ...) are in sources\per-user-apps.ps1, run at every sign-in.
 >>"%SCRIPT%" echo $wingetApps = @(
+>>"%SCRIPT%" echo     @{ Id = 'Mozilla.Firefox';                 Name = 'Firefox'; Scope = 'machine' },
+>>"%SCRIPT%" echo     @{ Id = 'ShareX.ShareX';                   Name = 'ShareX'; Scope = 'machine' },
 >>"%SCRIPT%" echo     @{ Id = 'CodecGuide.K-LiteCodecPack.Mega'; Name = 'K-Lite Codec Pack Mega' },
 >>"%SCRIPT%" echo     @{ Id = 'pCloudAG.pCloudDrive';            Name = 'pCloud Drive' },
 >>"%SCRIPT%" echo     @{ Id = 'Devolutions.RemoteDesktopManager'; Name = 'Remote Desktop Manager' },
@@ -196,10 +202,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'Proton.ProtonVPN';                Name = 'ProtonVPN' },
 >>"%SCRIPT%" echo     @{ Id = 'Microsoft.DirectX';               Name = 'DirectX Runtime' },
 >>"%SCRIPT%" echo     @{ Id = 'Winamp.Winamp';                   Name = 'Winamp' },
->>"%SCRIPT%" echo     @{ Id = 'timokoessler.2FAGuard';           Name = '2FAGuard' },
->>"%SCRIPT%" echo     @{ Id = 'Anthropic.Claude';                Name = 'Claude Desktop' },
->>"%SCRIPT%" echo     @{ Id = 'Amazon.Kiro';                     Name = 'Kiro' },
->>"%SCRIPT%" echo     @{ Id = 'Rufus.Rufus';                     Name = 'Rufus' },
 >>"%SCRIPT%" echo     @{ Id = 'Microsoft.PowerShell';            Name = 'PowerShell 7' },
 >>"%SCRIPT%" echo     @{ Id = 'wez.wezterm';                     Name = 'WezTerm' },
 >>"%SCRIPT%" echo     @{ Id = 'Docker.DockerDesktop';            Name = 'Docker Desktop' },
@@ -207,7 +209,27 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'IObit.DriverBooster';             Name = 'Driver Booster' },
 >>"%SCRIPT%" echo     @{ Id = 'XP8CLZL93F5Z4P';                  Name = 'NVIDIA App'; Source = 'msstore'; RequiresGpu = 'NVIDIA'; Optional = $true }
 >>"%SCRIPT%" echo )
->>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source $entry.RequiresGpu ([bool]$entry.Optional) }
+>>"%SCRIPT%" echo foreach ($entry in $wingetApps) { Install-WingetApp $entry.Id $entry.Name $entry.Source $entry.RequiresGpu ([bool]$entry.Optional) $entry.Scope }
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Firefox and ShareX used to be per-user Scoop installs. Once the machine-wide copy is verified the
+>>"%SCRIPT%" echo # Scoop one goes (its persist folder stays as a backup). ShareX's data moves to where the installed
+>>"%SCRIPT%" echo # build reads it (Documents\ShareX) when that is still empty; a non-empty Scoop Firefox profile is
+>>"%SCRIPT%" echo # not imported automatically, only pointed at - it was empty on this PC.
+>>"%SCRIPT%" echo $scoopPersist = Join-Path (Get-ScoopUserDir) 'persist'
+>>"%SCRIPT%" echo if (Test-WingetApp 'ShareX.ShareX' 'machine') {
+>>"%SCRIPT%" echo     $sxOld = Join-Path $scoopPersist 'sharex\ShareX'
+>>"%SCRIPT%" echo     $sxNew = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'ShareX'
+>>"%SCRIPT%" echo     if ((Test-Path $sxOld) -and (Get-ChildItem $sxOld -Recurse -File -ErrorAction SilentlyContinue) -and -not (Test-Path $sxNew)) {
+>>"%SCRIPT%" echo         Write-Host "Moving ShareX settings and history to $sxNew..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo         $null = ^& robocopy.exe $sxOld $sxNew /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo     $null = Remove-ScoopUserApp 'sharex' 'ShareX'
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo if (Test-WingetApp 'Mozilla.Firefox' 'machine') {
+>>"%SCRIPT%" echo     $ffOld = Join-Path $scoopPersist 'firefox\profile'
+>>"%SCRIPT%" echo     if ((Test-Path $ffOld) -and (Get-ChildItem $ffOld -Recurse -File -ErrorAction SilentlyContinue)) { Write-Host "The old Scoop Firefox profile is kept at $ffOld; open about:profiles to use it." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo     $null = Remove-ScoopUserApp 'firefox' 'Firefox'
+>>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Driver Booster's installer registers elevated logon tasks (scheduler, auto-update, "SkipUAC")
 >>"%SCRIPT%" echo # and launches the app. Strip every IObit autostart, task, service and background process; the
@@ -215,18 +237,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"
 >>"%SCRIPT%" echo if ($LASTEXITCODE -ne 0) { Add-Failure 'Driver Booster autostart cleanup' }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # Discord and Discord Canary: direct downloads run with Discord's own -s switch. winget cannot do
->>"%SCRIPT%" echo # this - its manifests carry no switches (the maintainers removed --silent), so winget shows the
->>"%SCRIPT%" echo # installer UI and launches Discord at the end, with a UAC prompt from an elevated setup. -s was
->>"%SCRIPT%" echo # verified in the VM: installs in ~13 s, creates shortcuts + the uninstall entry, launches nothing,
->>"%SCRIPT%" echo # and the app runs on first start (its updater builds installer.db and fetches the current build
->>"%SCRIPT%" echo # then). Only the distributions endpoint honours the architecture: api/download?platform=win
->>"%SCRIPT%" echo # serves the x86 build even with arch=x64 (the old Canary line installed 32-bit 1.0.328). The old
->>"%SCRIPT%" echo # /S was a switch this installer ignores, so Canary never installed at all. Both IDs are in
->>"%SCRIPT%" echo # update-all.bat's winget skip table because winget would "upgrade" them interactively.
->>"%SCRIPT%" echo $discordArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
->>"%SCRIPT%" echo Install-DirectExe "Discord" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=$discordArch" "-s" "$env:LOCALAPPDATA\Discord"
->>"%SCRIPT%" echo Install-DirectExe "Discord Canary" "https://discord.com/api/downloads/distributions/app/installers/latest?channel=canary&platform=win&arch=$discordArch" "-s" "$env:LOCALAPPDATA\DiscordCanary"
+>>"%SCRIPT%" echo # Discord, Discord Canary, Claude Desktop, Claude Code and the other per-user-only apps: see
+>>"%SCRIPT%" echo # sources\per-user-apps.ps1 and the sign-in task registered near the end of this script.
 >>"%SCRIPT%" echo Install-DirectMsi "Chrome Remote Desktop" "https://dl.google.com/dl/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Mudfish is NOT installed here: its installer stops on a driver-installation question that no
@@ -335,31 +347,12 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     Write-Host "WezTerm notification block added to PowerShell profile." -ForegroundColor Green
 >>"%SCRIPT%" echo } else { Write-Host "WezTerm notification already in PS profile, skipping..." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo $rufusExe = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages\Rufus.Rufus_Microsoft.Winget.Source_8wekyb3d8bbwe\rufus.exe"
->>"%SCRIPT%" echo if (Test-Path $rufusExe) {
->>"%SCRIPT%" echo     $rufusShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "Rufus.lnk"
->>"%SCRIPT%" echo     $wshShell = New-Object -ComObject WScript.Shell
->>"%SCRIPT%" echo     $shortcut = $wshShell.CreateShortcut($rufusShortcut)
->>"%SCRIPT%" echo     $shortcut.TargetPath = $rufusExe
->>"%SCRIPT%" echo     $shortcut.WorkingDirectory = Split-Path $rufusExe
->>"%SCRIPT%" echo     $shortcut.IconLocation = "$rufusExe,0"
->>"%SCRIPT%" echo     $shortcut.Save()
->>"%SCRIPT%" echo     Write-Host "Rufus desktop shortcut created." -ForegroundColor Green
->>"%SCRIPT%" echo } else { Write-Host "Rufus executable not found; skipping desktop shortcut." -ForegroundColor Yellow }
->>"%SCRIPT%" echo.
->>"%SCRIPT%" echo $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
->>"%SCRIPT%" echo if (-not ($userPath -split ';' ^| Where-Object { $_ -eq "$env:USERPROFILE\.local\bin" })) {
->>"%SCRIPT%" echo     [Environment]::SetEnvironmentVariable('PATH', $userPath + ";$env:USERPROFILE\.local\bin", 'User')
->>"%SCRIPT%" echo     $env:PATH = $env:PATH + ";$env:USERPROFILE\.local\bin"
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host "Claude Code already installed, skipping..." -ForegroundColor Yellow }
->>"%SCRIPT%" echo else {
->>"%SCRIPT%" echo     Write-Host "Installing Claude Code..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     try { irm https://claude.ai/install.ps1 ^| iex } catch { Write-Host "Claude Code install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     $env:PATH = $env:PATH + ";$env:USERPROFILE\.local\bin"
->>"%SCRIPT%" echo     if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host "Claude Code installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "Claude Code FAILED to install." -ForegroundColor Red; Add-Failure 'Claude Code' }
->>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Apps that can only be installed into one account (Discord, Discord Canary, Claude Desktop, Claude
+>>"%SCRIPT%" echo # Code, Kiro, Rufus, 2FAGuard): sources\per-user-apps.ps1, registered as a task that runs at every
+>>"%SCRIPT%" echo # user's sign-in, so a new account gets them without running setup. -RunNow also installs them for
+>>"%SCRIPT%" echo # this account now (unelevated) and reports failures here.
+>>"%SCRIPT%" echo ^& "%~dp0sources\register-per-user-apps.ps1" -RunNow
+>>"%SCRIPT%" echo if ($LASTEXITCODE -ne 0) { Add-Failure 'Per-user apps (see %%LOCALAPPDATA%%\PCSetup\per-user-apps.log)' }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo if (Get-Command wsl -ErrorAction SilentlyContinue) { Write-Host "WSL already installed, skipping..." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo else {

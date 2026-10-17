@@ -436,6 +436,42 @@ without it. All other checks are offline.
 > real bugs one at a time and confirming the matching test failed, then reverting. A suite that
 > has only ever been green is not evidence of anything.
 
+## One install for every Windows account
+
+Everything the setup installs is installed **once for the whole PC**, so a new Windows account
+(another person on this machine) starts with every program and never runs a setup script. Each
+person's own data (logins, settings) stays in their own profile. Settings and menus (WezTerm
+config, PowerShell profile, context-menu tweaks) are deliberately still per user.
+
+| How | What | Why |
+|---|---|---|
+| `scoop install --global` (`%ProgramData%\scoop`, shims on the Machine PATH) | every Scoop app except the four below, and every Scoop tool from step 0 (git, gh, 7-Zip, Python, JDKs, nvm) | `sources\scoop-global.ps1`: check the global `current` manifest -> copy the per-user `persist` folder -> install `--global` -> verify -> uninstall the per-user copy (persist kept). Re-running a script on a machine with per-user installs moves them over. |
+| winget `--scope machine` | Firefox, ShareX, Steam | Scoop runs these in portable mode with their data in `persist`, which a global install shares between accounts (Firefox profile, ShareX upload accounts), and Steam must write to its own folder |
+| per-user Scoop, kept on purpose | Telegram | its login (`tdata`) lives in `persist`; the user chose to keep it contained in one account |
+| `sources\per-user-apps.ps1` at every sign-in | Discord, Discord Canary, Claude Desktop, Claude Code, Kiro, Rufus, 2FAGuard, CurseForge, XIVLauncher, TexTools, FFLogs | these only install into one profile |
+
+> **The sign-in installer is a scheduled task with a group principal.** `sources\register-per-user-apps.ps1`
+> (called by script 2) copies `per-user-apps.ps1` to `%ProgramData%\PCSetup` (the temp workspace
+> is deleted after setup) and registers **PCSetup per-user apps**: trigger *at log on of any
+> user*, principal `S-1-5-32-545` (BUILTIN\Users, by SID so a localized Windows resolves it),
+> `RunLevel Limited`, hidden. It runs as whoever signs in, installs only what that profile is
+> missing, logs to `%LOCALAPPDATA%\PCSetup\per-user-apps.log`, and the next sign-in retries a
+> failure. A brand-new account gets winget a few minutes after its first sign-in, so the script
+> waits up to 10 min for it. `-RunNow` (what script 2 passes) also runs it immediately for the
+> account doing the setup through a one-shot `Interactive`/`Limited` task, streams its log and
+> reports failures; with no interactive session (PowerShell Direct in the VM) it falls back to
+> running in place with `-AllowElevated`. Verified on this machine: the group task registers as
+> `Users`/`Limited`, and the one-shot ran as the user, unelevated, with its exit code returned.
+>
+> **`per-user-apps.ps1` is the one `.ps1` that must NOT auto-elevate**, against the rule at the
+> top: it installs into the signed-in profile, and an elevated Discord runs as administrator
+> (drag-and-drop and the overlay break). Run elevated without `-AllowElevated` it exits 2.
+
+> **Step 0 used to write `%USERPROFILE%\scoop\shims` into the Machine PATH**, so each account that
+> ran it added its own profile folder for every other account (two users' shim folders were found
+> there). Only `%ProgramData%\scoop\shims` goes there now, and stray `C:\Users\*\scoop\shims`
+> entries are removed; the Scoop installer puts the per-user shims on that user's own PATH.
+
 ## Setup Scripts (Run in Order)
 
 ### 0-init-prereqs.bat
@@ -510,8 +546,9 @@ prerequisites.
 > resolves the .cmd on 1.x or the .exe shim on 2.x (asserted for step 0, script 3, `update-all`,
 > `verify-public-routes` and the remote-call CI bootstrap). Second consequence: `npm prefix -g`
 > is that version folder, so `npm install -g` put `codex.cmd`/`copilot.cmd` somewhere no new
-> terminal could see — script 3 now adds the prefix to the **User** PATH once (a no-op on 1.x,
-> where the prefix is the `NVM_SYMLINK` folder that is already there). `versions/nvm1` is the
+> terminal could see — script 3 now adds the prefix to the **Machine** PATH once (nvm is a global
+> Scoop install, so every account gets the CLIs; a no-op on 1.x, where the prefix is the
+> `NVM_SYMLINK` folder that is already there), and drops the old per-user nvm folders from the User PATH. `versions/nvm1` is the
 > bucket's escape hatch back to 1.x; the scripts do not use it.
 >
 > **Delivery Optimization is switched to HTTP-only (policy `DODownloadMode=0`) before the first
@@ -670,12 +707,15 @@ Main Windows application setup. **Chocolatey, Scoop, 7-Zip, Python, Git, gh, VC+
 and the .NET runtimes come from `0-init-prereqs.bat`**, not from here. This script installs the
 applications, deploys the WezTerm config + PowerShell profile block, and sets up WSL + Claude Code.
 
-Apps are declared in two tables — `$scoopApps` and `$wingetApps` (a row is `Id`, `Name`, and
-optional `Source` for msstore-only packages). Every entry is verified after install and anything
-that failed is listed at the end, with the script exiting non-zero.
+Apps are declared in two tables — `$scoopApps` and `$wingetApps` (a row is `Id`, `Name`,
+optional `Source` for msstore-only packages, and optional `Scope = 'machine'`). Every entry is
+verified after install and anything that failed is listed at the end, with the script exiting
+non-zero. Everything is installed **for all users** — see "One install for every Windows account".
 
-**Scoop:** Chrome, WinRAR, VLC, Spotify, HandBrake, ShareX, Notepad++, Telegram, qBittorrent, Cloudflared, Firefox, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet (HKCU Run entry added, since the Scoop build has no autostart), Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
-**winget:** K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, AdGuard, ProtonVPN, DirectX Runtime, Winamp, 2FAGuard, Claude Desktop, Kiro, Rufus, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, Driver Booster, NVIDIA App (msstore)
+**Scoop (global):** Chrome, WinRAR, VLC, Spotify, HandBrake, Notepad++, qBittorrent, Cloudflared, PuTTY, WinSCP, BleachBit, WizTree, EarTrumpet (HKLM Run entry added, since the Scoop build has no autostart), Sourcetree, VS Code, GitHub Desktop, OnTopReplica, OnlyOffice, Streamlabs OBS, Clink (autorun-enabled), Bulk Crap Uninstaller, JetBrainsMono Nerd Font
+**Scoop (this user only, on purpose):** Telegram
+**winget:** Firefox and ShareX (`--scope machine`), K-Lite Codec Pack Mega, pCloud Drive, Remote Desktop Manager, AdGuard, ProtonVPN, DirectX Runtime, Winamp, PowerShell 7, WezTerm, Docker Desktop, Patch My PC, Driver Booster, NVIDIA App (msstore)
+**Every user, at sign-in (`sources\per-user-apps.ps1`):** Discord, Discord Canary, Claude Desktop, Kiro, Rufus, 2FAGuard, CurseForge, XIVLauncher, TexTools, FFLogs Uploader, Claude Code
 
 > **Driver Booster is installed, then stripped of everything it starts on its own.** The IObit
 > installer (14.0.1) registers three scheduled tasks, all `RunLevel Highest`: *Driver Booster
@@ -705,7 +745,7 @@ that failed is listed at the end, with the script exiting non-zero.
 > Windows Server Core image needs Windows containers —
 > `& "$env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchDaemon` with Docker running, or
 > right-click the tray icon → *Switch to Windows containers*.
-**Direct download:** Discord, Discord Canary (both `-s`, silent and no launch), Chrome Remote Desktop, IceDrive (+ Dokan)
+**Direct download:** Chrome Remote Desktop, IceDrive (+ Dokan); Discord, Discord Canary (both `-s`, silent and no launch) from the sign-in installer
 
 > **IceDrive goes in before Dokan, and its installer is never run twice.** IceDrive bundles its own
 > (older) Dokan driver and copies `dokan2.sys` with the shell copy UI, so when script 2 installed
@@ -722,7 +762,7 @@ that failed is listed at the end, with the script exiting non-zero.
 > driver that no silent switch answers (`/S` is honoured for the rest; the driver step is not),
 > which blocked the whole unattended run in the VM. It moved to `optional/setup-optional-software.bat`,
 > where installers are allowed to ask. Nothing in the numbered scripts may show a dialog.
-**Other:** Claude Code (Windows and inside WSL), WSL itself
+**Other:** Claude Code inside WSL, WSL itself (Claude Code for Windows comes from the sign-in installer)
 
 > **Installers that hand off to an updater are not registered the instant they return.** Discord
 > and Claude Desktop are Squirrel-style setups: the setup exits, `Update.exe` finishes the job.
@@ -840,13 +880,22 @@ Game-related applications setup. Installs gaming platforms, launchers, and tools
 verified after install (`scoop prefix`, `winget list`, or a known install path) rather than trusted
 to have worked, and the script exits non-zero listing whatever failed.
 
-**Installed packages:** Steam, Epic Games Launcher, Prism Launcher, CurseForge and PURPLE (NCSOFT, `NCSoft.Purple`) via winget, Temurin JDK 17/8, XIVLauncher (Custom FFXIV Launcher), TexTools (FFXIV Modding Tool), FFLogs Uploader
+**Installed packages:** Steam (winget `Valve.Steam --scope machine`), Epic Games Launcher and Prism Launcher (Scoop global), PURPLE (NCSOFT, `NCSoft.Purple`) via winget, Temurin JDK 17/8. CurseForge, XIVLauncher, TexTools and FFLogs Uploader install per user only and moved to `sources\per-user-apps.ps1` (run by script 2 and at every sign-in).
 
-> **The `games` Scoop bucket is added here, not by `0-init-prereqs.bat`.** `steam`,
-> `epic-games-launcher`, and `prismlauncher` live only in `games`; without it Scoop cannot resolve
-> them and the installs silently no-op. `steam` also exists in `versions`, so all three are
-> installed bucket-qualified (`games/steam`) — an unqualified ambiguous name lets Scoop pick a
-> bucket for you.
+> **Steam is Valve's installer, not Scoop, because it has to write to its own folder.** A global
+> Scoop app lives in `%ProgramData%\scoop`, which only administrators can write, so Steam could
+> not update itself or download games for a normal account; its `userdata` also sat in the shared
+> persist folder. `Program Files (x86)\Steam` gets the permissions Steam needs. Moving off the old
+> per-user Scoop Steam copies `userdata` and `steamapps\libraryfolders.vdf` (with the old
+> `scoop\apps\steam\current` path rewritten to the new install, so `D:\SteamLibrary` and
+> `Z:\SteamLibrary` stay registered) when the new install has none, then uninstalls the Scoop copy
+> (persist kept as the backup). Skipped while Steam is running.
+
+> **The `games` Scoop bucket is added here, not by `0-init-prereqs.bat`.**
+> `epic-games-launcher` and `prismlauncher` live only in `games`; without it Scoop cannot resolve
+> them and the installs silently no-op. Both are installed bucket-qualified (`games/prismlauncher`)
+> — an unqualified ambiguous name lets Scoop pick a bucket for you (that bit `steam`, which also
+> exists in `versions`, before Steam moved to Valve's installer).
 
 > **Never let Windows PowerShell inherit PowerShell 7's `PSModulePath`.** The `.bat` files spawn
 > `powershell.exe`, which inherits the caller's environment — and WezTerm's default shell is PS7.
@@ -936,7 +985,7 @@ in `%ProgramFiles%\Patch My PC\Patch My PC Home Updater\`). Order and verificati
 
 | Step | Act | Verify (what counts as a failure) |
 |---|---|---|
-| Scoop | `scoop update`, then `scoop update *` | `scoop status` rows that still have a Latest Version. Held packages are ignored; "Manifest removed" rows are reported as notes, not failures |
+| Scoop | `scoop update`, then `scoop update * --global` (without `--global`, `*` skips every all-users app) | `scoop status` rows that still have a Latest Version. Held packages are ignored; "Manifest removed" rows are reported as notes, not failures |
 | winget | parse `winget upgrade`, then `winget upgrade --id <id> -e --silent` **per ID** | re-parse the list; anything still there and not in the skip table |
 | Driver Booster autostarts | `sources\remove-driver-booster-autostart.ps1` (an upgrade re-registers its logon tasks) | anything under `\IObit\` still autostarting |
 | Chocolatey | `choco upgrade all -y` | `choco outdated --limit-output` rows not pinned |

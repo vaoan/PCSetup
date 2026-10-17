@@ -75,7 +75,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         else {
 >>"%SCRIPT%" echo             $names = ($before ^| ForEach-Object { $_.Name }) -join ', '
 >>"%SCRIPT%" echo             Write-Host "Scoop: $($before.Count) outdated: $names" -ForegroundColor Cyan
->>"%SCRIPT%" echo             scoop update * 2^>^&1 ^| Out-Host
+>>"%SCRIPT%" echo             # --global: the setup scripts install Scoop apps for all users, and without it "update *"
+>>"%SCRIPT%" echo             # only looks at this account's own apps (scoop-update.ps1 adds global apps on -g alone).
+>>"%SCRIPT%" echo             scoop update * --global 2^>^&1 ^| Out-Host
 >>"%SCRIPT%" echo             $after = @(Get-ScoopOutdated)
 >>"%SCRIPT%" echo             foreach ($row in $after) { Add-Failure "scoop: $($row.Name) still $($row.'Installed Version'), latest $($row.'Latest Version') - close the app if it is running and re-run" }
 >>"%SCRIPT%" echo             Write-Host "Scoop: updated $($before.Count - $after.Count) of $($before.Count)." -ForegroundColor Green

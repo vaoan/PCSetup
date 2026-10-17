@@ -9,6 +9,8 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # One-line live status for long native commands (DISM, wsl --install, installers). Shared
 # with the generated scripts of 2/3/6, so it lives in its own file.
 . (Join-Path $PSScriptRoot 'status-line.ps1')
+# Every Scoop tool goes in machine-wide so other Windows accounts get it too.
+. (Join-Path $PSScriptRoot 'scoop-global.ps1')
 
 # Portable git/gh live here. Nothing else on the machine is assumed to exist yet.
 $script:BootstrapRoot = Join-Path $env:ProgramData 'PCSetup\bootstrap'
@@ -214,35 +216,18 @@ function Invoke-Logged {
     }
 }
 
-function Test-ScoopPackageInstalled {
-    param([string]$Package)
-
-    $prefix = & scoop prefix $Package 2>$null
-    return ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($prefix))
-}
-
 function Install-ScoopPackage {
     param(
         [string]$Package,
         [string[]]$Commands = @()
     )
 
+    # Machine-wide (scoop --global), moving a per-user copy over - see sources\scoop-global.ps1.
+    # Verified by the global 'current' manifest, not by scoop's exit code.
     Refresh-SetupEnvironment
-    if (Test-ScoopPackageInstalled $Package) {
-        Write-Host "$Package already installed by Scoop, skipping..." -ForegroundColor Yellow
-        return $true
-    }
-
-    foreach ($command in $Commands) {
-        if (Get-Command $command -ErrorAction SilentlyContinue) {
-            Write-Host "$Package command exists outside Scoop; installing Scoop package anyway..." -ForegroundColor Yellow
-            break
-        }
-    }
-
-    & scoop install $Package
+    $ok = Install-ScoopGlobalApp -Package $Package
     Refresh-SetupEnvironment
-    return ($LASTEXITCODE -eq 0)
+    return $ok
 }
 
 function Install-FirstAvailableScoopPackage {
@@ -1148,7 +1133,17 @@ else {
         Write-Host "WSL prefetch could not be started ($($_.Exception.Message)); the WSL section will download on its own." -ForegroundColor Yellow
     }
 }
-Set-PathEntryFirst "$env:USERPROFILE\scoop\shims" 'Machine'
+# Only the global shims belong on the Machine PATH. This used to put "$env:USERPROFILE\scoop\shims"
+# there too, so every account that ran setup added its own profile path for every other account
+# (two users' shim folders were found on one machine). The Scoop installer puts the per-user shims
+# on that user's own PATH.
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$machineParts = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+$keptParts = @($machineParts | Where-Object { $_.TrimEnd('\') -notlike "$env:SystemDrive\Users\*\scoop\shims" })
+if ($keptParts.Count -ne $machineParts.Count) {
+    [Environment]::SetEnvironmentVariable('Path', ($keptParts -join ';'), 'Machine')
+    Write-Host "Removed per-user Scoop shim folders from the machine PATH." -ForegroundColor Cyan
+}
 Set-PathEntryFirst "$env:ProgramData\scoop\shims" 'Machine'
 Refresh-SetupEnvironment
 

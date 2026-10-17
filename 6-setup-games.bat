@@ -38,14 +38,9 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     exit 1
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # Exact install test. Parsing "scoop list" text needs a regex whose ^^ anchor does not
->>"%SCRIPT%" echo # survive being echoed out of a batch file; "scoop prefix" just exits non-zero instead.
->>"%SCRIPT%" echo function Test-ScoopApp([string]$package) {
->>"%SCRIPT%" echo     # 6^> too: Scoop reports "Could not find app path" via Write-Host, so 2^> alone
->>"%SCRIPT%" echo     # leaves a scary-looking line on the console for every not-yet-installed app.
->>"%SCRIPT%" echo     $prefix = ^& scoop prefix $package 2^>$null 6^>$null
->>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0 -and $prefix -and (Test-Path $prefix))
->>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Scoop apps go in for ALL users (scoop --global) and a per-user copy from before is moved over;
+>>"%SCRIPT%" echo # the install test is the 'current' manifest, never "scoop list" text. See sources\scoop-global.ps1.
+>>"%SCRIPT%" echo . "%~dp0sources\scoop-global.ps1"
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Add-ScoopBucket([string]$bucket) {
 >>"%SCRIPT%" echo     $names = @(^& scoop bucket list 2^>$null ^| ForEach-Object { $_.Name })
@@ -55,17 +50,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Install-ScoopApp([string]$package, [string]$displayName, [string]$bucket) {
->>"%SCRIPT%" echo     if (Test-ScoopApp $package) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
->>"%SCRIPT%" echo     Write-Host "Installing $displayName via Scoop..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     $spec = if ($bucket) { "$bucket/$package" } else { $package }
->>"%SCRIPT%" echo     try { ^& scoop install $spec } catch { Write-Host "$displayName install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-ScoopApp $package) { Write-Host "$displayName installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; $null = $failures.Add($displayName) }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
->>"%SCRIPT%" echo function Test-WingetApp([string]$id) {
->>"%SCRIPT%" echo     ^& winget list --id $id -e --accept-source-agreements ^> $null 2^>^&1
->>"%SCRIPT%" echo     return ($LASTEXITCODE -eq 0)
+>>"%SCRIPT%" echo     if (-not (Install-ScoopGlobalApp -Package $spec -DisplayName $displayName)) { $null = $failures.Add($displayName) }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Same grace period as 2-setup-windows.bat: an installer that hands off to an updater is not
@@ -79,27 +65,57 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo function Install-WingetApp([string]$id, [string]$displayName) {
->>"%SCRIPT%" echo     if (Test-WingetApp $id) { Write-Host "$displayName already installed, skipping..." -ForegroundColor Yellow; return }
->>"%SCRIPT%" echo     Write-Host "Installing $displayName via winget..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing $displayName (winget)" -FilePath winget.exe -ArgumentList "install", "--id", $id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity" -WatchProcess msiexec -WatchService msiserver
->>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-WingetApp $id }) { Write-Host "$displayName installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "$displayName FAILED to install." -ForegroundColor Red; $null = $failures.Add($displayName) }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # steam/epic-games-launcher/prismlauncher live in the "games" bucket, which
 >>"%SCRIPT%" echo # 0-init-prereqs.bat does not add. Without it Scoop cannot resolve them at all.
 >>"%SCRIPT%" echo Add-ScoopBucket "games"
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # Install game platforms via Scoop. Java is installed by 0-init-prereqs.bat.
->>"%SCRIPT%" echo # Bucket-qualified: "steam" also exists in the versions bucket, and an ambiguous
->>"%SCRIPT%" echo # name makes Scoop pick whichever bucket sorts first.
->>"%SCRIPT%" echo Install-ScoopApp "steam" "Steam" "games"
+>>"%SCRIPT%" echo # Game platforms via Scoop, for all users. Java is installed by 0-init-prereqs.bat.
+>>"%SCRIPT%" echo # Bucket-qualified: an ambiguous name makes Scoop pick whichever bucket sorts first.
 >>"%SCRIPT%" echo Install-ScoopApp "epic-games-launcher" "Epic Games Launcher" "games"
 >>"%SCRIPT%" echo Install-ScoopApp "prismlauncher" "Prism Launcher" "games"
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo Install-WingetApp "Overwolf.CurseForge" "CurseForge"
->>"%SCRIPT%" echo Install-WingetApp "goatcorp.XIVLauncher" "XIVLauncher"
+>>"%SCRIPT%" echo # Steam is NOT a Scoop app any more. A global Scoop install lives in %%ProgramData%%\scoop, which
+>>"%SCRIPT%" echo # only administrators can write, and Steam has to write to its own folder to update itself and
+>>"%SCRIPT%" echo # download games; its userdata also sat in the shared persist folder. Valve's installer puts it in
+>>"%SCRIPT%" echo # Program Files (x86)\Steam with the permissions Steam needs, once for every account.
+>>"%SCRIPT%" echo $steamDir = Join-Path ${env:ProgramFiles(x86)} 'Steam'
+>>"%SCRIPT%" echo $steamExe = Join-Path $steamDir 'steam.exe'
+>>"%SCRIPT%" echo if (Test-Path -LiteralPath $steamExe) { Write-Host "Steam already installed for all users, skipping..." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo else {
+>>"%SCRIPT%" echo     Write-Host "Installing Steam for all users via winget..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing Steam (winget)" -FilePath winget.exe -ArgumentList "install", "--id", "Valve.Steam", "-e", "--scope", "machine", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { Test-Path -LiteralPath $steamExe }) { Write-Host "Steam installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     else { Write-Host "Steam FAILED to install." -ForegroundColor Red; $null = $failures.Add("Steam") }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Moving off the old per-user Scoop Steam: its userdata and the library list (D:\SteamLibrary,
+>>"%SCRIPT%" echo # Z:\SteamLibrary, ...) are copied in when the new install has none yet, with the old install path
+>>"%SCRIPT%" echo # in libraryfolders.vdf rewritten to the new one. Games in other libraries stay where they are.
+>>"%SCRIPT%" echo # Then the Scoop copy is removed; its persist folder stays as the backup. Steam must be closed.
+>>"%SCRIPT%" echo if ((Test-Path -LiteralPath $steamExe) -and (Test-ScoopUserApp 'steam')) {
+>>"%SCRIPT%" echo     if (Get-Process steam -ErrorAction SilentlyContinue) { Write-Host "Steam is running; close it and re-run to move the old Scoop Steam over." -ForegroundColor Yellow; $null = $failures.Add("Steam (close it to finish the move)") }
+>>"%SCRIPT%" echo     else {
+>>"%SCRIPT%" echo         $oldPersist = Join-Path (Get-ScoopUserDir) 'persist\steam'
+>>"%SCRIPT%" echo         $oldUserdata = Join-Path $oldPersist 'userdata'
+>>"%SCRIPT%" echo         $newUserdata = Join-Path $steamDir 'userdata'
+>>"%SCRIPT%" echo         if ((Test-Path -LiteralPath $oldUserdata) -and -not (Get-ChildItem -LiteralPath $newUserdata -ErrorAction SilentlyContinue)) {
+>>"%SCRIPT%" echo             Write-Host "Copying Steam userdata..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo             $null = ^& robocopy.exe $oldUserdata $newUserdata /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         $oldVdf = Join-Path $oldPersist 'steamapps\libraryfolders.vdf'
+>>"%SCRIPT%" echo         $newVdf = Join-Path $steamDir 'steamapps\libraryfolders.vdf'
+>>"%SCRIPT%" echo         if ((Test-Path -LiteralPath $oldVdf) -and -not (Test-Path -LiteralPath $newVdf)) {
+>>"%SCRIPT%" echo             $oldPath = (Join-Path (Get-ScoopUserDir) 'apps\steam\current').Replace('\', '\\')
+>>"%SCRIPT%" echo             $vdf = [IO.File]::ReadAllText($oldVdf).Replace($oldPath, $steamDir.Replace('\', '\\'))
+>>"%SCRIPT%" echo             New-Item -ItemType Directory -Path (Split-Path $newVdf) -Force ^| Out-Null
+>>"%SCRIPT%" echo             [IO.File]::WriteAllText($newVdf, $vdf, (New-Object Text.UTF8Encoding($false)))
+>>"%SCRIPT%" echo             Write-Host "Steam library folders carried over." -ForegroundColor Green
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         if (-not (Remove-ScoopUserApp 'steam' 'Steam')) { $null = $failures.Add("Steam (old Scoop copy)") }
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # CurseForge, XIVLauncher, TexTools and FFLogs Uploader install per user only; they are in
+>>"%SCRIPT%" echo # sources\per-user-apps.ps1, which 2-setup-windows.bat runs now and at every user's sign-in.
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # NCSOFT's PURPLE launcher (purple.plaync.com/download). Installed by winget (Nullsoft, so
 >>"%SCRIPT%" echo # --silent passes /S; no dialog, nothing launched) but NOT verified by it: the uninstall
@@ -119,54 +135,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     $null = Invoke-CommandWithStatus -Label "Installing PURPLE (winget)" -FilePath winget.exe -ArgumentList "install", "--id", "NCSoft.Purple", "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"
 >>"%SCRIPT%" echo     if (Wait-InstalledCheck { [bool](Get-PurpleLauncher) }) { Write-Host "PURPLE (NCSOFT) installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "PURPLE (NCSOFT) FAILED to install." -ForegroundColor Red; $null = $failures.Add("PURPLE (NCSOFT)") }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # FFXIV TexTools (Modding Tool) - not on any package manager
->>"%SCRIPT%" echo $ttPath = "$env:LOCALAPPDATA\TexTools"
->>"%SCRIPT%" echo $ttExe = Join-Path $ttPath "FFXIV_TexTools.exe"
->>"%SCRIPT%" echo if (Test-Path $ttExe) { Write-Host "TexTools already installed, skipping..." -ForegroundColor Yellow }
->>"%SCRIPT%" echo else {
->>"%SCRIPT%" echo     Write-Host "Installing TexTools..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     try {
->>"%SCRIPT%" echo         $ttRel = Invoke-RestMethod "https://api.github.com/repos/TexTools/FFXIV_TexTools_UI/releases/latest" -Headers @{ "User-Agent" = "PCSetup" }
->>"%SCRIPT%" echo         # Releases since v3.1.1.3b ship the portable zip only - the installer asset is gone,
->>"%SCRIPT%" echo         # so fall back to extracting the zip (it has no top-level folder) rather than
->>"%SCRIPT%" echo         # handing curl an empty URL.
->>"%SCRIPT%" echo         $ttInst = $ttRel.assets ^| Where-Object { $_.name -like "Install_TexTools*.exe" } ^| Select-Object -First 1
->>"%SCRIPT%" echo         if ($ttInst) {
->>"%SCRIPT%" echo             $ttFile = "$env:TEMP\Install_TexTools.exe"
->>"%SCRIPT%" echo             curl.exe -L --progress-bar -o $ttFile $ttInst.browser_download_url
->>"%SCRIPT%" echo             $null = Invoke-CommandWithStatus -Label "Installing TexTools" -FilePath $ttFile -ArgumentList "/S"
->>"%SCRIPT%" echo         } else {
->>"%SCRIPT%" echo             $ttZipAsset = $ttRel.assets ^| Where-Object { $_.name -like "*.zip" } ^| Select-Object -First 1
->>"%SCRIPT%" echo             if (-not $ttZipAsset) { throw "No TexTools installer or zip asset in release $($ttRel.tag_name)" }
->>"%SCRIPT%" echo             $ttZip = "$env:TEMP\FFXIV_TexTools.zip"
->>"%SCRIPT%" echo             curl.exe -L --progress-bar -o $ttZip $ttZipAsset.browser_download_url
->>"%SCRIPT%" echo             New-Item -ItemType Directory -Path $ttPath -Force ^| Out-Null
->>"%SCRIPT%" echo             Expand-Archive -Path $ttZip -DestinationPath $ttPath -Force
->>"%SCRIPT%" echo             Remove-Item $ttZip -Force -ErrorAction SilentlyContinue
->>"%SCRIPT%" echo         }
->>"%SCRIPT%" echo     } catch { Write-Host "TexTools install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-Path $ttExe) { Write-Host "TexTools installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "TexTools FAILED to install." -ForegroundColor Red; $null = $failures.Add("TexTools") }
->>"%SCRIPT%" echo }
->>"%SCRIPT%" echo.
->>"%SCRIPT%" echo # FFLogs Uploader - not on any package manager. Its electron-builder installer lands in
->>"%SCRIPT%" echo # "Programs\FF Logs Uploader"; checking only the old paths re-downloaded 178 MB every run.
->>"%SCRIPT%" echo $ffDirs = @("$env:LOCALAPPDATA\Programs\FF Logs Uploader", "$env:LOCALAPPDATA\Programs\fflogs", "$env:LOCALAPPDATA\FFLogs")
->>"%SCRIPT%" echo if ($ffDirs ^| Where-Object { Test-Path $_ }) { Write-Host "FFLogs already installed, skipping..." -ForegroundColor Yellow }
->>"%SCRIPT%" echo else {
->>"%SCRIPT%" echo     Write-Host "Installing FFLogs Uploader..." -ForegroundColor Cyan
->>"%SCRIPT%" echo     try {
->>"%SCRIPT%" echo         $ffRel = Invoke-RestMethod "https://api.github.com/repos/RPGLogs/Uploaders-fflogs/releases/latest" -Headers @{ "User-Agent" = "PCSetup" }
->>"%SCRIPT%" echo         $ffAsset = $ffRel.assets ^| Where-Object { $_.name -like "*.exe" } ^| Select-Object -First 1
->>"%SCRIPT%" echo         if (-not $ffAsset) { throw "No FFLogs installer asset in release $($ffRel.tag_name)" }
->>"%SCRIPT%" echo         $ffFile = "$env:TEMP\FFLogs-Setup.exe"
->>"%SCRIPT%" echo         curl.exe -L --progress-bar -o $ffFile $ffAsset.browser_download_url
->>"%SCRIPT%" echo         $null = Invoke-CommandWithStatus -Label "Installing FFLogs Uploader" -FilePath $ffFile -ArgumentList "/S"
->>"%SCRIPT%" echo     } catch { Write-Host "FFLogs install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if ($ffDirs ^| Where-Object { Test-Path $_ }) { Write-Host "FFLogs Uploader installed." -ForegroundColor Green }
->>"%SCRIPT%" echo     else { Write-Host "FFLogs Uploader FAILED to install." -ForegroundColor Red; $null = $failures.Add("FFLogs Uploader") }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo Write-Host ""

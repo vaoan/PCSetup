@@ -44,15 +44,24 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     # folder, which is already on PATH; with nvm 2.x (shim mode) it is the version folder
 >>"%SCRIPT%" echo     # (scoop\persist\nvm\nodejs\v24.21.0), which is NOT on PATH - only the .nodejs shim
 >>"%SCRIPT%" echo     # folder is, and that holds node/npm/npx alone. So codex and copilot installed fine and
->>"%SCRIPT%" echo     # were unreachable from every new terminal. The prefix goes on the User PATH once,
->>"%SCRIPT%" echo     # persistently (no-op when already there), and on this process PATH for the verification.
+>>"%SCRIPT%" echo     # were unreachable from every new terminal. nvm is installed for all users (scoop --global,
+>>"%SCRIPT%" echo     # %%ProgramData%%\scoop), so the prefix goes on the MACHINE PATH once - every account gets the
+>>"%SCRIPT%" echo     # CLIs - and on this process PATH for the verification. A prefix left on the User PATH by the
+>>"%SCRIPT%" echo     # old per-user nvm points at a copy nobody updates any more, so it is taken off.
 >>"%SCRIPT%" echo     $npmPrefix = ^& cmd.exe /c "npm prefix -g" 2^>$null
 >>"%SCRIPT%" echo     if ($npmPrefix -and (Test-Path $npmPrefix)) {
 >>"%SCRIPT%" echo         $env:Path = "$npmPrefix;$env:Path"
->>"%SCRIPT%" echo         $userPathParts = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';')
->>"%SCRIPT%" echo         if ($userPathParts -notcontains $npmPrefix) {
->>"%SCRIPT%" echo             [Environment]::SetEnvironmentVariable('Path', (@($npmPrefix) + $userPathParts -join ';'), 'User')
->>"%SCRIPT%" echo             Write-Host "Added npm global prefix to the user PATH: $npmPrefix" -ForegroundColor Cyan
+>>"%SCRIPT%" echo         $machinePathParts = @([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';')
+>>"%SCRIPT%" echo         if ($machinePathParts -notcontains $npmPrefix) {
+>>"%SCRIPT%" echo             [Environment]::SetEnvironmentVariable('Path', (@($npmPrefix) + $machinePathParts -join ';'), 'Machine')
+>>"%SCRIPT%" echo             Write-Host "Added npm global prefix to the machine PATH: $npmPrefix" -ForegroundColor Cyan
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         $userPathParts = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' ^| Where-Object { $_ })
+>>"%SCRIPT%" echo         $staleNvm = Join-Path $env:USERPROFILE 'scoop\persist\nvm'
+>>"%SCRIPT%" echo         $keptUserParts = @($userPathParts ^| Where-Object { -not $_.StartsWith($staleNvm, [StringComparison]::OrdinalIgnoreCase) })
+>>"%SCRIPT%" echo         if ($keptUserParts.Count -ne $userPathParts.Count) {
+>>"%SCRIPT%" echo             [Environment]::SetEnvironmentVariable('Path', ($keptUserParts -join ';'), 'User')
+>>"%SCRIPT%" echo             Write-Host "Removed the old per-user nvm folders from the user PATH." -ForegroundColor Cyan
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
