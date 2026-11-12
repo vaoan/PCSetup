@@ -26,7 +26,8 @@
 # -DeleteSource removes the local export afterwards: anyone holding that file is
 # signed in to that Google account.
 #
-# Reads RACKNERD_VPS_* and GH_PAT from the repo .secrets. Prints neither.
+# Reads RACKNERD_VPS_* and GH_PAT from the repo .secrets. Prints neither. The SSH key is
+# restored from RACKNERD_VPS_SSH_KEY_B64 when ~\.ssh\racknerd_vps_ed25519 is missing.
 
 param(
     [string]$Path,
@@ -84,8 +85,10 @@ function Get-Secret([string]$Key, [string]$Default = $null) {
 $ip = Get-Secret 'RACKNERD_VPS_IP'
 $user = Get-Secret 'RACKNERD_VPS_USER'
 $port = Get-Secret 'RACKNERD_VPS_SSH_PORT' '22'
-$key = Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\libra_prod_ed25519')
-if (-not (Test-Path $key)) { Fail "SSH key not found at $key (set RACKNERD_VPS_SSH_KEY_PATH in .secrets)." }
+. (Join-Path $PSScriptRoot 'vps-key.ps1')
+try {
+    $key = Restore-VpsKey (Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\racknerd_vps_ed25519')) (Get-Secret 'RACKNERD_VPS_SSH_KEY_B64' '')
+} catch { Fail $_.Exception.Message }
 $common = @('-i', $key, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new')
 
 function Get-RemoteSha256 {

@@ -201,8 +201,10 @@ used), and only one bot may run per token.
 Everything goes through `cloud/vps-ssh.ps1`, which reads `RACKNERD_VPS_IP` / `_USER` / `_SSH_PORT` /
 `_SSH_KEY_PATH` from the repo `.secrets` (populate with `cloudflared\sync-secrets.bat`) and connects
 with Windows' OpenSSH `ssh.exe`. The box has refused password SSH since 2026-09-27, so the key
-(`~\.ssh\libra_prod_ed25519` by default) is the only way in; `RACKNERD_VPS_PASSWORD` is kept for the
-RackNerd VNC console only. **Never hardcode or echo those values.**
+(`~\.ssh\racknerd_vps_ed25519` by default) is the only way in. It is the GitHub secret
+`RACKNERD_VPS_SSH_KEY`, synced as `RACKNERD_VPS_SSH_KEY_B64` and restored to that path by
+`cloud/vps-key.ps1` when missing (SD-019). `RACKNERD_VPS_PASSWORD` is the root password for the
+RackNerd VNC console only (panel: `ctrl.racknerd.com`). **Never hardcode or echo those values.**
 
 ```powershell
 cd spotify-discord\cloud
@@ -510,9 +512,7 @@ bytes; yt-dlp had trimmed the original 4357-byte export to the youtube.com cooki
 **Still open:**
 - No YouTube track has been played through Discord yet. The module, the stream and the deploy were
   verified on the box, but `/play` needs a person in a voice channel.
-- **The VPS SSH key is not stored as a secret.** It came back from
-  `PCSetup-format-backup-2026-09-29\.ssh` into `~\.ssh` (ACL: current user only). Without that
-  folder, the only way in is the RackNerd VNC console.
+- ~~The VPS SSH key is not stored as a secret.~~ Fixed 2026-11-11: `RACKNERD_VPS_SSH_KEY` (SD-019).
 - **`cloudflared\sync-secrets.bat` does not work on this PC right now:** no
   `%USERPROFILE%\.pcsetup-sync-passphrase` (a copy sits in the same format backup), and no
   `openssl.exe`, which it expects from Git for Windows while git here comes from Scoop. So GitHub
