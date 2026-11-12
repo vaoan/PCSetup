@@ -11,7 +11,8 @@
 #   .\vps-ssh.ps1 -Script path\to\local-script.sh            # run a local script remotely
 #   .\vps-ssh.ps1 -Tunnel 8898                               # open an SSH -L tunnel (for OAuth login)
 #
-# Reads RACKNERD_VPS_IP / _USER / _SSH_PORT / _SSH_KEY_PATH from .secrets.
+# Reads RACKNERD_VPS_IP / _USER / _SSH_PORT / _SSH_KEY_PATH from .secrets. The key
+# (default ~\.ssh\racknerd_vps_ed25519) is restored from RACKNERD_VPS_SSH_KEY_B64 if missing.
 # Populate .secrets via `cloudflared\sync-secrets.bat` first.
 
 param(
@@ -34,11 +35,12 @@ function Get-Secret {
     return ($line.Line -replace "^$Key=", '').Trim()
 }
 
+. (Join-Path $PSScriptRoot 'vps-key.ps1')
+
 $ip      = Get-Secret 'RACKNERD_VPS_IP'
 $user    = Get-Secret 'RACKNERD_VPS_USER'
 $port    = Get-Secret 'RACKNERD_VPS_SSH_PORT' '22'
-$keyPath = Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\libra_prod_ed25519')
-if (-not (Test-Path $keyPath)) { throw "SSH key not found at $keyPath (set RACKNERD_VPS_SSH_KEY_PATH in .secrets)." }
+$keyPath = Restore-VpsKey (Get-Secret 'RACKNERD_VPS_SSH_KEY_PATH' (Join-Path $HOME '.ssh\racknerd_vps_ed25519')) (Get-Secret 'RACKNERD_VPS_SSH_KEY_B64' '')
 
 $ssh = Get-Command ssh.exe -ErrorAction SilentlyContinue
 if (-not $ssh) { throw "ssh.exe not found. Install the Windows OpenSSH client." }

@@ -36,6 +36,7 @@ referenced but missing here, or if a documented auto-heal has no detector in the
 | [SD-016](#sd-016) | yt-dlp version rot → YouTube stops resolving | `prevented` |
 | [SD-017](#sd-017) | ffmpeg fetching the googlevideo URL directly → HTTP 403 | `prevented` |
 | [SD-018](#sd-018) | a skipped YouTube track's yt-dlp keeps running (orphaned child) | `prevented` |
+| [SD-019](#sd-019) | the VPS SSH key exists on one PC only → no way in from anywhere else | `prevented` |
 
 ---
 
@@ -287,3 +288,22 @@ referenced but missing here, or if a documented auto-heal has no detector in the
   because it does not unpack itself.
 - **Note:** systemd stops the bot's whole cgroup on `systemctl stop/restart`, so a bot restart
   never leaked; only a skip, a stop or a replaced track did.
+
+## SD-019
+**the VPS SSH key exists on one PC only → no way in from anywhere else**
+
+- **Seen:** 2026-11-11. The YouTube cookies expired (SD-015) and the fix had to run from the Mac.
+  The box has refused password SSH since 2026-09-27, and the only key it trusted,
+  `libra_prod_ed25519`, lived in `~\.ssh` on the Windows PC and nowhere else: not in GitHub, not
+  in `.secrets`. Libra's `PROD_SERVER_SSH_KEY` (`candystore-deploy`) is a different key and is
+  refused. The root password (`RACKNERD_VPS_PASSWORD`) was not known from memory, and reading it
+  needs the sync passphrase, which is also only on that PC.
+- **Recovery used:** RackNerd panel (`ctrl.racknerd.com`, the old `nerdvm` URL redirects there)
+  → *Reset Root Pass*, the new password stored in `RACKNERD_VPS_PASSWORD` straight away, then the
+  VNC console to add a new key (`racknerd_vps_ed25519`) to `/root/.ssh/authorized_keys`.
+- **Prevented by:** the private key is a GitHub secret, `RACKNERD_VPS_SSH_KEY`, stored whole like
+  Libra's. `sync-secrets.yml` writes it to `.secrets` as `RACKNERD_VPS_SSH_KEY_B64`, and
+  `cloud/vps-key.ps1` (used by `vps-ssh.ps1` and `set-youtube-cookies.ps1`) restores it to
+  `~\.ssh\racknerd_vps_ed25519` when that file is missing, with LF endings and an ACL for the
+  current user only, which Windows OpenSSH requires. On a Mac or Linux:
+  `base64 -d` the value to the same path and `chmod 600` it.
