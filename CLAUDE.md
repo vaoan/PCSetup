@@ -1,5 +1,20 @@
 # Project Instructions
 
+## Pushing from a machine with no GitHub login
+
+When `gh auth status` says not logged in (every freshly formatted PC), push with the `GH_TOKEN`
+line of `Z:\secrets.txt`. **Never print, echo, log or write the token anywhere** (no
+`Get-Content` of the file, no token in a command line, URL, remote, git config or commit). Read
+it straight into the process environment, use it, and remove it:
+
+```powershell
+$env:GH_TOKEN = ((Get-Content -LiteralPath 'Z:\secrets.txt' | Where-Object { $_ -match '^\s*GH_TOKEN\s*=' } | Select-Object -First 1) -replace '^\s*GH_TOKEN\s*=\s*','').Trim().Trim('"')
+try { git -c credential.helper= -c "credential.helper=!gh auth git-credential" push origin HEAD:main }
+finally { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue }
+```
+
+To see what `secrets.txt` holds, list key **names** only, never values.
+
 ## Script Requirements
 
 When creating or editing any script file (`.bat`, `.cmd`, `.ps1`), ALWAYS include auto-elevation to Administrator at the top.
