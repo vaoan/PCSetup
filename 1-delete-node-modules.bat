@@ -66,7 +66,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # node_modules//.pnpm folders are only hardlinks into it), so deleting node_modules
 >>"%SCRIPT%" echo # reclaims almost nothing until the store is pruned as well.
 >>"%SCRIPT%" echo Write-Host ""
->>"%SCRIPT%" echo if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+>>"%SCRIPT%" echo # On PATH is not the same as working: nvm 2.x ships a pnpm.exe shim that answers
+>>"%SCRIPT%" echo # "error: CommandNotFound" until pnpm is installed into the active Node version.
+>>"%SCRIPT%" echo $pnpmWorks = $false
+>>"%SCRIPT%" echo if (Get-Command pnpm -ErrorAction SilentlyContinue) { ^& cmd.exe /c "pnpm --version >nul 2>&1"; $pnpmWorks = ($LASTEXITCODE -eq 0) }
+>>"%SCRIPT%" echo if (-not $pnpmWorks) {
 >>"%SCRIPT%" echo     Write-Host "pnpm not installed; skipping store/cache cleanup." -ForegroundColor Yellow
 >>"%SCRIPT%" echo } else {
 >>"%SCRIPT%" echo     Write-Host "Pruning pnpm store..." -ForegroundColor Cyan

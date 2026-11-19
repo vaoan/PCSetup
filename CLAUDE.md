@@ -1023,7 +1023,21 @@ Runs Win11Debloat in unattended mode to apply default tweaks and remove common o
 > value *named* `OneDrive` used to be removed.
 
 ### 99-remove-windows-ai.bat
-Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.
+Removes Windows AI features (Copilot, Recall, Click to Do, Paint/Notepad/Edge AI, the AI service
+autostart) through Win11Debloat's AI options, then removes the Copilot/AIX Appx packages
+(installed and provisioned) directly and verifies the count.
+
+> **It no longer uses zoicware's RemoveWindowsAI, and must not again.** On 2026-11-19 the script
+> died with a 404: the `zoicware/RemoveWindowsAI` repo **and the `zoicware` account** had been
+> deleted. A deleted GitHub account name can be registered by anyone, so keeping that raw URL
+> would run whatever a stranger publishes there, elevated, on every install. The remaining
+> "RemoveWindowsAI" repos are anonymous copies with a star or two - not used either.
+> `setup.tests.ps1` fails if a `githubusercontent.com/zoicware` URL comes back.
+
+> **Script 11's package check returned `$null` once there was nothing left to remove.**
+> `return @(...)` unrolls an empty array to `$null`, which the caller took for "Get-AppxPackage
+> unavailable" and exited 1 - so every run *after* a successful debloat failed. It is
+> `return ,@(...)` now.
 
 ## Updating everything afterwards: `update-all.bat`
 

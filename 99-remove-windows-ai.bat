@@ -26,7 +26,6 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
 >"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
 >>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
->>"%SCRIPT%" echo $url = 'https://raw.githubusercontent.com/zoicware/RemoveWindowsAI/main/RemoveWindowsAi.ps1'
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Get-AiPackageCount {
 >>"%SCRIPT%" echo     if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) { return -1 }
@@ -37,21 +36,25 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo $before = Get-AiPackageCount
 >>"%SCRIPT%" echo Write-Host "Windows AI packages present before: $before" -ForegroundColor Cyan
 >>"%SCRIPT%" echo.
->>"%SCRIPT%" echo Write-Host "Downloading RemoveWindowsAI..." -ForegroundColor Cyan
->>"%SCRIPT%" echo $local = Join-Path $env:TEMP 'RemoveWindowsAi.ps1'
->>"%SCRIPT%" echo try {
->>"%SCRIPT%" echo     Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
->>"%SCRIPT%" echo } catch {
->>"%SCRIPT%" echo     Write-Host "Could not download RemoveWindowsAI: $($_.Exception.Message)" -ForegroundColor Red
->>"%SCRIPT%" echo     exit 1
+>>"%SCRIPT%" echo # zoicware/RemoveWindowsAI is gone: the repo AND the zoicware account were deleted from GitHub
+>>"%SCRIPT%" echo # (both 404 on 2026-11-19). A deleted account name can be re-registered by anyone, so fetching
+>>"%SCRIPT%" echo # that URL and running it elevated would hand this machine to whoever claims it - it is not
+>>"%SCRIPT%" echo # fetched any more, and none of the anonymous copies is used either. Win11Debloat (already
+>>"%SCRIPT%" echo # trusted by script 11) has the AI switches; the packages are then removed directly.
+>>"%SCRIPT%" echo if ($true) {
+>>"%SCRIPT%" echo     Write-Host "Removing Windows AI with Win11Debloat's AI options + direct package removal..." -ForegroundColor Cyan
+>>"%SCRIPT%" echo     $debloat = Join-Path $env:TEMP 'Win11Debloat.ps1'
+>>"%SCRIPT%" echo     try {
+>>"%SCRIPT%" echo         Invoke-WebRequest -Uri 'https://debloat.raphi.re/' -OutFile $debloat -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+>>"%SCRIPT%" echo         if ((Get-Item $debloat).Length -lt 1000) { throw "downloaded Win11Debloat is too small" }
+>>"%SCRIPT%" echo         ^& $debloat -DisableCopilot -DisableRecall -DisableClickToDo -DisableAISvcAutoStart -DisablePaintAI -DisableNotepadAI -DisableEdgeAI -Silent
+>>"%SCRIPT%" echo     } catch { Write-Host "Win11Debloat AI options: $($_.Exception.Message)" -ForegroundColor Yellow }
+>>"%SCRIPT%" echo     $aiNames = 'Microsoft.Copilot', 'Microsoft.Windows.Ai.Copilot.Provider', 'MicrosoftWindows.Client.CoPilot', 'MicrosoftWindows.Client.AIX'
+>>"%SCRIPT%" echo     foreach ($an in $aiNames) {
+>>"%SCRIPT%" echo         Get-AppxPackage -AllUsers -Name "$an*" -ErrorAction SilentlyContinue ^| Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+>>"%SCRIPT%" echo         Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue ^| Where-Object { $_.DisplayName -like "$an*" } ^| Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue ^| Out-Null
+>>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
->>"%SCRIPT%" echo # Downloaded to a file first, then size-checked: piping irm straight into a scriptblock
->>"%SCRIPT%" echo # meant a captive-portal HTML page or a 404 body was executed as if it were the script.
->>"%SCRIPT%" echo if ((Get-Item $local).Length -lt 1000) { Write-Host "Downloaded file is too small to be the real script." -ForegroundColor Red; exit 1 }
->>"%SCRIPT%" echo.
->>"%SCRIPT%" echo Write-Host "Removing Windows AI features..." -ForegroundColor Cyan
->>"%SCRIPT%" echo try { ^& $local -nonInteractive -backupMode -EnableLogging -AllOptions }
->>"%SCRIPT%" echo catch { Write-Host "RemoveWindowsAI reported: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo $after = Get-AiPackageCount
 >>"%SCRIPT%" echo Write-Host ""

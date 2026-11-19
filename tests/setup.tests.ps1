@@ -713,7 +713,11 @@ Describe "3-setup-node" {
 # ─────────────────────────────────────────────
 Describe "4-fix-execution-policy" {
     It "CurrentUser policy is RemoteSigned" {
-        (Get-ExecutionPolicy -Scope CurrentUser) | Should -Be 'RemoteSigned'
+        # Script 4 sets Windows PowerShell 5.1's CurrentUser scope; PS7 keeps a separate one, so
+        # asking the host this suite happens to run in (pwsh) reads a scope the script never sets.
+        $policy = if ($PSVersionTable.PSEdition -eq 'Desktop') { [string](Get-ExecutionPolicy -Scope CurrentUser) }
+                  else { [string](powershell.exe -NoProfile -Command "Get-ExecutionPolicy -Scope CurrentUser") }
+        $policy.Trim() | Should -Be 'RemoteSigned'
     }
 }
 
@@ -984,14 +988,17 @@ Describe "99-remove-windows-ai" {
     It "script exists" {
         Test-Path (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") | Should -BeTrue
     }
-    It "runs RemoveWindowsAI unattended with all options" {
+    # The zoicware repo and account were deleted (2026-11-19); a deleted account name can be
+    # re-registered by anyone, so nothing may be fetched from it and run elevated.
+    It "never fetches the deleted zoicware RemoveWindowsAI script" {
+        $lines = Get-Content (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") | Where-Object { $_ -notmatch 'echo\s+#' -and $_ -notmatch '^\s*::' }
+        ($lines -join "`n") | Should -Not -Match 'githubusercontent\.com/zoicware'
+    }
+    It "removes Windows AI unattended through Win11Debloat's AI options" {
         $script = Get-Content (Join-Path $PSScriptRoot "..\99-remove-windows-ai.bat") -Raw
-        $script | Should -Match 'RemoveWindowsAi\.ps1'
-        $script | Should -Match '-nonInteractive'
-        $script | Should -Match '-AllOptions'
-        $script | Should -Match '-backupMode'
-        $script | Should -Match '-EnableLogging'
-        $script | Should -Match 'powershell\.exe'
+        $script | Should -Match 'debloat\.raphi\.re'
+        foreach ($opt in '-DisableCopilot', '-DisableRecall', '-DisableAISvcAutoStart', '-Silent') { $script | Should -Match ([regex]::Escape($opt)) }
+        $script | Should -Match 'Remove-AppxProvisionedPackage'
     }
 }
 

@@ -32,7 +32,10 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo $targets = 'Microsoft.OneDrive','Microsoft.YourPhone','Microsoft.WindowsCamera','Microsoft.Windows.Photos','Microsoft.ZuneMusic','Microsoft.RemoteDesktop','Microsoft.Whiteboard'
 >>"%SCRIPT%" echo function Get-RemainingTargets {
 >>"%SCRIPT%" echo     if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) { return $null }
->>"%SCRIPT%" echo     return @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue ^| Where-Object { $targets -contains $_.Name } ^| ForEach-Object { $_.Name } ^| Select-Object -Unique)
+>>"%SCRIPT%" echo     # ,@() keeps an EMPTY result an array. A bare @() is unrolled to $null on return, which the
+>>"%SCRIPT%" echo     # caller read as "Get-AppxPackage unavailable" - so every run after a successful debloat
+>>"%SCRIPT%" echo     # failed (2026-11-19).
+>>"%SCRIPT%" echo     return ,@(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue ^| Where-Object { $targets -contains $_.Name } ^| ForEach-Object { $_.Name } ^| Select-Object -Unique)
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo $before = Get-RemainingTargets
