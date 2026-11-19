@@ -18,7 +18,8 @@ set "PSModulePath="
 set "SCRIPT=%TEMP%\temp-execpolicy.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo $target = 'RemoteSigned'
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo $target = 'RemoteSigned'
 >>"%SCRIPT%" echo if (-not (Get-Command Set-ExecutionPolicy -ErrorAction SilentlyContinue)) {
 >>"%SCRIPT%" echo     Write-Host "Set-ExecutionPolicy is unavailable (Microsoft.PowerShell.Security failed to load)." -ForegroundColor Red
 >>"%SCRIPT%" echo     exit 1

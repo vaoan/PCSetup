@@ -63,7 +63,8 @@ if not exist "%TARGET_DRIVE%\" (
 set "SCRIPT=%TEMP%\temp-move-profile.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo $base = $env:PCSETUP_TARGET_BASE
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo $base = $env:PCSETUP_TARGET_BASE
 >>"%SCRIPT%" echo $moveFiles = ($env:PCSETUP_MOVE_FILES -eq '1')
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo function Add-Failure([string]$name) { if (-not $failures.Contains($name)) { $null = $failures.Add($name) } }
@@ -127,14 +128,37 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         if ($src -eq $dst) { Write-Host "  $($f.Name): already at target, skipping" -ForegroundColor Yellow; continue }
 >>"%SCRIPT%" echo         if (-not (Test-Path $src)) { Write-Host "  $($f.Name): source not found ($src), skipping" -ForegroundColor Yellow; continue }
 >>"%SCRIPT%" echo         Write-Host "  $($f.Name): $src -> $dst" -ForegroundColor Cyan
->>"%SCRIPT%" echo         ^& robocopy.exe $src $dst /E /MOVE /R:1 /W:1 /NP /NFL /NDL ^| Out-Null
->>"%SCRIPT%" echo         # robocopy exit codes: 0-7 are success//informational, 8+ are real failures.
->>"%SCRIPT%" echo         # The old version discarded this entirely, so files left behind because they
->>"%SCRIPT%" echo         # were open or access-denied were reported as a completed move.
->>"%SCRIPT%" echo         if ($LASTEXITCODE -ge 8) {
->>"%SCRIPT%" echo             Write-Host "    robocopy reported failures (exit $LASTEXITCODE); some files were left behind." -ForegroundColor Red
->>"%SCRIPT%" echo             Add-Failure "move $($f.Name)"
+>>"%SCRIPT%" echo         # MOVE, never delete. Same drive and an empty destination (the folder created above): rename
+>>"%SCRIPT%" echo         # the whole folder - instant, nothing copied, nothing removed. That is the repair case of a
+>>"%SCRIPT%" echo         # base with the wrong user name (Z:\Users\Heiner -^> Z:\Users\PC-COSITO, 2026-11-19).
+>>"%SCRIPT%" echo         $sameDrive = ([IO.Path]::GetPathRoot($src) -eq [IO.Path]::GetPathRoot($dst))
+>>"%SCRIPT%" echo         $dstEmpty = -not (Get-ChildItem -LiteralPath $dst -Force -ErrorAction SilentlyContinue ^| Select-Object -First 1)
+>>"%SCRIPT%" echo         $renamed = $false
+>>"%SCRIPT%" echo         if ($sameDrive -and $dstEmpty) {
+>>"%SCRIPT%" echo             try {
+>>"%SCRIPT%" echo                 [IO.Directory]::Delete($dst, $false)
+>>"%SCRIPT%" echo                 [IO.Directory]::Move($src, $dst)
+>>"%SCRIPT%" echo                 $renamed = $true
+>>"%SCRIPT%" echo                 Write-Host "    moved (renamed in place)" -ForegroundColor Green
+>>"%SCRIPT%" echo             } catch {
+>>"%SCRIPT%" echo                 Write-Host "    rename not possible ($($_.Exception.Message)); moving file by file instead" -ForegroundColor Yellow
+>>"%SCRIPT%" echo                 if (-not (Test-Path -LiteralPath $dst)) { $null = New-Item -ItemType Directory -Path $dst -Force }
+>>"%SCRIPT%" echo             }
 >>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         if (-not $renamed) {
+>>"%SCRIPT%" echo             # /MOVE = copy, then remove each SOURCE file only once its copy is verified written.
+>>"%SCRIPT%" echo             $rcOut = @(^& robocopy.exe $src $dst /E /MOVE /R:1 /W:1 /NP /NFL /NDL /NJH)
+>>"%SCRIPT%" echo             $rcExit = $LASTEXITCODE
+>>"%SCRIPT%" echo             $rcOut ^| Where-Object { $_.Trim() } ^| Select-Object -Last 6 ^| ForEach-Object { Write-Host "    $_" }
+>>"%SCRIPT%" echo             # robocopy exit codes: 0-7 are success//informational, 8+ are real failures. Whatever
+>>"%SCRIPT%" echo             # could not be moved (open, access denied) stays where it was - never deleted.
+>>"%SCRIPT%" echo             if ($rcExit -ge 8) {
+>>"%SCRIPT%" echo                 Write-Host "    robocopy reported failures (exit $rcExit); those files stay in $src." -ForegroundColor Red
+>>"%SCRIPT%" echo                 Add-Failure "move $($f.Name)"
+>>"%SCRIPT%" echo             }
+>>"%SCRIPT%" echo         }
+>>"%SCRIPT%" echo         $left = @(Get-ChildItem -LiteralPath $src -Recurse -Force -File -ErrorAction SilentlyContinue)
+>>"%SCRIPT%" echo         if ($left.Count -gt 0) { Write-Host "    $($left.Count) file(s) still in $src (kept, not deleted)" -ForegroundColor Yellow; $left ^| Select-Object -First 10 ^| ForEach-Object { Write-Host "      $($_.FullName)" } }
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.

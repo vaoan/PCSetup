@@ -24,7 +24,8 @@ set "PSModulePath="
 set "SCRIPT=%TEMP%\temp-remove-ai.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $url = 'https://raw.githubusercontent.com/zoicware/RemoveWindowsAI/main/RemoveWindowsAi.ps1'
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo function Get-AiPackageCount {

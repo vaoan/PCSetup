@@ -32,9 +32,22 @@ set "EXITCODE=0"
 set "LOCAL_VER="
 if exist ".v" for /f "usebackq" %%v in (".v") do set "LOCAL_VER=%%v"
 
+:: One log per run on the system drive. Every window closes by itself when it finishes, so
+:: this file is the only record of what happened. remote-call.ps1 sets PCSETUP_LOG first so
+:: its own download steps land in the same file; each numbered script appends a transcript
+:: (sources\start-log.ps1) and native tool output goes to the matching -commands.log.
+if not defined PCSETUP_LOG for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"`) do set "PCSETUP_LOG=%SystemDrive%\PCSetup-logs\run-%%D.log"
+if not defined PCSETUP_LOG set "PCSETUP_LOG=%SystemDrive%\PCSetup-logs\run.log"
+for %%P in ("%PCSETUP_LOG%") do if not exist "%%~dpP" mkdir "%%~dpP" >nul 2>&1
+>>"%PCSETUP_LOG%" echo ========================================
+>>"%PCSETUP_LOG%" echo [run-all] PCSetup %LOCAL_VER% started %DATE% %TIME%
+>>"%PCSETUP_LOG%" echo [run-all] user %USERDOMAIN%\%USERNAME% on %COMPUTERNAME%, folder %~dp0
+>>"%PCSETUP_LOG%" echo ========================================
+
 echo ========================================
 echo   PCSetup  %LOCAL_VER%
 echo ========================================
+echo   Log: %PCSETUP_LOG%
 echo.
 
 set "SCRIPT_LIST=%TEMP%\pcsetup-scripts-%RANDOM%%RANDOM%.txt"
@@ -93,6 +106,9 @@ echo ========================================
 :: cwd also covers a script that cd's away without a setlocal to unwind it.
 cd /d "%ROOT%"
 set "T_START=%TIME%"
+set "PCSETUP_CURRENT_SCRIPT=%SCRIPT%"
+>>"%PCSETUP_LOG%" echo.
+>>"%PCSETUP_LOG%" echo [run-all] ---- %SCRIPT% started %TIME%
 call "%ROOT%%SCRIPT%"
 :: Captured on its own line: %errorlevel% inside the if-block below would otherwise expand
 :: when the block is parsed, reporting a stale code (the bug this file used to have).
@@ -101,6 +117,7 @@ set "T_END=%TIME%"
 call :elapsed "%T_START%" "%T_END%"
 set /a TOTAL_SECONDS+=ELAPSED_SECONDS
 >>"%TIME_LIST%" echo   %ELAPSED%  %SCRIPT%  (exit %RC%)
+>>"%PCSETUP_LOG%" echo [run-all] ---- %SCRIPT% finished: exit %RC% after %ELAPSED%
 echo.
 echo Finished: %SCRIPT% in %ELAPSED% (exit %RC%)
 if not "%RC%"=="0" (
@@ -140,6 +157,9 @@ echo ========================================
 echo   Time per script (total %TOTAL_FMT%):
 echo ========================================
 if exist "%TIME_LIST%" type "%TIME_LIST%"
+>>"%PCSETUP_LOG%" echo.
+>>"%PCSETUP_LOG%" echo [run-all] Time per script (total %TOTAL_FMT%):
+if exist "%TIME_LIST%" >>"%PCSETUP_LOG%" type "%TIME_LIST%"
 del "%TIME_LIST%" >nul 2>&1
 
 echo.
@@ -148,12 +168,17 @@ if exist "%FAIL_LIST%" (
     echo   Completed with failures:
     echo ========================================
     type "%FAIL_LIST%"
+    >>"%PCSETUP_LOG%" echo [run-all] Completed with failures:
+    >>"%PCSETUP_LOG%" type "%FAIL_LIST%"
     del "%FAIL_LIST%" >nul 2>&1
     set "EXITCODE=1"
 ) else (
     echo   All %TOTAL% scripts completed successfully.
     echo ========================================
+    >>"%PCSETUP_LOG%" echo [run-all] All %TOTAL% scripts completed successfully.
 )
+>>"%PCSETUP_LOG%" echo [run-all] finished %DATE% %TIME%
+echo   Log: %PCSETUP_LOG%
 
 if /I "%PCSETUP_REMOTE_CALL%"=="1" (
     echo Remote call mode detected. Skipping workspace folder open.

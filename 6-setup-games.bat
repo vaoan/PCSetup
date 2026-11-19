@@ -24,7 +24,8 @@ set "PSModulePath="
 SET SCRIPT=%TEMP%\temp-games-setup.ps1
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
 >>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.
@@ -94,7 +95,13 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo # Install game platforms via Scoop. Java is installed by 0-init-prereqs.bat.
 >>"%SCRIPT%" echo # Bucket-qualified: "steam" also exists in the versions bucket, and an ambiguous
 >>"%SCRIPT%" echo # name makes Scoop pick whichever bucket sorts first.
->>"%SCRIPT%" echo Install-ScoopApp "steam" "Steam" "games"
+>>"%SCRIPT%" echo # A Steam installed by hand (the normal case: it is the first thing people download) must win.
+>>"%SCRIPT%" echo # Installing the Scoop copy next to it left two Steams on 2026-11-18 - the registered one in
+>>"%SCRIPT%" echo # Program Files (x86), with the games, and an empty one under scoop that scripts 8 and 10
+>>"%SCRIPT%" echo # then resolved first, so the Defender exclusion and the icon fix went to the wrong folder.
+>>"%SCRIPT%" echo $steamOther = @("${env:ProgramFiles(x86)}\Steam\steam.exe", "$env:ProgramFiles\Steam\steam.exe", ([string](Get-ItemProperty -Path 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamExe -replace '/', '\')) ^| Where-Object { $_ -and $_ -notmatch '\\scoop\\' -and (Test-Path -LiteralPath $_) } ^| Select-Object -First 1
+>>"%SCRIPT%" echo if ($steamOther -and -not (Test-ScoopApp "steam")) { Write-Host "Steam already installed at $steamOther, not adding a Scoop copy." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo else { Install-ScoopApp "steam" "Steam" "games" }
 >>"%SCRIPT%" echo Install-ScoopApp "epic-games-launcher" "Epic Games Launcher" "games"
 >>"%SCRIPT%" echo Install-ScoopApp "prismlauncher" "Prism Launcher" "games"
 >>"%SCRIPT%" echo.
@@ -123,8 +130,18 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # FFXIV TexTools (Modding Tool) - not on any package manager
 >>"%SCRIPT%" echo $ttPath = "$env:LOCALAPPDATA\TexTools"
->>"%SCRIPT%" echo $ttExe = Join-Path $ttPath "FFXIV_TexTools.exe"
->>"%SCRIPT%" echo if (Test-Path $ttExe) { Write-Host "TexTools already installed, skipping..." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo # Install_TexTools.exe (back as a release asset since v3.1.1.7) installs to
+>>"%SCRIPT%" echo # "C:\Program Files\FFXIV TexTools\FFXIV_TexTools\", not to the zip folder below. Checking only
+>>"%SCRIPT%" echo # the zip folder reported a good install as FAILED and reinstalled it on every run.
+>>"%SCRIPT%" echo function Get-TexToolsExe {
+>>"%SCRIPT%" echo     $dirs = @($ttPath, "$env:ProgramFiles\FFXIV TexTools\FFXIV_TexTools")
+>>"%SCRIPT%" echo     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+>>"%SCRIPT%" echo         foreach ($e in @(Get-ItemProperty -Path $k -ErrorAction SilentlyContinue ^| Where-Object { $_.DisplayName -like '*TexTools*' -and $_.InstallLocation })) { $loc = $e.InstallLocation.Trim('"'); $dirs += $loc; $dirs += (Join-Path $loc 'FFXIV_TexTools') }
+>>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo     foreach ($d in $dirs) { $exe = Join-Path $d 'FFXIV_TexTools.exe'; if (Test-Path -LiteralPath $exe) { return $exe } }
+>>"%SCRIPT%" echo     return $null
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo if (Get-TexToolsExe) { Write-Host "TexTools already installed ($(Get-TexToolsExe)), skipping..." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     Write-Host "Installing TexTools..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     try {
@@ -147,7 +164,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo             Remove-Item $ttZip -Force -ErrorAction SilentlyContinue
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo     } catch { Write-Host "TexTools install error: $($_.Exception.Message)" -ForegroundColor Yellow }
->>"%SCRIPT%" echo     if (Test-Path $ttExe) { Write-Host "TexTools installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Wait-InstalledCheck { [bool](Get-TexToolsExe) } 30) { Write-Host "TexTools installed: $(Get-TexToolsExe)" -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "TexTools FAILED to install." -ForegroundColor Red; $null = $failures.Add("TexTools") }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.

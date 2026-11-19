@@ -1,4 +1,8 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿# Transcript into C:\PCSetup-logs first, so even a failure on the next line is on record.
+$startLog = Join-Path $PSScriptRoot 'start-log.ps1'
+if (Test-Path -LiteralPath $startLog) { . $startLog }
+
+$ErrorActionPreference = 'Stop'
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
@@ -1048,6 +1052,9 @@ function Enable-WslPrerequisites {
 
     if ($requiresReboot) {
         Write-Host "WSL prerequisites were changed. Reboot Windows before installing the Cloudflare console stack." -ForegroundColor Yellow
+        # remote-call.ps1 reads this and resumes the setup after the reboot (HKCU RunOnce).
+        # Without it, four runs in a row on 2026-11-17/18 skipped Ubuntu and nobody knew why.
+        try { Set-Content -LiteralPath $script:RebootFlagPath -Value (Get-Date -Format o) -Encoding ASCII } catch { }
         return
     }
 
@@ -1057,6 +1064,11 @@ function Enable-WslPrerequisites {
 }
 
 $script:Failures = New-Object System.Collections.Generic.List[string]
+
+# Set again by Enable-WslPrerequisites only when this run still needs a reboot.
+$script:RebootFlagPath = Join-Path $env:ProgramData 'PCSetup\reboot-required.flag'
+$null = New-Item -ItemType Directory -Path (Split-Path -Parent $script:RebootFlagPath) -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $script:RebootFlagPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "Starting PCSetup prerequisite initialization..." -ForegroundColor Cyan
 # A click inside the window must not be able to pause an unattended run (QuickEdit selection

@@ -17,7 +17,8 @@ set "SKIP_DRIVES='P','C','I'"
 set "SCRIPT=%TEMP%\temp-delete-node-modules.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo $skip = @(%SKIP_DRIVES%)
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo $skip = @(%SKIP_DRIVES%)
 >>"%SCRIPT%" echo $excludePaths = @(
 >>"%SCRIPT%" echo     "$env:ProgramFiles\Microsoft VS Code",
 >>"%SCRIPT%" echo     "${env:ProgramFiles(x86)}\Microsoft VS Code",

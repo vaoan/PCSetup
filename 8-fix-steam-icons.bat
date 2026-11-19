@@ -17,7 +17,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 :: This was previously a single opaque -EncodedCommand base64 blob, which meant the logic could
 :: not be reviewed or edited without decoding it by hand. It is generated as readable PowerShell
 :: now, exactly like the other setup scripts.
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo Write-Host "Fixing Steam shortcut icons..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo Write-Host ""
 >>"%SCRIPT%" echo.

@@ -23,7 +23,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 :: silently became `$maxAttempts = ` (handle 3 redirected to the file, text sent to the console).
 :: $maxAttempts was then $null, `1 -le $null` is false, and the retry loop never ran a single
 :: attempt - so no npm package was ever installed while the script reported success.
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
 >>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.

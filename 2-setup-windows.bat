@@ -29,7 +29,8 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
 :: Redirection goes FIRST on every line so a trailing standalone digit can never be parsed as a
 :: file-handle redirect (that silently ate `$maxAttempts = 3` in 3-setup-node.bat).
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo # One-line live status for long native commands (installers, npm). Shared with
 >>"%SCRIPT%" echo # sources\init-prereqs.ps1 - see sources\status-line.ps1.
@@ -352,13 +353,20 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     [Environment]::SetEnvironmentVariable('PATH', $userPath + ";$env:USERPROFILE\.local\bin", 'User')
 >>"%SCRIPT%" echo     $env:PATH = $env:PATH + ";$env:USERPROFILE\.local\bin"
 >>"%SCRIPT%" echo }
->>"%SCRIPT%" echo if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host "Claude Code already installed, skipping..." -ForegroundColor Yellow }
+>>"%SCRIPT%" echo # Tested by file, not Get-Command: the --yolo wrapper below is also called `claude`.
+>>"%SCRIPT%" echo $claudeExe = "$env:USERPROFILE\.local\bin\claude.exe"
+>>"%SCRIPT%" echo if (Test-Path -LiteralPath $claudeExe) { Write-Host "Claude Code already installed, skipping..." -ForegroundColor Yellow }
 >>"%SCRIPT%" echo else {
 >>"%SCRIPT%" echo     Write-Host "Installing Claude Code..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo     try { irm https://claude.ai/install.ps1 ^| iex } catch { Write-Host "Claude Code install error: $($_.Exception.Message)" -ForegroundColor Yellow }
 >>"%SCRIPT%" echo     $env:PATH = $env:PATH + ";$env:USERPROFILE\.local\bin"
->>"%SCRIPT%" echo     if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Host "Claude Code installed." -ForegroundColor Green }
+>>"%SCRIPT%" echo     if (Test-Path -LiteralPath $claudeExe) { Write-Host "Claude Code installed." -ForegroundColor Green }
 >>"%SCRIPT%" echo     else { Write-Host "Claude Code FAILED to install." -ForegroundColor Red; Add-Failure 'Claude Code' }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # `claude --yolo` = --dangerously-skip-permissions (wrapper first on PATH; see the helper).
+>>"%SCRIPT%" echo if (Test-Path -LiteralPath $claudeExe) {
+>>"%SCRIPT%" echo     ^& "%~dp0sources\install-claude-yolo.ps1"
+>>"%SCRIPT%" echo     if ($LASTEXITCODE -ne 0) { Add-Failure 'claude --yolo (Windows)' }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo if (Get-Command wsl -ErrorAction SilentlyContinue) { Write-Host "WSL already installed, skipping..." -ForegroundColor Yellow }
@@ -383,11 +391,20 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     else {
 >>"%SCRIPT%" echo         Write-Host "Installing Claude Code in WSL..." -ForegroundColor Cyan
 >>"%SCRIPT%" echo         ^& wsl -d $wslDistro -e bash -c "curl -fsSL https://claude.ai/install.sh | bash"
->>"%SCRIPT%" echo         ^& wsl -d $wslDistro -e bash -c "grep -q '.local/bin' ~/.bashrc || echo 'export PATH=\"\`$HOME/.local/bin:\`$PATH\"' >> ~/.bashrc"
 >>"%SCRIPT%" echo         ^& wsl -d $wslDistro -e bash -lc "[ -x ~/.local/bin/claude ]"
 >>"%SCRIPT%" echo         if ($LASTEXITCODE -eq 0) { Write-Host "Claude Code installed in WSL." -ForegroundColor Green }
 >>"%SCRIPT%" echo         else { Write-Host "Claude Code in WSL FAILED to install." -ForegroundColor Red; Add-Failure 'Claude Code (WSL)' }
 >>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo     # ~/.local/bin on PATH in ~/.bashrc, every run (idempotent). The snippet is base64 because no
+>>"%SCRIPT%" echo     # quoting survives CMD echo + PowerShell 5.1 native-arg passing + bash: the old inline version
+>>"%SCRIPT%" echo     # closed the PowerShell string at \" and wrote nothing, so `claude` was not found in WSL
+>>"%SCRIPT%" echo     # (2026-11-19). Decoded:
+>>"%SCRIPT%" echo     #   grep -qs '.local/bin' ~/.bashrc ^|^| echo 'export PATH="$HOME/.local/bin:$PATH"' ^>^> ~/.bashrc
+>>"%SCRIPT%" echo     ^& wsl -d $wslDistro -e bash -c "echo Z3JlcCAtcXMgJy5sb2NhbC9iaW4nIH4vLmJhc2hyYyB8fCBlY2hvICdleHBvcnQgUEFUSD0iJEhPTUUvLmxvY2FsL2JpbjokUEFUSCInID4+IH4vLmJhc2hyYw== | base64 -d | bash"
+>>"%SCRIPT%" echo     ^& wsl -d $wslDistro -e bash -ic "command -v claude" ^> $null 2^>^&1
+>>"%SCRIPT%" echo     if ($LASTEXITCODE -ne 0) { Write-Host "claude is not on PATH in an interactive WSL shell." -ForegroundColor Red; Add-Failure 'Claude Code (WSL PATH)' }
+>>"%SCRIPT%" echo     ^& "%~dp0sources\install-claude-yolo.ps1" -WslDistro $wslDistro
+>>"%SCRIPT%" echo     if ($LASTEXITCODE -ne 0) { Add-Failure 'claude --yolo (WSL)' }
 >>"%SCRIPT%" echo } else { if ($wslSkipReason) { Write-Host "$wslSkipReason - skipping WSL setup." -ForegroundColor Yellow } else { Write-Host "WSL not ready yet - skipping WSL setup." -ForegroundColor Yellow } }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo Write-Host ""

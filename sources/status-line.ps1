@@ -155,6 +155,7 @@ function Start-CommandCapture {
 
     $job = @{
         Label        = $Label
+        Command      = ('{0} {1}' -f $FilePath, ($args -join ' ')).Trim()
         Process      = $proc
         Stdout       = $stdout
         Stderr       = $stderr
@@ -200,6 +201,26 @@ function Read-CommandCaptureOutput {
         try { $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::Default); ($sr.ReadToEnd()) -replace "`0", '' } finally { $fs.Close() }
     }
     catch { '' }
+}
+
+function Write-CommandLog {
+    # The status line only ever shows one row and the temp capture files are deleted right
+    # after, so without this a failed winget/DISM/msiexec left nothing to read once the window
+    # had closed. Appends the full stdout/stderr to <PCSETUP_LOG>-commands.log - a separate
+    # file, because this process's transcript holds the main log open. Never throws.
+    param([hashtable]$Job, $ExitCode, [string]$Output, [string]$ErrorText)
+    if ([string]::IsNullOrWhiteSpace($env:PCSETUP_LOG)) { return }
+    try {
+        $path = [IO.Path]::ChangeExtension($env:PCSETUP_LOG, $null).TrimEnd('.') + '-commands.log'
+        $sb = New-Object Text.StringBuilder
+        $null = $sb.AppendLine(('==== {0:yyyy-MM-dd HH:mm:ss} | {1} | exit {2} | {3:0}s' -f (Get-Date), $Job.Label, $ExitCode, $Job.Clock.Elapsed.TotalSeconds))
+        $null = $sb.AppendLine('cmd: ' + $Job.Command)
+        if (-not [string]::IsNullOrWhiteSpace($Output)) { $null = $sb.AppendLine('--- stdout'); $null = $sb.AppendLine($Output.TrimEnd()) }
+        if (-not [string]::IsNullOrWhiteSpace($ErrorText)) { $null = $sb.AppendLine('--- stderr'); $null = $sb.AppendLine($ErrorText.TrimEnd()) }
+        $null = $sb.AppendLine('')
+        [IO.File]::AppendAllText($path, $sb.ToString(), (New-Object Text.UTF8Encoding($false)))
+    }
+    catch { }
 }
 
 function Wait-CommandWithStatus {
@@ -313,6 +334,7 @@ function Wait-CommandWithStatus {
         if (-not $redirected -and $Job.LastLen -gt 0) { Write-Host '' }
         $output = Read-CommandCaptureOutput $Job.Stdout
         $errText = Read-CommandCaptureOutput $Job.Stderr
+        Write-CommandLog -Job $Job -ExitCode $proc.ExitCode -Output $output -ErrorText $errText
         return @{
             ExitCode = $proc.ExitCode
             Output   = $output

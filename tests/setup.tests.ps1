@@ -622,7 +622,10 @@ Describe "2-setup-windows" {
         Test-Path "$env:USERPROFILE\.wezterm.lua" | Should -BeTrue
     }
     It "Claude Desktop installed" -Skip:($IsCI) {
-        Test-Path "$env:LOCALAPPDATA\AnthropicClaude\claude.exe" | Should -BeTrue
+        # Squirrel build in LOCALAPPDATA until 2026; now an MSIX package named "Claude" (WindowsApps).
+        $squirrel = Test-Path "$env:LOCALAPPDATA\AnthropicClaude\claude.exe"
+        $msix = [bool](powershell -NoProfile -Command "Get-AppxPackage -Name Claude" 2>$null)
+        ($squirrel -or $msix) | Should -BeTrue
     }
     It "Claude Code installed" -Skip:($IsCI) {
         (Get-Command claude -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
@@ -813,6 +816,20 @@ Describe "6-setup-games" {
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing TexTools"'
         $bat | Should -Match 'Invoke-CommandWithStatus -Label "Installing FFLogs Uploader"'
     }
+    # 2026-11-18: Install_TexTools.exe installs to Program Files; checking only the zip folder
+    # reported it FAILED and reinstalled it on every run.
+    It "TexTools is detected where its installer actually puts it" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
+        $bat | Should -Match 'function Get-TexToolsExe'
+        $bat | Should -Match 'ProgramFiles\\FFXIV TexTools\\FFXIV_TexTools'
+        $bat | Should -Not -Match 'Test-Path \$ttExe'
+    }
+    # 2026-11-18: a hand-installed Steam in Program Files (x86) got an empty Scoop copy beside it.
+    It "a Steam installed outside Scoop is not duplicated" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\6-setup-games.bat") -Raw
+        $bat | Should -Match '\$steamOther = '
+        $bat | Should -Match 'else \{ Install-ScoopApp "steam" "Steam" "games" \}'
+    }
     It "Steam installed" -Skip:($IsCI) {
         $installed = (Get-Command steam -ErrorAction SilentlyContinue) -or (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
         $installed | Should -BeTrue
@@ -890,6 +907,73 @@ Describe "11-setup-win11debloat" {
     It "OneDrive not running" -Skip:($IsCI) {
         $proc = Get-Process OneDrive -ErrorAction SilentlyContinue
         $proc | Should -BeNullOrEmpty
+    }
+    # -RunDefaults makes Win11Debloat overwrite -Apps with 'Default', so our list was ignored
+    # and Photos/Camera/Media Player/Phone Link survived four runs on 2026-11-18.
+    It "never passes -Apps in the same call as -RunDefaults" {
+        $lines = Get-Content (Join-Path $PSScriptRoot "..\11-setup-win11debloat.bat")
+        @($lines | Where-Object { $_ -match '-RunDefaults' -and $_ -match '-Apps' }) | Should -BeNullOrEmpty
+        @($lines | Where-Object { $_ -match '\$debloat -RemoveApps -Apps' }).Count | Should -Be 1
+    }
+    It "removes the OneDriveSetup Run entry, not only 'OneDrive'" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\11-setup-win11debloat.bat") -Raw
+        $bat | Should -Match "OneDrive\(Setup\)\?\\\.exe"
+    }
+}
+
+# ─────────────────────────────────────────────
+# Run log on the system drive + resume after reboot (2026-11-19)
+# ─────────────────────────────────────────────
+Describe "run log and resume" {
+    BeforeDiscovery {
+        $numbered = @(Get-ChildItem (Join-Path $PSScriptRoot "..") -Filter '*.bat' |
+            Where-Object { [char]::IsDigit($_.Name[0]) -and $_.Name -ne '0-init-prereqs.bat' } |
+            ForEach-Object { @{ Name = $_.Name } })
+    }
+    It "<Name> starts the transcript on the first generated line" -ForEach $numbered {
+        $first = Get-Content (Join-Path $PSScriptRoot "..\$Name") | Where-Object { $_ -match '^>"%SCRIPT%" echo ' } | Select-Object -First 1
+        $first | Should -Match 'sources\\start-log\.ps1'
+    }
+    It "init-prereqs.ps1 starts the transcript before anything else runs" {
+        $text = Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw
+        $text.IndexOf('start-log.ps1') | Should -BeLessThan $text.IndexOf("ErrorActionPreference = 'Stop'")
+    }
+    It "run-all.bat and remote-call.ps1 log to the system drive" {
+        Get-Content (Join-Path $PSScriptRoot "..\run-all.bat") -Raw | Should -Match '%SystemDrive%\\PCSetup-logs\\'
+        Get-Content (Join-Path $PSScriptRoot "..\remote-call.ps1") -Raw | Should -Match 'PCSetup-logs'
+    }
+    It "remote-call.ps1 resumes after the reboot step 0 asks for" {
+        $remote = Get-Content (Join-Path $PSScriptRoot "..\remote-call.ps1") -Raw
+        $remote | Should -Match 'reboot-required\.flag'
+        $remote | Should -Match 'CurrentVersion\\RunOnce'
+        Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw | Should -Match 'RebootFlagPath'
+    }
+    It "2-setup-windows sets up claude --yolo on Windows and in WSL" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Match 'sources\\install-claude-yolo\.ps1"\s*\r?\n'
+        $bat | Should -Match 'install-claude-yolo\.ps1" -WslDistro \$wslDistro'
+        $helper = Get-Content (Join-Path $PSScriptRoot "..\sources\install-claude-yolo.ps1") -Raw
+        $helper | Should -Match '%_a:--yolo=--dangerously-skip-permissions%'
+    }
+    # The inline version closed the PowerShell string at \" and wrote nothing to ~/.bashrc.
+    It "2-setup-windows writes the WSL PATH line through base64, not nested quotes" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $bat | Should -Not -Match 'PATH=\\"'
+        $bat | Should -Match 'base64 -d \| bash'
+    }
+    # Valve stores SteamPath with forward slashes, which 5.1's -LiteralPath rejects.
+    It "10-setup-exclusions normalises Valve's SteamPath" {
+        Get-Content (Join-Path $PSScriptRoot "..\10-setup-exclusions.bat") -Raw | Should -Match "SteamPath -replace '/', '\\'"
+    }
+    It "5-move-profile-folders moves (rename first) and never deletes source files" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\5-move-profile-folders.bat") -Raw
+        $bat | Should -Match '\[IO\.Directory\]::Move\(\$src, \$dst\)'
+        $bat | Should -Not -Match 'Remove-Item[^\r\n]*\$src'
+    }
+    # 'Heiner' here sent account PC-COSITO's Desktop/Documents/... to Z:\Users\Heiner.
+    It "profile-folders.config does not hardcode a user name" {
+        $line = Get-Content (Join-Path $PSScriptRoot "..\profile-folders.config") | Where-Object { $_ -match '^TARGET_PROFILE_FOLDER=' }
+        $line | Should -Match '^TARGET_PROFILE_FOLDER=(AUTO)?\s*$'
     }
 }
 

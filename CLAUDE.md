@@ -246,6 +246,37 @@ exits 1 rather than fetching a ZIP over the top of the folder it is sitting in.
 > run accomplishes nothing while looking busy. Restoring the cwd also covers a script that `cd`s
 > away without a `setlocal` to unwind it.
 
+### Run log: `C:\PCSetup-logs\`
+
+Every run leaves `C:\PCSetup-logs\run-<yyyyMMdd-HHmmss>.log` (transcript of `remote-call.ps1`,
+`run-all.bat`'s per-script start/finish/exit lines and summary, and every numbered script's
+output) plus `run-<stamp>-commands.log` (full stdout/stderr of each native tool run behind the
+status line: winget, DISM, msiexec, wsl, npm, installers). **Read these first when a run went
+wrong.** Added 2026-11-19 after a machine came out of four runs half-configured and the only
+evidence was the PowerShell event log.
+
+- `PCSETUP_LOG` carries the path: `remote-call.ps1` sets it, `run-all.bat` sets it if unset, and a
+  numbered script run on its own gets `<script>-<stamp>.log`.
+- Each generated script's **first line** dot-sources `sources\start-log.ps1` (Start-Transcript
+  -Append); `init-prereqs.ps1` does the same before anything else. Asserted in `setup.tests.ps1`
+  ("run log and resume"). Add the same line to any new numbered script.
+- The tool output goes to a **separate** `-commands.log` because the transcript holds the main
+  file open in that process (`Write-CommandLog` in `status-line.ps1`).
+- `remote-call.ps1` stops its own transcript before launching `run-all.bat` so the children can
+  append, and restarts it afterwards for the final result.
+
+### Resume after the WSL reboot
+
+A fresh machine needs a reboot after step 0 enables the WSL features; until then step 0 skips
+the Ubuntu registration and script 2 skips Claude Code in WSL. On 2026-11-17/18 the setup ran
+**four times without a reboot in between**, so Ubuntu was never installed and nothing said why.
+Step 0 now writes `%ProgramData%\PCSetup\reboot-required.flag` (and clears it at the start of every
+run); `remote-call.ps1` sees it, prints **REBOOT NOW**, and registers HKCU `RunOnce`
+`PCSetup-resume`, which re-runs `irm i.ffxiv.be | iex` at the next sign-in. The RunOnce elevates
+itself (`Start-Process -Verb RunAs` around an `-EncodedCommand`), because the self-elevation at the
+top of `remote-call.ps1` needs `$PSCommandPath`, which is empty under `irm | iex`. Capped at 2
+resumes (`resume-count`) so a machine that can never start WSL does not rerun at every sign-in.
+
 **Releasing an update:** update `.v` (the pre-commit hook does this) and push. `remote-call.ps1`
 always fetches the current `main`, so there is no version negotiation left to get wrong.
 
@@ -724,6 +755,28 @@ that failed is listed at the end, with the script exiting non-zero.
 > where installers are allowed to ask. Nothing in the numbered scripts may show a dialog.
 **Other:** Claude Code (Windows and inside WSL), WSL itself
 
+> **`claude --yolo` = `claude --dangerously-skip-permissions`, Windows and WSL.** Right after
+> Claude Code is installed, `sources\install-claude-yolo.ps1` writes
+> `%USERPROFILE%\.local\claude-wrap\claude.cmd` (swaps `--yolo`, then runs the untouched
+> `.local\bin\claude.exe`) and puts that folder **first** in the User PATH; with `-WslDistro` it
+> appends a `claude()` bash function to `~/.bashrc` between `# >>> PCSetup claude --yolo >>>`
+> markers. Both are verified (resolves to the wrapper and prints the version / `type claude`
+> shows the swap) and idempotent. It is a separate file because the wrapper is all `%VAR%`
+> expansions that CMD would eat. Because the wrapper is also named `claude`, the "already
+> installed" check tests `claude.exe` by path, not `Get-Command claude`.
+>
+> **The WSL `~/.local/bin` PATH line never reached `~/.bashrc`.** The inline
+> `bash -c "... 'export PATH=\"\`$HOME...\"' >> ~/.bashrc"` closed the PowerShell string at `\"`
+> (PowerShell does not treat `\` as an escape), so the install printed success and `claude` was
+> "command not found" in WSL. The snippet is now base64 (`echo <b64> | base64 -d | bash`), runs on
+> every pass rather than only after a fresh install, and is verified with `bash -ic "command -v claude"`.
+
+> **Never `scoop uninstall steam` next to a real Steam.** The `games/steam` manifest's uninstaller
+> is Steam's own `uninstall.exe /S`, which follows the **registry** InstallPath: removing an empty
+> Scoop duplicate on 2026-11-19 uninstalled the real Steam in Program Files (x86) with its games.
+> Script 6 no longer creates the duplicate; if one exists, delete only the Scoop app folder and
+> shims by hand.
+
 > **Installers that hand off to an updater are not registered the instant they return.** Discord
 > and Claude Desktop are Squirrel-style setups: the setup exits, `Update.exe` finishes the job.
 > winget printed *Successfully installed*, the check taken right after printed *FAILED to
@@ -822,6 +875,15 @@ Sets PowerShell execution policy to `RemoteSigned` for the current user, allowin
 ### 5-move-profile-folders.bat
 Relocates Windows user profile folders (Desktop, Documents, Music, Pictures, Videos, etc.) to a different drive (default: Z:). Updates registry entries and optionally moves existing files. Run early before accumulating files. Note: Downloads folder is handled separately in `optional/move-downloads-folder.bat`.
 
+> **The target folder is the user running the setup — never hardcode a name in
+> `profile-folders.config`.** It said `TARGET_PROFILE_FOLDER=Heiner`, which overrides the
+> script's `%USERNAME%` default, so on a machine whose account is `PC-COSITO` (2026-11-17) every
+> profile folder was repointed to `Z:\Users\Heiner\...` and its files moved there. It is `AUTO` now
+> (asserted in `setup.tests.ps1`). Re-running the script repairs a machine in that state: the
+> move reads the *current* location from the registry, so it carries the files from the wrongly
+> named base to `Z:\Users\<user>` and repoints the registry. Do it with nothing open inside
+> Documents (a repo checkout there is moved too).
+
 > **Optional by construction: if the target drive is not present, the script skips with exit 0.**
 > The check is `if not exist "%TARGET_DRIVE%\"` in the batch layer, before the PowerShell file
 > is generated, so a machine without a `Z:` keeps its profile on the system drive and `run-all.bat`
@@ -867,6 +929,17 @@ to have worked, and the script exits non-zero listing whatever failed.
 > (falling back to `Program Files (x86)\NC\Purple`). Verified under 5.1 on the CMD-generated file:
 > skip when present; uninstall (`Uninstall.exe /S`) → install → verified; then skip again. The same
 > blind spot means `update-all.bat`'s winget step never sees it — the launcher updates itself.
+
+> **TexTools' installer puts it in `C:\Program Files\FFXIV TexTools\FFXIV_TexTools\`.** The
+> `Install_TexTools.exe` asset is back (v3.1.1.7), and the check only looked in the zip folder
+> `%LOCALAPPDATA%\TexTools`, so a good install was reported FAILED and reinstalled every run
+> (2026-11-18). `Get-TexToolsExe` checks both plus the uninstall entry's `InstallLocation`.
+
+> **A Steam installed by hand is not duplicated.** On 2026-11-18 a Steam installed in Program
+> Files (x86) before the setup got an empty Scoop copy beside it, which scripts 8 and 10 then
+> resolved first (`scoop prefix`), so the Defender exclusion went to the empty one. Script 6 skips
+> the Scoop install when `steam.exe` exists outside Scoop (Program Files or
+> `HKCU\Software\Valve\Steam\SteamExe`). Epic is not affected: the Scoop package only runs the MSI.
 
 > **TexTools ships zip-only since v3.1.1.3b.** The `Install_TexTools.exe` release asset is gone, so
 > the script prefers the installer if present and otherwise extracts the portable zip (no top-level
@@ -922,6 +995,17 @@ To manually edit the WezTerm config: `code $env:USERPROFILE\.wezterm.lua` or ask
 
 ### 11-setup-win11debloat.bat
 Runs Win11Debloat in unattended mode to apply default tweaks and remove common optional apps (OneDrive, Phone Link, Camera, Photos, Media Player, Remote Desktop, Whiteboard). It also runs OneDrive's built-in uninstaller, removes its startup entry, disables reinstallation via policy, and deletes leftover local OneDrive folders.
+
+> **The app list is a second Win11Debloat call, never on the `-RunDefaults` call.** With
+> `-RunDefaults`, Win11Debloat's `Show-CliDefaultModeOptions` does `Add-Parameter 'Apps'
+> 'Default'`, which *replaces* any `-Apps` value — so `-RunDefaults -RemoveApps -Apps <ours>`
+> silently removed only Win11Debloat's default list, and Photos, Camera, Media Player and Phone
+> Link survived four runs on 2026-11-18. Now: `-RunDefaults -Silent`, then
+> `-RemoveApps -Apps <ours> -Silent` (non-control params go straight to `Invoke-AllChanges`), then
+> a `Remove-AppxPackage -AllUsers` / `Remove-AppxProvisionedPackage` backstop.
+> The Run-key cleanup also matches by **value**: a new account gets `OneDriveSetup =
+> OneDriveSetup.exe /thfirstsetup`, which reinstalls OneDrive at the next sign-in, and only the
+> value *named* `OneDrive` used to be removed.
 
 ### 99-remove-windows-ai.bat
 Removes Windows AI features (Copilot, Recall, etc.) using the RemoveWindowsAI script from zoicware.

@@ -8,6 +8,24 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 $ErrorActionPreference = "Stop"
 
+# One log per run on the system drive (C:\PCSetup-logs\run-<stamp>.log). Every window closes on
+# its own, so this is the only record of what happened. run-all.bat and every numbered script
+# append to the same file through PCSETUP_LOG - see sources\start-log.ps1.
+if ([string]::IsNullOrWhiteSpace($env:PCSETUP_LOG)) {
+    $env:PCSETUP_LOG = Join-Path $env:SystemDrive ("PCSetup-logs\run-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+}
+function Start-RunLog {
+    try {
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $env:PCSETUP_LOG) -Force -ErrorAction SilentlyContinue
+        $null = Start-Transcript -LiteralPath $env:PCSETUP_LOG -Append -ErrorAction Stop
+    }
+    catch { }
+}
+function Stop-RunLog { try { $null = Stop-Transcript -ErrorAction Stop } catch { } }
+Start-RunLog
+Write-Host ("[remote-call] branch {0} | user {1}\{2} on {3} | {4}" -f $Branch, $env:USERDOMAIN, $env:USERNAME, $env:COMPUTERNAME, [Environment]::OSVersion.VersionString)
+Write-Host ("[remote-call] log: {0}" -f $env:PCSETUP_LOG) -ForegroundColor Cyan
+
 # QuickEdit off for this console: with it on, one click inside the window starts a selection
 # and conhost blocks every write until Esc - the title reads "Select ..." and the whole run
 # looks frozen. Every script run-all calls shares this console, so once here covers the run.
@@ -274,12 +292,58 @@ try {
     }
 
     Write-Host "Executing remote runner from temp workspace: $workDir" -ForegroundColor Cyan
+    # The transcript holds the log open; run-all.bat and the scripts append to it themselves.
+    Stop-RunLog
     $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$runAllPath`"" -WorkingDirectory $workDir -Wait -PassThru -NoNewWindow
+    Start-RunLog
+    Write-Host ("[remote-call] run-all.bat exited with code {0}" -f $proc.ExitCode)
+
+    # A fresh machine needs a reboot after the WSL features are enabled, and until then step 0
+    # skips the Ubuntu registration (and script 2 skips Claude Code in WSL). On 2026-11-17/18 the
+    # setup ran four times without a reboot in between, so Ubuntu was never installed and nothing
+    # said why. step 0 now leaves a flag; when it is there the run resumes itself after the
+    # reboot via HKCU RunOnce. Capped at 2 resumes so a machine that can never start WSL
+    # (virtualization off in the firmware) does not rerun the setup at every sign-in.
+    $rebootFlag = Join-Path $env:ProgramData "PCSetup\reboot-required.flag"
+    $resumeCountFile = Join-Path $env:ProgramData "PCSetup\resume-count"
+    if (Test-Path -LiteralPath $rebootFlag) {
+        $resumeCount = 0
+        if (Test-Path -LiteralPath $resumeCountFile) { [int]::TryParse((Get-Content -LiteralPath $resumeCountFile -Raw).Trim(), [ref]$resumeCount) | Out-Null }
+        if ($Branch -eq "main" -and $resumeCount -lt 2) {
+            # RunOnce starts unelevated, and the self-elevation at the top of this file needs
+            # $PSCommandPath, which is empty under irm | iex - so the resume elevates itself.
+            # The inner command is -EncodedCommand so no quote or pipe has to survive nesting.
+            $inner = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("irm i.ffxiv.be | iex"))
+            $resumeCommand = "powershell.exe -NoProfile -WindowStyle Hidden -Command `"Start-Process powershell.exe -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand $inner'`""
+            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Force | Out-Null
+            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "PCSetup-resume" -Value $resumeCommand
+            Set-Content -LiteralPath $resumeCountFile -Value ($resumeCount + 1) -Encoding ASCII
+            Write-Host ""
+            Write-Host "==================================================================" -ForegroundColor Yellow
+            Write-Host "  REBOOT NOW. Windows needs a restart to finish WSL/Ubuntu." -ForegroundColor Yellow
+            Write-Host "  The setup continues by itself at the next sign-in (accept UAC)." -ForegroundColor Yellow
+            Write-Host "==================================================================" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "A reboot is still required, but the automatic resume is used up (or this is not main)." -ForegroundColor Yellow
+            Write-Host "Reboot, then run again: irm i.ffxiv.be | iex" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Remove-Item -LiteralPath $resumeCountFile -Force -ErrorAction SilentlyContinue
+    }
+
     if ($proc.ExitCode -ne 0) {
         throw "Remote runner failed with exit code $($proc.ExitCode)."
     }
 }
+catch {
+    Write-Host ("[remote-call] FAILED: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    throw
+}
 finally {
+    Write-Host ("[remote-call] finished {0:yyyy-MM-dd HH:mm:ss}. Log: {1}" -f (Get-Date), $env:PCSETUP_LOG)
+    Stop-RunLog
     Remove-Item Env:PCSETUP_REMOTE_CALL -ErrorAction SilentlyContinue
     if (Test-Path $workDir) {
         Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue

@@ -25,7 +25,8 @@ set "PSModulePath="
 set "SCRIPT=%TEMP%\temp-exclusions.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 >>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo function Add-Failure([string]$name) { if (-not $failures.Contains($name)) { $null = $failures.Add($name) } }
 >>"%SCRIPT%" echo.
@@ -51,6 +52,15 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         $prefix = ^& scoop prefix $app 2^>$null 6^>$null
 >>"%SCRIPT%" echo         if ($LASTEXITCODE -eq 0 -and $prefix -and (Test-Path $prefix)) { $exclusions += $prefix }
 >>"%SCRIPT%" echo     }
+>>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # The Steam the client actually runs from is the one Valve registers. A hand-installed Steam in
+>>"%SCRIPT%" echo # Program Files (x86) got no exclusion at all while an empty Scoop copy did (2026-11-19).
+>>"%SCRIPT%" echo # Valve stores it as "c:/program files (x86)/steam"; 5.1's -LiteralPath rejects the forward slashes.
+>>"%SCRIPT%" echo $steamReg = [string](Get-ItemProperty -Path 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath -replace '/', '\'
+>>"%SCRIPT%" echo if ($steamReg -and (Test-Path -LiteralPath $steamReg)) { $exclusions += (Get-Item -LiteralPath $steamReg).FullName }
+>>"%SCRIPT%" echo # Drop exclusions this script added earlier for a Steam that no longer exists (the old Scoop copy).
+>>"%SCRIPT%" echo foreach ($old in @((Get-MpPreference).ExclusionPath)) {
+>>"%SCRIPT%" echo     if ($old -and $old -match '\\scoop\\apps\\steam\\' -and -not (Test-Path -LiteralPath $old)) { Write-Host "Removing stale exclusion: $old" -ForegroundColor Yellow; Remove-MpPreference -ExclusionPath $old -ErrorAction SilentlyContinue }
 >>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo $existing = @((Get-MpPreference).ExclusionPath)

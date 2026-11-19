@@ -14,7 +14,8 @@ set "PSModulePath="
 set "SCRIPT=%TEMP%\temp-ctxmenu.ps1"
 if exist "%SCRIPT%" del "%SCRIPT%" >nul
 
->"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
+>"%SCRIPT%" echo if (Test-Path -LiteralPath "%~dp0sources\start-log.ps1") { . "%~dp0sources\start-log.ps1" }
+>>"%SCRIPT%" echo $failures = New-Object System.Collections.ArrayList
 >>"%SCRIPT%" echo function Add-Failure([string]$name) { if (-not $failures.Contains($name)) { $null = $failures.Add($name) } }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # HKCR is not a PowerShell drive by default.
