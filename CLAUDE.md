@@ -1654,7 +1654,10 @@ Each is cloned **in full** (worked on, pushed from), or fast-forwarded, and tied
 holding `<old Documents>\Juegos\FFXIV\` in Me's `dalamudConfig.json` and `pluginConfigs\ForkWatch.json`
 is re-pointed at this account's Documents - not only `DevPluginLoadLocations[].Path` but also the
 `DevPluginSettings` entries, which are **keyed by the DLL path** (miss them and each dev plugin loses
-its settings), and ForkWatch's `RepoPath`s. A dev plugin DLL that is still missing is filled from the
+its settings), and ForkWatch's `RepoPath`s. Submodules (ECommons, PunishLib, the own shared libraries)
+are initialised recursively with the same key - a plain clone left them empty and every plugin
+failed with CS0246. Building them needs the .NET 10 SDK (step 2 installs `Microsoft.DotNet.SDK.10`)
+and the plugin repos' `build.ps1` find Dalamud at `..\..\Profiles\Me\XIVLauncher\addon\Hooks\dev`. A dev plugin DLL that is still missing is filled from the
 prebuilt `Juegos\FFXIV\[Plugins\]<repo>\plugins\<Name>\latest.zip`.
 
 > **Never write the plugin account or repo names in this public repo.** They live only in the

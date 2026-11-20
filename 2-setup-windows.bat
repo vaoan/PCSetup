@@ -202,6 +202,7 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo     @{ Id = 'Amazon.Kiro';                     Name = 'Kiro' },
 >>"%SCRIPT%" echo     @{ Id = 'Rufus.Rufus';                     Name = 'Rufus' },
 >>"%SCRIPT%" echo     @{ Id = 'Microsoft.PowerShell';            Name = 'PowerShell 7' },
+>>"%SCRIPT%" echo     @{ Id = 'Microsoft.DotNet.SDK.10';         Name = '.NET 10 SDK' },
 >>"%SCRIPT%" echo     @{ Id = 'wez.wezterm';                     Name = 'WezTerm' },
 >>"%SCRIPT%" echo     @{ Id = 'Docker.DockerDesktop';            Name = 'Docker Desktop' },
 >>"%SCRIPT%" echo     @{ Id = 'PatchMyPC.PatchMyPC';             Name = 'Patch My PC' },

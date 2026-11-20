@@ -146,6 +146,12 @@ function Restore-PluginRepos {
             if ($code -ne 0) { Write-Host "    FAILED: clone exit $code" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
         }
         if ($public) { Write-Host '    OK (public, no key)' -ForegroundColor Green; continue }
+        # ECommons, PunishLib, the own shared libraries...: without them nothing builds (CS0246, 2026-11-20).
+        # The -c credential helper reaches the submodule clones too, so private ones use the same key.
+        if (Test-Path -LiteralPath (Join-Path $dest '.gitmodules')) {
+            $code = Invoke-Git @('-C', $dest, 'submodule', 'update', '--init', '--recursive')
+            if ($code -ne 0) { Write-Host "    submodules failed (exit $code)" -ForegroundColor Red; $null = $failures.Add("$($e.folder) submodules") }
+        }
         # Pushes from this clone then use the same key; its output names the account, so it stays out of the log.
         if (Test-Path -LiteralPath $setRepoKey) {
             try { & $setRepoKey -Repo $dest -Key $e.key *> $null; Write-Host "    OK, tied to key $($e.key)" -ForegroundColor Green }

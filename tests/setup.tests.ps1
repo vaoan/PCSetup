@@ -1057,6 +1057,9 @@ Describe "run log and resume" {
         $r | Should -Match 'if \(-not \(Test-Path -LiteralPath \$dll\)\)'
         # Plain clones, not --depth 1: these repos are worked on and pushed from.
         $r | Should -Match "\`$cloneArgs = @\('clone', '--progress', '--config', 'core\.longpaths=true'\)"
+        # Without the submodules (ECommons...) no plugin builds.
+        $r | Should -Match "Invoke-Git @\('-C', \`$dest, 'submodule', 'update', '--init', '--recursive'\)"
+        Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw | Should -Match "Id = 'Microsoft\.DotNet\.SDK\.10'"
     }
     # Dev plugin settings are keyed by DLL path and ForkWatch stores repo paths: all must follow the move.
     It "restore-ffxiv-profiles re-points every old Juegos\FFXIV path, keys included" {
