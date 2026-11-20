@@ -949,8 +949,20 @@ Describe "run log and resume" {
     It "remote-call.ps1 resumes after the reboot step 0 asks for" {
         $remote = Get-Content (Join-Path $PSScriptRoot "..\remote-call.ps1") -Raw
         $remote | Should -Match 'reboot-required\.flag'
-        $remote | Should -Match 'CurrentVersion\\RunOnce'
+        $remote | Should -Match 'Register-ScheduledTask -TaskName \$resumeTaskName'
         Get-Content (Join-Path $PSScriptRoot "..\sources\init-prereqs.ps1") -Raw | Should -Match 'RebootFlagPath'
+    }
+    # The online command must run unattended: the old RunOnce resume sat at a UAC prompt after
+    # the reboot, and the reboot itself waited for someone to read "REBOOT NOW".
+    It "remote-call.ps1 reboot + resume need nobody at the keyboard" {
+        $remote = Get-Content (Join-Path $PSScriptRoot "..\remote-call.ps1") -Raw
+        $remote | Should -Match '-AtLogOn'
+        $remote | Should -Match '-RunLevel Highest'
+        $remote | Should -Match 'shutdown\.exe /r /t \d+'
+        $remote | Should -Match 'Unregister-ScheduledTask -TaskName \$resumeTaskName'
+        $remote | Should -Not -Match 'Set-ItemProperty[^\r\n]*RunOnce'
+        # Not admin under irm | iex: $PSCommandPath is empty, so elevation re-fetches the entry point.
+        $remote | Should -Match '-EncodedCommand \$enc" -Verb RunAs'
     }
     It "2-setup-windows sets up claude --yolo on Windows and in WSL" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
@@ -980,6 +992,29 @@ Describe "run log and resume" {
         $lines = Get-Content (Join-Path $PSScriptRoot "..\5-move-profile-folders.bat") | Where-Object { $_ -match 'robocopy\.exe' }
         $lines | Should -Not -BeNullOrEmpty
         foreach ($l in $lines) { $l | Should -Match '/XJ' }
+    }
+    It "5-move-profile-folders: moving Documents leaves Pictures behind the My Pictures junction alone" {
+        # Runs the script's own robocopy flags against a fake profile with the real Windows layout.
+        $line = Get-Content (Join-Path $PSScriptRoot "..\5-move-profile-folders.bat") | Where-Object { $_ -match 'robocopy\.exe' } | Select-Object -First 1
+        $flags = ([regex]::Match($line, '\$src \$dst ([^)]+)\)')).Groups[1].Value -split '\s+' | Where-Object { $_ }
+        $flags | Should -Contain '/MOVE'
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("pcsetup-xj-" + [guid]::NewGuid().ToString('N'))
+        try {
+            $old = Join-Path $root 'old'; $new = Join-Path $root 'new'
+            $null = New-Item -ItemType Directory -Force (Join-Path $old 'Documents'), (Join-Path $old 'Pictures\Screenshots'), (Join-Path $new 'Documents')
+            Set-Content -LiteralPath (Join-Path $old 'Documents\doc.txt') -Value 'doc'
+            Set-Content -LiteralPath (Join-Path $old 'Pictures\Screenshots\shot.png') -Value 'png'
+            $null = New-Item -ItemType Junction -Path (Join-Path $old 'Documents\My Pictures') -Target (Join-Path $old 'Pictures')
+            & robocopy.exe (Join-Path $old 'Documents') (Join-Path $new 'Documents') @flags | Out-Null
+            $LASTEXITCODE | Should -BeLessThan 8
+            Test-Path -LiteralPath (Join-Path $new 'Documents\doc.txt') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $old 'Pictures\Screenshots\shot.png') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $new 'Documents\My Pictures') | Should -BeFalse
+        } finally {
+            $j = Join-Path $root 'old\Documents\My Pictures'
+            if (Test-Path -LiteralPath $j) { [IO.Directory]::Delete($j, $false) }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     # 'Heiner' here sent account PC-COSITO's Desktop/Documents/... to Z:\Users\Heiner.
     It "profile-folders.config does not hardcode a user name" {
@@ -1942,7 +1977,9 @@ Describe "cloudflared staging recovery" {
         $script | Should -Match "name === 'code\.ffxiv\.be' && lastResult\.Passed"
     }
 
-    It "public installable endpoints pass full verifier" -Skip:($IsCI) {
+    # Needs the Cloudflare API credentials in .secrets (repo root or its parent); a freshly
+    # formatted machine has none until the secrets are synced, which is not a setup failure.
+    It "public installable endpoints pass full verifier" -Skip:($IsCI -or -not ((Test-Path (Join-Path $PSScriptRoot '..\.secrets')) -or (Test-Path (Join-Path $PSScriptRoot '..\..\.secrets')))) {
         $routes = @(Get-CloudflaredPublicRoutes)
         $routes.Count | Should -BeGreaterThan 0
 

@@ -39,6 +39,11 @@ function Test-PnpmRuns {
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     if (-not $pnpmCmd) { return $null }
     $source = [string](@($pnpmCmd)[0].Source)
+    # Under Windows PowerShell 5.1 with ErrorActionPreference=Stop, the shim's stderr line
+    # ("pnpm is not installed for this Node.js version") merged by 2>&1 is a TERMINATING
+    # NativeCommandError - the probe threw instead of returning $null, so the npm self-install
+    # below never ran (2026-11-19). Probe with Continue.
+    $ErrorActionPreference = 'Continue'
     $version = (& $source --version 2>&1 | Select-Object -First 1 | Out-String).Trim()
     if ($version -match '^\d+\.\d+') { return $source }
     return $null

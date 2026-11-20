@@ -286,11 +286,20 @@ A fresh machine needs a reboot after step 0 enables the WSL features; until then
 the Ubuntu registration and script 2 skips Claude Code in WSL. On 2026-11-17/18 the setup ran
 **four times without a reboot in between**, so Ubuntu was never installed and nothing said why.
 Step 0 now writes `%ProgramData%\PCSetup\reboot-required.flag` (and clears it at the start of every
-run); `remote-call.ps1` sees it, prints **REBOOT NOW**, and registers HKCU `RunOnce`
-`PCSetup-resume`, which re-runs `irm i.ffxiv.be | iex` at the next sign-in. The RunOnce elevates
-itself (`Start-Process -Verb RunAs` around an `-EncodedCommand`), because the self-elevation at the
-top of `remote-call.ps1` needs `$PSCommandPath`, which is empty under `irm | iex`. Capped at 2
-resumes (`resume-count`) so a machine that can never start WSL does not rerun at every sign-in.
+run); `remote-call.ps1` sees it, registers the scheduled task `PCSetup-resume` (trigger: at
+logon of the current user, `-RunLevel Highest`, action `irm i.ffxiv.be | iex` as
+`-EncodedCommand`) and reboots by itself with `shutdown /r /t 60` (cancel: `shutdown /a`;
+`PCSETUP_NO_REBOOT=1` or CI skip the reboot). The task removes itself at the start of the next
+run. Capped at 2 resumes (`resume-count`) so a machine that can never start WSL does not
+reboot-loop.
+
+**The online command must run unattended** (user requirement, 2026-11-19). That is why the
+resume is a Highest-privilege logon task and not HKCU `RunOnce` + `Start-Process -Verb RunAs`:
+that older version sat at a UAC prompt after the reboot until someone clicked it. The only
+thing left that needs a person is signing in after the reboot when the account has a password.
+Never add a `pause`, `Read-Host`, `set /p` or a confirmation to anything the online run reaches.
+Not elevated under `irm | iex`, `$PSCommandPath` is empty, so the self-elevation at the top
+re-fetches `irm i.ffxiv.be | iex` via `-EncodedCommand` (one UAC prompt, at the start only).
 
 **Releasing an update:** update `.v` (the pre-commit hook does this) and push. `remote-call.ps1`
 always fetches the current `main`, so there is no version negotiation left to get wrong.

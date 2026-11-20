@@ -1052,7 +1052,7 @@ function Enable-WslPrerequisites {
 
     if ($requiresReboot) {
         Write-Host "WSL prerequisites were changed. Reboot Windows before installing the Cloudflare console stack." -ForegroundColor Yellow
-        # remote-call.ps1 reads this and resumes the setup after the reboot (HKCU RunOnce).
+        # remote-call.ps1 reads this, reboots and resumes the setup at logon (task PCSetup-resume).
         # Without it, four runs in a row on 2026-11-17/18 skipped Ubuntu and nobody knew why.
         try { Set-Content -LiteralPath $script:RebootFlagPath -Value (Get-Date -Format o) -Encoding ASCII } catch { }
         return

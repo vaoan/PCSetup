@@ -2,9 +2,24 @@ param([string]$Branch = "main")
 
 # Auto-elevate to Administrator
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Branch `"$Branch`"" -Verb RunAs
+    if ($PSCommandPath) {
+        Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Branch `"$Branch`"" -Verb RunAs
+    }
+    else {
+        # Under irm | iex there is no file to re-run ($PSCommandPath is empty), so the elevated
+        # copy fetches the entry point again. -EncodedCommand: no quote or pipe has to survive.
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("irm i.ffxiv.be | iex"))
+        Start-Process PowerShell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" -Verb RunAs
+    }
     exit
 }
+
+# The run after a reboot is started by this task (see the end of this file). Remove it first
+# thing so it fires exactly once; it is registered again below only if yet another reboot is due.
+$resumeTaskName = "PCSetup-resume"
+try { Unregister-ScheduledTask -TaskName $resumeTaskName -Confirm:$false -ErrorAction Stop } catch { }
+# Older versions resumed through HKCU RunOnce, which needed someone to accept a UAC prompt.
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "PCSetup-resume" -ErrorAction SilentlyContinue
 
 $ErrorActionPreference = "Stop"
 
@@ -301,27 +316,41 @@ try {
     # A fresh machine needs a reboot after the WSL features are enabled, and until then step 0
     # skips the Ubuntu registration (and script 2 skips Claude Code in WSL). On 2026-11-17/18 the
     # setup ran four times without a reboot in between, so Ubuntu was never installed and nothing
-    # said why. step 0 now leaves a flag; when it is there the run resumes itself after the
-    # reboot via HKCU RunOnce. Capped at 2 resumes so a machine that can never start WSL
-    # (virtualization off in the firmware) does not rerun the setup at every sign-in.
+    # said why. step 0 now leaves a flag; when it is there the machine reboots by itself and the
+    # run resumes at the next sign-in. Capped at 2 resumes so a machine that can never start WSL
+    # (virtualization off in the firmware) does not reboot-loop.
+    # UNATTENDED: the resume is a scheduled task at logon with RunLevel Highest - it starts
+    # elevated with no UAC prompt (HKCU RunOnce + Start-Process -Verb RunAs, the old way, sat at
+    # a UAC prompt until someone clicked it). Then shutdown /r /t 60 reboots on its own; a
+    # person at the keyboard can cancel with: shutdown /a
     $rebootFlag = Join-Path $env:ProgramData "PCSetup\reboot-required.flag"
     $resumeCountFile = Join-Path $env:ProgramData "PCSetup\resume-count"
     if (Test-Path -LiteralPath $rebootFlag) {
         $resumeCount = 0
         if (Test-Path -LiteralPath $resumeCountFile) { [int]::TryParse((Get-Content -LiteralPath $resumeCountFile -Raw).Trim(), [ref]$resumeCount) | Out-Null }
         if ($Branch -eq "main" -and $resumeCount -lt 2) {
-            # RunOnce starts unelevated, and the self-elevation at the top of this file needs
-            # $PSCommandPath, which is empty under irm | iex - so the resume elevates itself.
             # The inner command is -EncodedCommand so no quote or pipe has to survive nesting.
             $inner = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("irm i.ffxiv.be | iex"))
-            $resumeCommand = "powershell.exe -NoProfile -WindowStyle Hidden -Command `"Start-Process powershell.exe -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -EncodedCommand $inner'`""
-            New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Force | Out-Null
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name "PCSetup-resume" -Value $resumeCommand
+            $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $inner"
+            $trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
+            $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Highest
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+            Register-ScheduledTask -TaskName $resumeTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+            if (-not (Get-ScheduledTask -TaskName $resumeTaskName -ErrorAction SilentlyContinue)) { throw "could not register the $resumeTaskName task" }
             Set-Content -LiteralPath $resumeCountFile -Value ($resumeCount + 1) -Encoding ASCII
             Write-Host ""
             Write-Host "==================================================================" -ForegroundColor Yellow
-            Write-Host "  REBOOT NOW. Windows needs a restart to finish WSL/Ubuntu." -ForegroundColor Yellow
-            Write-Host "  The setup continues by itself at the next sign-in (accept UAC)." -ForegroundColor Yellow
+            Write-Host "  Windows needs a restart to finish WSL/Ubuntu." -ForegroundColor Yellow
+            if ($env:PCSETUP_NO_REBOOT -eq "1" -or $env:PCSETUP_CI -eq "1") {
+                Write-Host "  PCSETUP_NO_REBOOT/CI set: not rebooting. Reboot when ready;" -ForegroundColor Yellow
+                Write-Host "  the setup continues by itself after you sign in." -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "  Rebooting automatically in 60 seconds (cancel: shutdown /a)." -ForegroundColor Yellow
+                Write-Host "  The setup continues by itself after you sign in, no prompts." -ForegroundColor Yellow
+                & shutdown.exe /r /t 60 /c "PCSetup: reboot to finish WSL/Ubuntu. The setup resumes after sign-in."
+            }
             Write-Host "==================================================================" -ForegroundColor Yellow
         }
         else {
