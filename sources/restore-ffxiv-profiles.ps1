@@ -11,10 +11,11 @@
 #
 # Then the plugin repositories (phase "plugins"): Secrets\sync-secrets.mjs rebuilds Juegos\FFXIV\.secrets
 # (the per-account keys) from that repo's GitHub secrets, Secrets\repos.json (private, so no account or
-# repo names live in this public repo) lists each repo, its folder under Juegos\FFXIV and its key; each
-# is cloned with that key and tied to it with Secrets\Set-RepoKey.ps1. Dalamud's dev plugin DLLs
-# (DevPluginLoadLocations in Me's dalamudConfig.json) that are missing are filled from the prebuilt
-# Juegos\FFXIV\<repo>\plugins\<Name>\latest.zip, and those paths are re-pointed at this account's Documents.
+# repo names live in this public repo) lists each repo, its folder under Juegos\FFXIV (Plugins\<repo>)
+# and its key ("None" = public reference repo); each is cloned with that key and tied to it with
+# Secrets\Set-RepoKey.ps1. Every Juegos\FFXIV path in Me's dalamudConfig.json (dev plugin paths and the
+# settings keyed by them) and in ForkWatch.json is re-pointed at this account's Documents, and missing
+# dev plugin DLLs are filled from the prebuilt Juegos\FFXIV\[Plugins\]<repo>\plugins\<Name>\latest.zip.
 #
 # Never deletes: a destination that is already a clone of the repo is fast-forwarded (or resumed
 # when an earlier clone was interrupted), an empty or missing one is cloned, and a non-empty folder
@@ -113,9 +114,14 @@ function Restore-PluginRepos {
     foreach ($e in (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json)) {
         $dest = Join-Path $ffxiv $e.folder
         Write-Host "  -- $($e.folder)"
-        $keyName = 'GH_TOKEN_' + ([string]$e.key).ToUpperInvariant()
-        if (-not $keys[$keyName]) { Write-Host "    FAILED: $keyName is not in $keysFile" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
-        $env:GH_TOKEN = $keys[$keyName]
+        # key "None": a public reference repo (read by a plugin, never pushed): no token, no Set-RepoKey.
+        $public = ([string]$e.key -eq 'None')
+        if ($public) { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue }
+        else {
+            $keyName = 'GH_TOKEN_' + ([string]$e.key).ToUpperInvariant()
+            if (-not $keys[$keyName]) { Write-Host "    FAILED: $keyName is not in $keysFile" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
+            $env:GH_TOKEN = $keys[$keyName]
+        }
         $isClone = $false
         if (Test-Path -LiteralPath (Join-Path $dest '.git')) {
             $origin = (& git -C $dest remote get-url origin 2>$null)
@@ -132,9 +138,14 @@ function Restore-PluginRepos {
                 try { Move-Item -LiteralPath $dest -Destination $aside -ErrorAction Stop; Write-Host "    moved the existing folder to $aside (nothing deleted)" -ForegroundColor Yellow }
                 catch { Write-Host "    FAILED: could not move $dest aside: $($_.Exception.Message)" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
             }
-            $code = Invoke-Git @('clone', '--progress', '--config', 'core.longpaths=true', $e.url, $dest)
+            $parent = Split-Path -Parent $dest
+            if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
+            $cloneArgs = @('clone', '--progress', '--config', 'core.longpaths=true')
+            if ($e.branch) { $cloneArgs += @('--branch', [string]$e.branch) }
+            $code = Invoke-Git ($cloneArgs + @($e.url, $dest))
             if ($code -ne 0) { Write-Host "    FAILED: clone exit $code" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
         }
+        if ($public) { Write-Host '    OK (public, no key)' -ForegroundColor Green; continue }
         # Pushes from this clone then use the same key; its output names the account, so it stays out of the log.
         if (Test-Path -LiteralPath $setRepoKey) {
             try { & $setRepoKey -Repo $dest -Key $e.key *> $null; Write-Host "    OK, tied to key $($e.key)" -ForegroundColor Green }
@@ -150,20 +161,34 @@ function Restore-DevPluginDlls {
     if (-not (Test-Path -LiteralPath $cfgPath)) { return }
     Write-Host ""
     Write-Host "== Dalamud dev plugins" -ForegroundColor Cyan
-    $bytes = [IO.File]::ReadAllBytes($cfgPath)
-    $bom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
-    $text = [IO.File]::ReadAllText($cfgPath)
     $jsonFfxiv = $ffxiv.TrimEnd('\').Replace('\', '\\') + '\\'
-    # A hashtable, so the regex callback (its own scope) can count into it.
+    # A hashtable, so the regex callbacks (their own scope) can count into it.
     $count = @{ Placed = 0; Repointed = 0 }
-    $pattern = '"Path":\s*"([^"]*?\\\\Juegos\\\\FFXIV\\\\)([^"]+?\.dll)"'
-    $text = [regex]::Replace($text, $pattern, {
-        param($m)
-        $rel = $m.Groups[2].Value.Replace('\\', '\')
+    # 1) Every JSON string under an old Documents' Juegos\FFXIV, in the dev plugin paths, the per-plugin
+    #    settings keyed by DLL path (DevPluginSettings) and ForkWatch's RepoPath values, now points here.
+    foreach ($file in @($cfgPath, (Join-Path $ffxiv 'Profiles\Me\XIVLauncher\pluginConfigs\ForkWatch.json'))) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        $bytes = [IO.File]::ReadAllBytes($file)
+        $bom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        $text = [IO.File]::ReadAllText($file)
+        $before = $count.Repointed
+        $text = [regex]::Replace($text, '"[A-Za-z]:\\\\(?:[^"\\]+\\\\)*?Juegos\\\\FFXIV\\\\', {
+            param($m)
+            if ($m.Value -ne ('"' + $jsonFfxiv)) { $count.Repointed++ }
+            return '"' + $jsonFfxiv
+        })
+        # Same encoding as before; the old account's path only worked through a junction.
+        if ($count.Repointed -gt $before) { [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding($bom))) }
+    }
+    # 2) A dev plugin DLL that is missing comes from the prebuilt zip in the plugin repo.
+    $text = [IO.File]::ReadAllText($cfgPath)
+    foreach ($m in [regex]::Matches($text, '"Path":\s*"[^"]*?\\\\Juegos\\\\FFXIV\\\\([^"]+?\.dll)"')) {
+        $rel = $m.Groups[1].Value.Replace('\\', '\')
         $dll = Join-Path $ffxiv $rel
         $name = [IO.Path]::GetFileNameWithoutExtension($dll)
         if (-not (Test-Path -LiteralPath $dll)) {
-            $zip = Get-ChildItem -Path (Join-Path $ffxiv "*\plugins\$name\latest.zip") -ErrorAction SilentlyContinue | Select-Object -First 1
+            # The plugin repo sits in Juegos\FFXIV\<repo> or Juegos\FFXIV\Plugins\<repo>.
+            $zip = @(Get-ChildItem -Path (Join-Path $ffxiv "*\plugins\$name\latest.zip"), (Join-Path $ffxiv "*\*\plugins\$name\latest.zip") -ErrorAction SilentlyContinue) | Select-Object -First 1
             if ($zip) {
                 try {
                     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -177,13 +202,6 @@ function Restore-DevPluginDlls {
             }
             else { Write-Host "    $name : no DLL and no prebuilt zip (build it from its repo)" -ForegroundColor Yellow }
         }
-        $new = '"Path": "' + $jsonFfxiv + $m.Groups[2].Value + '"'
-        if ($m.Groups[1].Value -ne $jsonFfxiv) { $count.Repointed++ }
-        return $new
-    })
-    if ($count.Repointed -gt 0) {
-        # Same encoding as before; the old account's path only worked through a junction.
-        [IO.File]::WriteAllText($cfgPath, $text, (New-Object Text.UTF8Encoding($bom)))
     }
     Write-Host "  dev plugins: $($count.Placed) DLL(s) placed, $($count.Repointed) path(s) re-pointed at $ffxiv"
 }

@@ -1056,7 +1056,17 @@ Describe "run log and resume" {
         $r | Should -Match 'plugins\\\$name\\latest\.zip'
         $r | Should -Match 'if \(-not \(Test-Path -LiteralPath \$dll\)\)'
         # Plain clones, not --depth 1: these repos are worked on and pushed from.
-        $r | Should -Match "Invoke-Git @\('clone', '--progress', '--config', 'core\.longpaths=true', \`$e\.url, \`$dest\)"
+        $r | Should -Match "\`$cloneArgs = @\('clone', '--progress', '--config', 'core\.longpaths=true'\)"
+    }
+    # Dev plugin settings are keyed by DLL path and ForkWatch stores repo paths: all must follow the move.
+    It "restore-ffxiv-profiles re-points every old Juegos\FFXIV path, keys included" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Match "pluginConfigs\\ForkWatch\.json"
+        $pattern = '"[A-Za-z]:\\\\(?:[^"\\]+\\\\)*?Juegos\\\\FFXIV\\\\'
+        $r.Contains("'$pattern'") | Should -BeTrue
+        $sample = '{"Z:\\Users\\Old\\Documents\\Juegos\\FFXIV\\Plugins\\A\\A.dll": {}, "RepoPath": "D:\\Docs\\Juegos\\FFXIV\\Plugins\\B", "x": "C:\\Other\\A.dll"}'
+        $out = [regex]::Replace($sample, $pattern, '"N:\\New\\Juegos\\FFXIV\\')
+        $out | Should -Be '{"N:\\New\\Juegos\\FFXIV\\Plugins\\A\\A.dll": {}, "RepoPath": "N:\\New\\Juegos\\FFXIV\\Plugins\\B", "x": "C:\\Other\\A.dll"}'
     }
     # A restore from an October backup replaced a newer layout and left nothing to go back to.
     It "setup-start-menu restore saves the current layout before touching anything" {

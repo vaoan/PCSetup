@@ -1646,12 +1646,16 @@ in-process, removed in `finally`). Destinations come from the repos' own clone s
 **Then the Dalamud plugin repos (phase `plugins`, `-Only plugins` alone):** `Secrets\sync-secrets.mjs`
 (node + gh from steps 2-3; PATH is refreshed first) rebuilds `Juegos\FFXIV\.secrets` from that repo's
 GitHub secrets through an encrypted one-day workflow artifact. `Secrets\repos.json` lists each plugin
-repo, its folder under `Juegos\FFXIV` and its key (`Forks` -> `GH_TOKEN_FORKS`, `Own` -> `GH_TOKEN_OWN`).
+repo, its folder under `Juegos\FFXIV` (all under `Plugins\<repo>` since 2026-11-20) and its key
+(`Forks` -> `GH_TOKEN_FORKS`, `Own` -> `GH_TOKEN_OWN`, `None` -> a public reference repo such as the
+upstream clone ForkWatch diffs against; optional `branch`).
 Each is cloned **in full** (worked on, pushed from), or fast-forwarded, and tied to its key with
-`Secrets\Set-RepoKey.ps1` (output discarded: it names the account and e-mail). Then every dev plugin
-path in Me's `dalamudConfig.json` (`DevPluginLoadLocations`) whose DLL is missing is filled from the
-prebuilt `Juegos\FFXIV\*\plugins\<Name>\latest.zip`, and those paths are re-pointed at this account's
-Documents (they held the old account's name).
+`Secrets\Set-RepoKey.ps1` (output discarded: it names the account and e-mail). Then every JSON string
+holding `<old Documents>\Juegos\FFXIV\` in Me's `dalamudConfig.json` and `pluginConfigs\ForkWatch.json`
+is re-pointed at this account's Documents - not only `DevPluginLoadLocations[].Path` but also the
+`DevPluginSettings` entries, which are **keyed by the DLL path** (miss them and each dev plugin loses
+its settings), and ForkWatch's `RepoPath`s. A dev plugin DLL that is still missing is filled from the
+prebuilt `Juegos\FFXIV\[Plugins\]<repo>\plugins\<Name>\latest.zip`.
 
 > **Never write the plugin account or repo names in this public repo.** They live only in the
 > private `repos.json`; a test fails on any `github.com/<owner>/` other than `vaoan` in the restore.
