@@ -1061,6 +1061,14 @@ Describe "run log and resume" {
         $r | Should -Match "Invoke-Git @\('-C', \`$dest, 'submodule', 'update', '--init', '--recursive'\)"
         Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw | Should -Match "Id = 'Microsoft\.DotNet\.SDK\.10'"
     }
+    # 2026-11-20: Docker's WSL VM (~4 GB from logon) + FFXIV ran the PC out of virtual memory.
+    It "2-setup-windows keeps Docker out of autostart and lets Windows manage the page file, after the installs" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw
+        $docker = $bat.IndexOf("-Name 'Docker Desktop' -ErrorAction SilentlyContinue")
+        $docker | Should -BeGreaterThan $bat.IndexOf('foreach ($entry in $wingetApps)')
+        $bat | Should -Match 'AutomaticManagedPagefile = \$true'
+        $bat | Should -Match "Add-Failure 'system-managed page file'"
+    }
     # installedPlugins is not backed up: after the format Me had none of its ~150 plugins.
     It "restore-ffxiv-profiles reinstalls the collections' plugins with their collection ids" {
         $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw

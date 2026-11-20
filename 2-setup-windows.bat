@@ -217,6 +217,14 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo ^& "%~dp0sources\remove-driver-booster-autostart.ps1"
 >>"%SCRIPT%" echo if ($LASTEXITCODE -ne 0) { Add-Failure 'Driver Booster autostart cleanup' }
 >>"%SCRIPT%" echo.
+>>"%SCRIPT%" echo # Docker Desktop's installer puts it in HKCU Run, and its WSL VM then holds ~4 GB from logon. On
+>>"%SCRIPT%" echo # 2026-11-20 that plus FFXIV's 13 GB ran the 16 GB PC out of virtual memory: the game stuttered
+>>"%SCRIPT%" echo # and closed. Docker stays installed and starts when opened.
+>>"%SCRIPT%" echo Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Docker Desktop' -ErrorAction SilentlyContinue
+>>"%SCRIPT%" echo # Page file managed by Windows: it grows instead of a game being killed when memory runs out
+>>"%SCRIPT%" echo # (the fixed 16-24 GB one hit its commit limit that night). Takes effect after a reboot.
+>>"%SCRIPT%" echo try { $cs = Get-CimInstance Win32_ComputerSystem; if (-not $cs.AutomaticManagedPagefile) { Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $true }; Write-Host "Page file: now managed by Windows (after a reboot)." -ForegroundColor Green } } catch { Add-Failure 'system-managed page file' }
+>>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo # Discord and Discord Canary: direct downloads run with Discord's own -s switch. winget cannot do
 >>"%SCRIPT%" echo # this - its manifests carry no switches (the maintainers removed --silent), so winget shows the
 >>"%SCRIPT%" echo # installer UI and launches Discord at the end, with a UAC prompt from an elevated setup. -s was
