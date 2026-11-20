@@ -8,15 +8,18 @@
 #   vaoan/FFXIVConfig  -> <Documents>\My Games\FINAL FANTASY XIV - A Realm Reborn
 #   vaoan/MINION       -> C:\MINION
 #
-# Never deletes: a destination that is already a clone of the repo is fast-forwarded, an empty
-# or missing one is cloned, and a non-empty folder that is not that clone is left alone (FAILED).
+# Never deletes: a destination that is already a clone of the repo is fast-forwarded (or resumed
+# when an earlier clone was interrupted), an empty or missing one is cloned, and a non-empty folder
+# that is not that clone is MOVED aside to "<dest>.before-restore-<stamp>" first.
 #
 # GH_TOKEN comes from secrets.txt / .secrets and is NEVER printed or logged: it lives only in this
 # process' environment and reaches git through an inline credential helper, so it is not on any
 # command line, in the remote URL or in the clones' .git/config.
 param(
     [string]$SecretsFile = '',
-    [string[]]$Only = @()
+    [string[]]$Only = @(),
+    # Step 12 of the online run: a machine without secrets.txt has nothing to restore - skip, not fail.
+    [switch]$SkipWhenNoToken
 )
 
 if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'start-log.ps1')) { . (Join-Path $PSScriptRoot 'start-log.ps1') }
@@ -57,7 +60,10 @@ function Get-GhToken {
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Host 'git is not installed.' -ForegroundColor Red; exit 1 }
 $token = Get-GhToken
-if (-not $token) { Write-Host 'No GH_TOKEN found in any secrets.txt / .secrets - cannot reach the private repos.' -ForegroundColor Red; exit 1 }
+if (-not $token) {
+    if ($SkipWhenNoToken) { Write-Host 'SKIP: no GH_TOKEN in any <drive>:\secrets.txt / .secrets - FFXIV profiles not restored.' -ForegroundColor Yellow; exit 0 }
+    Write-Host 'No GH_TOKEN found in any secrets.txt / .secrets - cannot reach the private repos.' -ForegroundColor Red; exit 1
+}
 $env:GH_TOKEN = $token
 Remove-Variable token
 # The helper body runs in Git for Windows' sh; $GH_TOKEN is expanded there, not here.
@@ -65,7 +71,9 @@ $helper = 'credential.helper=!f() { echo username=x-access-token; echo password=
 
 function Invoke-Git {
     param([string[]]$GitArgs)
-    & git -c credential.helper= -c $helper -c core.longpaths=true @GitArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
+    # HTTP/1.1: over HTTP/2 the XIVLauncher clone crawled at 6-13 KiB/s while the same clone with
+    # HTTP/1.1 ran at ~9 MiB/s and plain GitHub downloads at ~25 MB/s (measured 2026-11-19).
+    & git -c credential.helper= -c $helper -c core.longpaths=true -c http.version=HTTP/1.1 @GitArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
     return $LASTEXITCODE
 }
 
@@ -82,6 +90,16 @@ try {
             $isClone = ($origin -and ($origin.TrimEnd('/') -replace '\.git$', '') -ieq ($url -replace '\.git$', ''))
         }
         if ($isClone) {
+            # An interrupted clone leaves .git with the right origin but no commit checked out.
+            & git -C $dest rev-parse --verify --quiet HEAD *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host '  an earlier clone was interrupted; resuming it'
+                $code = Invoke-Git @('-C', $dest, 'fetch', '--progress', '--depth', '1', 'origin', $r.Branch)
+                # No -f: a file in the way stops the checkout instead of being overwritten.
+                if ($code -eq 0) { $code = Invoke-Git @('-C', $dest, 'checkout', '-B', $r.Branch, 'FETCH_HEAD') }
+                if ($code -ne 0) { Write-Host "  FAILED: resume exit $code" -ForegroundColor Red; $null = $failures.Add($r.Name) } else { Write-Host '  OK (resumed)' -ForegroundColor Green }
+                continue
+            }
             Write-Host '  already restored; fast-forwarding'
             $code = Invoke-Git @('-C', $dest, 'pull', '--ff-only', '--depth', '1')
             if ($code -ne 0) { Write-Host "  pull failed (exit $code); the existing copy is kept as is" -ForegroundColor Yellow }
@@ -89,9 +107,11 @@ try {
         }
         $notEmpty = (Test-Path -LiteralPath $dest) -and (Get-ChildItem -LiteralPath $dest -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($notEmpty) {
-            Write-Host "  FAILED: $dest has files and is not a clone of $($r.Name) - left untouched (move it aside and re-run)" -ForegroundColor Red
-            $null = $failures.Add($r.Name)
-            continue
+            # Moved aside, never deleted. Seen on 2026-11-19: the game's boot updater had already
+            # created FFXIV_BOOT.cfg and downloads\ in the FFXIVConfig folder, so the restore stopped.
+            $aside = "$dest.before-restore-$(Get-Date -Format yyyyMMdd-HHmmss)"
+            try { Move-Item -LiteralPath $dest -Destination $aside -ErrorAction Stop; Write-Host "  $dest had other files; moved them to $aside (nothing deleted)" -ForegroundColor Yellow }
+            catch { Write-Host "  FAILED: $dest has files, is not a clone of $($r.Name), and could not be moved aside: $($_.Exception.Message)" -ForegroundColor Red; $null = $failures.Add($r.Name); continue }
         }
         $parent = Split-Path -Parent $dest
         if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }

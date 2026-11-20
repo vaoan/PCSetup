@@ -1034,6 +1034,15 @@ Describe "run log and resume" {
         $r | Should -Not -Match 'Write-Host[^\r\n]*GH_TOKEN[^\r\n]*\$env:GH_TOKEN'
         $r | Should -Not -Match 'Remove-Item[^\r\n]*\$dest'
         $r | Should -Match 'Remove-Item Env:GH_TOKEN'
+        # A foreign folder (the game's boot updater had filled FFXIVConfig's) is moved aside, not deleted.
+        $r | Should -Match 'Move-Item -LiteralPath \$dest -Destination \$aside'
+        # HTTP/2 crawled at ~10 KiB/s on a 25 MB/s line; HTTP/1.1 ran at ~9 MiB/s.
+        $r | Should -Match 'http\.version=HTTP/1\.1'
+    }
+    It "12-restore-ffxiv-profiles runs the restore unattended and skips without secrets" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\12-restore-ffxiv-profiles.bat") -Raw
+        $bat | Should -Match 'restore-ffxiv-profiles\.ps1" -SkipWhenNoToken'
+        Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw | Should -Match 'if \(\$SkipWhenNoToken\) \{[^\r\n]*exit 0'
     }
     # 'Heiner' here sent account PC-COSITO's Desktop/Documents/... to Z:\Users\Heiner.
     It "profile-folders.config does not hardcode a user name" {

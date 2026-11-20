@@ -1627,8 +1627,10 @@ no-verification shape:
 | `optional/setup-optional-software.bat` | Additional software installs (ASUS DriverHub, HYTE Nexus, **Mudfish** — installers here may prompt) |
 | `optional/shallow-clone-ffxiv-profiles.bat` | Old single-repo clone of `vaoan/Profiles`; it EMPTIES the destination first - use `restore-ffxiv-profiles.bat` |
 
-### optional/restore-ffxiv-profiles.bat (FFXIV after a format)
-Runs `sources/restore-ffxiv-profiles.ps1`: clones the private backups with `GH_TOKEN` from
+### 12-restore-ffxiv-profiles.bat / optional/restore-ffxiv-profiles.bat (FFXIV after a format)
+Step 12 of the online run (after script 5 put Documents in place; `-SkipWhenNoToken`, so a
+machine without `secrets.txt` skips instead of failing; CI skips). The optional `.bat` is the same
+restore by hand. Both run `sources/restore-ffxiv-profiles.ps1`: clones the private backups with `GH_TOKEN` from
 `<drive>:\secrets.txt` (or `.secrets`), never printing it (inline credential helper, env var only
 in-process, removed in `finally`). Destinations come from the repos' own clone scripts:
 
@@ -1640,8 +1642,15 @@ in-process, removed in `finally`). Destinations come from the repos' own clone s
 | `vaoan/FFXIVConfig` (~2 GB) | `<Documents>\My Games\FINAL FANTASY XIV - A Realm Reborn` |
 | `vaoan/MINION` (~13 GB) | `C:\MINION` |
 
-Never deletes: an existing clone of the same repo is fast-forwarded, a missing/empty folder is
-cloned, a non-empty foreign folder is left alone and reported. `-Only <names>` restores a subset.
+Never deletes: an existing clone of the same repo is fast-forwarded (an interrupted one - `.git`
+with the right origin but no `HEAD` - is resumed with fetch + checkout, no `-f`), a missing/empty
+folder is cloned, and a non-empty foreign folder is **moved** to `<dest>.before-restore-<stamp>`
+first (2026-11-19: the game's boot updater had already put `FFXIV_BOOT.cfg` and `downloads\` in
+the FFXIVConfig folder). `-Only <names>` restores a subset.
+
+> **git runs with `http.version=HTTP/1.1`.** Over HTTP/2 the XIVLauncher clone crawled at
+> 6-13 KiB/s for 20 minutes while the line did ~25 MB/s to GitHub releases; the same clone over
+> HTTP/1.1 ran at ~9 MiB/s. Shallow, all five repos are ~11 GB on disk and took ~10 minutes.
 
 ### Shortcuts hold no account name: `%PCSETUP_DOCUMENTS%`
 After the 2026-11-19 format under account PC-COSITO, **every FFXIV profile launcher (`Me.lnk`,
@@ -1664,6 +1673,13 @@ XIVProfiles copies from `Me`), `XIVProfiles\New-PortableShortcut.ps1`, `optional
 > the `xivboy0` pin. So moving to portable shortcuts means re-pinning once, then
 > `optional/setup-start-menu.bat backup`. From then on the backed-up bytes are account-independent
 > and restore on any machine.
+>
+> **Pinning cannot be scripted.** The file's `Pin to Start` verb invoked through
+> `Shell.Application` returns `E_ACCESSDENIED` (only Explorer itself may pin), the Apps-folder item
+> has no pin verb until it is pinned, and driving Explorer's context menu by UI Automation was not
+> reliable (focus lock, virtualized list, the Win11 menu not exposing the item) - tried 2026-11-19
+> and abandoned rather than send keystrokes that could land in the user's foreground app. A person
+> re-pins; the backup makes it a one-time job.
 | `optional/open-rufus-latest.bat` | Opens the latest Rufus |
 
 ### optional/setup-makeplace-ffxiv.bat
