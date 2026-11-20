@@ -1625,7 +1625,45 @@ no-verification shape:
 | File | Purpose |
 |---|---|
 | `optional/setup-optional-software.bat` | Additional software installs (ASUS DriverHub, HYTE Nexus, **Mudfish** — installers here may prompt) |
-| `optional/shallow-clone-ffxiv-profiles.bat` | Shallow-clones FFXIV profile repos |
+| `optional/shallow-clone-ffxiv-profiles.bat` | Old single-repo clone of `vaoan/Profiles`; it EMPTIES the destination first - use `restore-ffxiv-profiles.bat` |
+
+### optional/restore-ffxiv-profiles.bat (FFXIV after a format)
+Runs `sources/restore-ffxiv-profiles.ps1`: clones the private backups with `GH_TOKEN` from
+`<drive>:\secrets.txt` (or `.secrets`), never printing it (inline credential helper, env var only
+in-process, removed in `finally`). Destinations come from the repos' own clone scripts:
+
+| Repo | Destination |
+|---|---|
+| `vaoan/Profiles` | `<Documents>\Juegos\FFXIV\Profiles` |
+| `vaoan/XIVLauncher` (~5 GB) | `<Documents>\Juegos\FFXIV\Profiles\Me\XIVLauncher` (Me's `--roamingPath`, not `%APPDATA%`) |
+| `vaoan/XIVProfiles` | `<Documents>\Juegos\FFXIV\XIVProfiles` (its `PROFILES_DIR=../Profiles`) |
+| `vaoan/FFXIVConfig` (~2 GB) | `<Documents>\My Games\FINAL FANTASY XIV - A Realm Reborn` |
+| `vaoan/MINION` (~13 GB) | `C:\MINION` |
+
+Never deletes: an existing clone of the same repo is fast-forwarded, a missing/empty folder is
+cloned, a non-empty foreign folder is left alone and reported. `-Only <names>` restores a subset.
+
+### Shortcuts hold no account name: `%PCSETUP_DOCUMENTS%`
+After the 2026-11-19 format under account PC-COSITO, **every FFXIV profile launcher (`Me.lnk`,
+`xivboy*.lnk`), `XIVProfiles.lnk`, `Download Video` and `Unlock PDF` did nothing**: they ran
+`cmd /c "Z:\Users\Heiner\Documents\...\Launcher.bat"`, a path that no longer existed, and the
+window closed before showing anything. They now run `cmd /c "%PCSETUP_DOCUMENTS%\...\Launcher.bat"`;
+cmd expands the variable at click time. `PCSETUP_DOCUMENTS` is a **User** environment variable with
+the real Documents path, set by script 5 (and by every generator, if missing). Explorer picks up a
+new User variable immediately (tested by launching through Explorer). Generators:
+`Profiles\New-ProfileShortcut.ps1` (called by each profile's `CreateStartMenuShortcut.bat`, which
+XIVProfiles copies from `Me`), `XIVProfiles\New-PortableShortcut.ps1`, `optional/download-video.ps1`,
+`optional/unlock-pdf.ps1`.
+
+> **Delete the `.lnk` before creating it.** Re-saving an existing shortcut through WScript keeps
+> its link-tracking blocks, which still carry the old absolute path (and the old user name).
+>
+> **A Start pin cannot be carried over to a changed `.lnk`.** Editing a pinned Windows-made copy in
+> `Start Menu\Programs` in place drops the pin, and putting the byte-identical original back does
+> NOT bring it back (the host already removed it from its layout) - measured 2026-11-19, which cost
+> the `xivboy0` pin. So moving to portable shortcuts means re-pinning once, then
+> `optional/setup-start-menu.bat backup`. From then on the backed-up bytes are account-independent
+> and restore on any machine.
 | `optional/open-rufus-latest.bat` | Opens the latest Rufus |
 
 ### optional/setup-makeplace-ffxiv.bat

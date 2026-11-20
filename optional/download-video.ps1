@@ -679,17 +679,28 @@ function Ensure-Shortcuts {
             }
         }
         $ws = New-Object -ComObject WScript.Shell
+        # No user name in the shortcut: %PCSETUP_DOCUMENTS% (set by script 5) is expanded by cmd at
+        # click time. The old one hard-coded Z:\Users\Heiner\..., so on a machine with another
+        # account name it - and its Start pin - did nothing; and since an existing file was never
+        # rewritten, it stayed broken.
+        $docs = [Environment]::GetFolderPath('MyDocuments').TrimEnd('\')
+        if ([Environment]::GetEnvironmentVariable('PCSETUP_DOCUMENTS', 'User') -ne $docs) { [Environment]::SetEnvironmentVariable('PCSETUP_DOCUMENTS', $docs, 'User') }
+        $portableBat = if ($bat.StartsWith($docs + '\', [StringComparison]::OrdinalIgnoreCase)) { '%PCSETUP_DOCUMENTS%' + $bat.Substring($docs.Length) } else { $bat }
+        $wantArgs = "/c `"$portableBat`""
         foreach ($t in @(@{ Path = Join-Path $startMenu 'Download Video.lnk'; Where = 'Start Menu' },
                          @{ Path = Join-Path $videos 'Download Video.lnk';    Where = 'Videos folder' })) {
-            if (Test-Path -LiteralPath $t.Path) { continue }
+            if ((Test-Path -LiteralPath $t.Path) -and $ws.CreateShortcut($t.Path).Arguments -eq $wantArgs) { continue }
             New-Item -ItemType Directory -Force -Path (Split-Path $t.Path) | Out-Null
+            # A new file: re-saving keeps the old link-tracking data (old absolute path).
+            Remove-Item -LiteralPath $t.Path -Force -ErrorAction SilentlyContinue
             $s = $ws.CreateShortcut($t.Path)
-            $s.TargetPath = $cmdExe
-            $s.Arguments = "/c `"$bat`""
-            $s.WorkingDirectory = $PSScriptRoot
+            $s.TargetPath = '%SystemRoot%\System32\cmd.exe'
+            $s.Arguments = $wantArgs
+            $s.WorkingDirectory = ''
             $s.Description = 'Downloads the Twitch, YouTube, Instagram, X or TikTok link in the clipboard'
             $icon = Join-Path $PSScriptRoot 'download-video.ico'
-            $s.IconLocation = if (Test-Path -LiteralPath $icon) { "$icon,0" } else { '%SystemRoot%\System32\imageres.dll,175' }
+            $portableIcon = if ($icon.StartsWith($docs + '\', [StringComparison]::OrdinalIgnoreCase)) { '%PCSETUP_DOCUMENTS%' + $icon.Substring($docs.Length) } else { $icon }
+            $s.IconLocation = if (Test-Path -LiteralPath $icon) { "$portableIcon,0" } else { '%SystemRoot%\System32\imageres.dll,175' }
             $s.Save()
             if (Test-Path -LiteralPath $t.Path) { Write-Ok "Recreated shortcut in $($t.Where): $($t.Path)" } else { Write-Warn "Could not create shortcut: $($t.Path)" }
         }

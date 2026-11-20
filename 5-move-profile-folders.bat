@@ -178,6 +178,13 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         try { New-ItemProperty -Path $legacyKey -Name $f.Legacy -Value $dst -PropertyType String -Force -ErrorAction Stop ^| Out-Null } catch { }
 >>"%SCRIPT%" echo     }
 >>"%SCRIPT%" echo }
+>>"%SCRIPT%" echo # Shortcuts made by this repo and by the FFXIV profiles anchor on %%PCSETUP_DOCUMENTS%% instead of
+>>"%SCRIPT%" echo # an absolute path, so they hold no account name: the old Z:\Users\Heiner\... launchers (and
+>>"%SCRIPT%" echo # their Start pins) did nothing under account PC-COSITO. cmd expands it at click time.
+>>"%SCRIPT%" echo $docsDst = Join-Path $base 'Documents'
+>>"%SCRIPT%" echo [Environment]::SetEnvironmentVariable('PCSETUP_DOCUMENTS', $docsDst, 'User')
+>>"%SCRIPT%" echo if ([Environment]::GetEnvironmentVariable('PCSETUP_DOCUMENTS', 'User') -ne $docsDst) { Write-Host "  PCSETUP_DOCUMENTS did not persist" -ForegroundColor Red; Add-Failure "env PCSETUP_DOCUMENTS" }
+>>"%SCRIPT%" echo else { Write-Host "  PCSETUP_DOCUMENTS = $docsDst" }
 >>"%SCRIPT%" echo.
 >>"%SCRIPT%" echo Write-Host ""
 >>"%SCRIPT%" echo Write-Host "New locations:" -ForegroundColor Green

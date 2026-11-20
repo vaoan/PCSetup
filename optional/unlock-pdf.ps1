@@ -56,11 +56,24 @@ $targets = @(
     (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Unlock PDF.lnk'),
     (Join-Path ([Environment]::GetFolderPath('Programs')) 'Unlock PDF.lnk')
 )
+# No user name in the shortcut, so it (and a Start pin bound to it, backed up by
+# setup-start-menu.bat) still works on a machine with another account name: the jar is anchored
+# on %PCSETUP_DOCUMENTS% (set by script 5) and javaw on %USERPROFILE% (Scoop lives there).
+$docs = [Environment]::GetFolderPath('MyDocuments').TrimEnd('\')
+if ([Environment]::GetEnvironmentVariable('PCSETUP_DOCUMENTS', 'User') -ne $docs) { [Environment]::SetEnvironmentVariable('PCSETUP_DOCUMENTS', $docs, 'User') }
+function ConvertTo-PortablePath([string]$p) {
+    if ($p.StartsWith($docs + '\', [StringComparison]::OrdinalIgnoreCase)) { return '%PCSETUP_DOCUMENTS%' + $p.Substring($docs.Length) }
+    $up = $env:USERPROFILE.TrimEnd('\')
+    if ($p.StartsWith($up + '\', [StringComparison]::OrdinalIgnoreCase)) { return '%USERPROFILE%' + $p.Substring($up.Length) }
+    return $p
+}
 foreach ($lnkPath in $targets) {
+    # A new file: re-saving keeps the old link-tracking data (old absolute path).
+    Remove-Item -LiteralPath $lnkPath -Force -ErrorAction SilentlyContinue
     $lnk = $ws.CreateShortcut($lnkPath)
-    $lnk.TargetPath = $javaw
-    $lnk.Arguments = "-jar `"$jar`""
-    $lnk.WorkingDirectory = Split-Path -Parent $jar
+    $lnk.TargetPath = ConvertTo-PortablePath $javaw
+    $lnk.Arguments = "-jar `"$(ConvertTo-PortablePath $jar)`""
+    $lnk.WorkingDirectory = ConvertTo-PortablePath (Split-Path -Parent $jar)
     $lnk.IconLocation = "$env:SystemRoot\System32\imageres.dll,54"   # the gold padlock
     $lnk.Description = 'Unlock PDF - drop password-protected PDFs, type the password, get copies without it'
     $lnk.Save()

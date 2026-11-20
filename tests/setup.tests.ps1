@@ -1016,6 +1016,25 @@ Describe "run log and resume" {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    # Shortcuts with Z:\Users\Heiner\... in them did nothing under account PC-COSITO (Me.lnk,
+    # Download Video, Unlock PDF and their Start pins). They anchor on %PCSETUP_DOCUMENTS% now.
+    It "5-move-profile-folders sets PCSETUP_DOCUMENTS for account-independent shortcuts" {
+        Get-Content (Join-Path $PSScriptRoot "..\5-move-profile-folders.bat") -Raw | Should -Match "SetEnvironmentVariable\('PCSETUP_DOCUMENTS', \`$docsDst, 'User'\)"
+    }
+    It "repo shortcuts are written with %PCSETUP_DOCUMENTS%, not an absolute path" {
+        $dv = Get-Content (Join-Path $PSScriptRoot "..\optional\download-video.ps1") -Raw
+        $dv | Should -Match "'%PCSETUP_DOCUMENTS%' \+ \`$bat\.Substring"
+        $dv | Should -Not -Match '\$s\.Arguments = "/c `"\$bat`""'
+        $up = Get-Content (Join-Path $PSScriptRoot "..\optional\unlock-pdf.ps1") -Raw
+        $up | Should -Match '\$lnk\.Arguments = "-jar `"\$\(ConvertTo-PortablePath \$jar\)`""'
+    }
+    It "restore-ffxiv-profiles never prints the token and never deletes a destination" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Not -Match 'Write-Host[^\r\n]*\$token'
+        $r | Should -Not -Match 'Write-Host[^\r\n]*GH_TOKEN[^\r\n]*\$env:GH_TOKEN'
+        $r | Should -Not -Match 'Remove-Item[^\r\n]*\$dest'
+        $r | Should -Match 'Remove-Item Env:GH_TOKEN'
+    }
     # 'Heiner' here sent account PC-COSITO's Desktop/Documents/... to Z:\Users\Heiner.
     It "profile-folders.config does not hardcode a user name" {
         $line = Get-Content (Join-Path $PSScriptRoot "..\profile-folders.config") | Where-Object { $_ -match '^TARGET_PROFILE_FOLDER=' }
