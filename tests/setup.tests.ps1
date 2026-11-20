@@ -1039,6 +1039,25 @@ Describe "run log and resume" {
         # HTTP/2 crawled at ~10 KiB/s on a 25 MB/s line; HTTP/1.1 ran at ~9 MiB/s.
         $r | Should -Match 'http\.version=HTTP/1\.1'
     }
+    # The plugin repos live in a second account; its name and the repo list stay in the private
+    # ffxiv-secrets repo (repos.json), never in this public one.
+    It "restore-ffxiv-profiles takes the plugin repos from the private manifest and never names them" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Match "Name = 'ffxiv-secrets'"
+        $r | Should -Match "Join-Path \`$secretsDir 'repos\.json'"
+        $r | Should -Match 'if \(\$doPlugins\) \{ Restore-PluginRepos \}'
+        $r | Should -Not -Match 'github\.com/(?!vaoan/)[\w-]+/'
+        $r | Should -Not -Match 'Write-Host[^\r\n]*\$keys\['
+        # Set-RepoKey prints the account and e-mail: kept out of the log.
+        $r | Should -Match '& \$setRepoKey -Repo \$dest -Key \$e\.key \*> \$null'
+    }
+    It "restore-ffxiv-profiles fills dev plugin DLLs from the prebuilt zips without deleting" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Match 'plugins\\\$name\\latest\.zip'
+        $r | Should -Match 'if \(-not \(Test-Path -LiteralPath \$dll\)\)'
+        # Plain clones, not --depth 1: these repos are worked on and pushed from.
+        $r | Should -Match "Invoke-Git @\('clone', '--progress', '--config', 'core\.longpaths=true', \`$e\.url, \`$dest\)"
+    }
     # A restore from an October backup replaced a newer layout and left nothing to go back to.
     It "setup-start-menu restore saves the current layout before touching anything" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\optional\setup-start-menu.bat") -Raw

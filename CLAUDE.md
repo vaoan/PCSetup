@@ -1641,6 +1641,23 @@ in-process, removed in `finally`). Destinations come from the repos' own clone s
 | `vaoan/XIVProfiles` | `<Documents>\Juegos\FFXIV\XIVProfiles` (its `PROFILES_DIR=../Profiles`) |
 | `vaoan/FFXIVConfig` (~2 GB) | `<Documents>\My Games\FINAL FANTASY XIV - A Realm Reborn` |
 | `vaoan/MINION` (~13 GB) | `C:\MINION` |
+| `vaoan/ffxiv-secrets` | `<Documents>\Juegos\FFXIV\Secrets` (per-account keys + the plugin repo list) |
+
+**Then the Dalamud plugin repos (phase `plugins`, `-Only plugins` alone):** `Secrets\sync-secrets.mjs`
+(node + gh from steps 2-3; PATH is refreshed first) rebuilds `Juegos\FFXIV\.secrets` from that repo's
+GitHub secrets through an encrypted one-day workflow artifact. `Secrets\repos.json` lists each plugin
+repo, its folder under `Juegos\FFXIV` and its key (`Forks` -> `GH_TOKEN_FORKS`, `Own` -> `GH_TOKEN_OWN`).
+Each is cloned **in full** (worked on, pushed from), or fast-forwarded, and tied to its key with
+`Secrets\Set-RepoKey.ps1` (output discarded: it names the account and e-mail). Then every dev plugin
+path in Me's `dalamudConfig.json` (`DevPluginLoadLocations`) whose DLL is missing is filled from the
+prebuilt `Juegos\FFXIV\*\plugins\<Name>\latest.zip`, and those paths are re-pointed at this account's
+Documents (they held the old account's name).
+
+> **Never write the plugin account or repo names in this public repo.** They live only in the
+> private `repos.json`; a test fails on any `github.com/<owner>/` other than `vaoan` in the restore.
+> `Set-RepoKey.ps1` had to be fixed for PowerShell 5.1 (2026-11-20): 5.1 drops a bare `''` argument
+> to git and does not escape embedded `"`, so the empty helper reset and the helper itself failed
+> with "wrong number of arguments" after the old helper had already been unset.
 
 Never deletes: an existing clone of the same repo is fast-forwarded (an interrupted one - `.git`
 with the right origin but no `HEAD` - is resumed with fetch + checkout, no `-f`), a missing/empty
