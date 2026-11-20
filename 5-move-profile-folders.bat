@@ -147,7 +147,11 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo         }
 >>"%SCRIPT%" echo         if (-not $renamed) {
 >>"%SCRIPT%" echo             # /MOVE = copy, then remove each SOURCE file only once its copy is verified written.
->>"%SCRIPT%" echo             $rcOut = @(^& robocopy.exe $src $dst /E /MOVE /R:1 /W:1 /NP /NFL /NDL /NJH)
+>>"%SCRIPT%" echo             # /XJ is required: Documents holds the hidden legacy junctions "My Music", "My Pictures"
+>>"%SCRIPT%" echo             # and "My Videos" (-^> ..\Music etc). Without /XJ robocopy follows them, so moving
+>>"%SCRIPT%" echo             # Documents MOVED the real Pictures\Screenshots and Videos\Captures into real folders
+>>"%SCRIPT%" echo             # Documents\My Pictures etc - Music/Pictures/Videos showed up inside Documents.
+>>"%SCRIPT%" echo             $rcOut = @(^& robocopy.exe $src $dst /E /MOVE /XJ /R:1 /W:1 /NP /NFL /NDL /NJH)
 >>"%SCRIPT%" echo             $rcExit = $LASTEXITCODE
 >>"%SCRIPT%" echo             $rcOut ^| Where-Object { $_.Trim() } ^| Select-Object -Last 6 ^| ForEach-Object { Write-Host "    $_" }
 >>"%SCRIPT%" echo             # robocopy exit codes: 0-7 are success//informational, 8+ are real failures. Whatever

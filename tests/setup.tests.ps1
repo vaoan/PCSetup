@@ -974,6 +974,13 @@ Describe "run log and resume" {
         $bat | Should -Match '\[IO\.Directory\]::Move\(\$src, \$dst\)'
         $bat | Should -Not -Match 'Remove-Item[^\r\n]*\$src'
     }
+    # Without /XJ robocopy followed Documents\My Pictures (junction -> ..\Pictures) and moved the
+    # real Screenshots/Captures into Documents\My Pictures, My Videos, My Music.
+    It "5-move-profile-folders robocopy does not follow junctions (/XJ)" {
+        $lines = Get-Content (Join-Path $PSScriptRoot "..\5-move-profile-folders.bat") | Where-Object { $_ -match 'robocopy\.exe' }
+        $lines | Should -Not -BeNullOrEmpty
+        foreach ($l in $lines) { $l | Should -Match '/XJ' }
+    }
     # 'Heiner' here sent account PC-COSITO's Desktop/Documents/... to Z:\Users\Heiner.
     It "profile-folders.config does not hardcode a user name" {
         $line = Get-Content (Join-Path $PSScriptRoot "..\profile-folders.config") | Where-Object { $_ -match '^TARGET_PROFILE_FOLDER=' }
