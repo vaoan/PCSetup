@@ -1039,6 +1039,14 @@ Describe "run log and resume" {
         # HTTP/2 crawled at ~10 KiB/s on a 25 MB/s line; HTTP/1.1 ran at ~9 MiB/s.
         $r | Should -Match 'http\.version=HTTP/1\.1'
     }
+    # A restore from an October backup replaced a newer layout and left nothing to go back to.
+    It "setup-start-menu restore saves the current layout before touching anything" {
+        $bat = Get-Content (Join-Path $PSScriptRoot "..\optional\setup-start-menu.bat") -Raw
+        $save = $bat.IndexOf('start-menu-before-restore')
+        $save | Should -BeGreaterThan 0
+        $save | Should -BeLessThan $bat.IndexOf('foreach ($item in @(Get-ProgramShortcuts -Root $shortcuts))')
+        $save | Should -BeLessThan $bat.IndexOf('Copy-Item $backup $startMenu')
+    }
     It "12-restore-ffxiv-profiles runs the restore unattended and skips without secrets" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\12-restore-ffxiv-profiles.bat") -Raw
         $bat | Should -Match 'restore-ffxiv-profiles\.ps1" -SkipWhenNoToken'

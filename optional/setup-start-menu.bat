@@ -107,6 +107,19 @@ if exist "%SCRIPT%" del "%SCRIPT%" >nul
 >>"%SCRIPT%" echo if ((Get-Item $backup).Length -lt 1) { Write-Host "Backup file is empty; refusing to restore." -ForegroundColor Red; exit 1 }
 >>"%SCRIPT%" echo $dir = Split-Path $startMenu -Parent
 >>"%SCRIPT%" echo if (-not (Test-Path $dir)) { Write-Host "Start Menu state folder not found: $dir" -ForegroundColor Red; exit 1 }
+>>"%SCRIPT%" echo # Keep the layout being replaced, before anything is touched (a changed pinned .lnk drops its pin).
+>>"%SCRIPT%" echo # On 2026-11-19 a restore from an October backup overwrote a newer layout (15 FFXIV pins) with an
+>>"%SCRIPT%" echo # older one, and nothing was left to go back to.
+>>"%SCRIPT%" echo if (Test-Path -LiteralPath $startMenu) {
+>>"%SCRIPT%" echo     $prevDir = Join-Path $env:LOCALAPPDATA 'PCSetup\start-menu-before-restore'
+>>"%SCRIPT%" echo     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+>>"%SCRIPT%" echo     try {
+>>"%SCRIPT%" echo         $null = New-Item -ItemType Directory -Path (Join-Path $prevDir "$stamp\Programs") -Force -ErrorAction Stop
+>>"%SCRIPT%" echo         Copy-Item -LiteralPath $startMenu -Destination (Join-Path $prevDir "$stamp\start2.bin") -Force -ErrorAction Stop
+>>"%SCRIPT%" echo         foreach ($item in @(Get-ProgramShortcuts -Root $programs)) { $d = Join-Path $prevDir "$stamp\Programs\$($item.Rel)"; $null = New-Item -ItemType Directory -Path (Split-Path $d -Parent) -Force; Copy-Item -LiteralPath $item.Path -Destination $d -Force -ErrorAction Stop }
+>>"%SCRIPT%" echo         Write-Host "Current layout and shortcuts saved to $prevDir\$stamp" -ForegroundColor Gray
+>>"%SCRIPT%" echo     } catch { Write-Host "Could not save the current layout first: $($_.Exception.Message) - not restoring." -ForegroundColor Red; exit 1 }
+>>"%SCRIPT%" echo }
 >>"%SCRIPT%" echo # Write FIRST, then restart Start. Windows relaunches StartMenuExperienceHost within a
 >>"%SCRIPT%" echo # second of it being stopped, and the running host re-saves its in-memory layout over
 >>"%SCRIPT%" echo # start2.bin - so the old "stop, wait 2 s, copy" order lost the race and the restored
