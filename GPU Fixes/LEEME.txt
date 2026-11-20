@@ -1,0 +1,84 @@
+AJUSTES TEMPERATURA - MAXIMO FPS A 2K (2560x1600) SIN SOBRECALENTAR
+Acer Predator PHN16-72 | Intel i9-14900HX | RTX 4070 Laptop
+=====================================================================
+
+LIMITES OBJETIVO (teclado comodo al tacto)
+  CPU            <= 80 C sostenido
+  GPU            <= 75 C
+  GPU Hot Spot   <= 85 C
+  Estabilidad    0 crasheos, 0 errores WHEA, 0 reinicios del driver NVIDIA
+
+ARCHIVOS (doble clic, aceptar administrador)
+  1 - MAX FPS (82 FPS - GPU 74C).bat    CPU 4000/3000 MHz, GPU 1425 MHz. RECOMENDADO.
+  2 - FRESCO (77 FPS - GPU 69C).bat     CPU 4000/3000 MHz, GPU 1350 MHz.
+  3 - FABRICA (98 FPS - GPU 85C).bat    Sin limites (calienta el teclado).
+  4 - VER ESTADO ACTUAL.bat             Muestra limites de CPU, ultimo perfil y GPU.
+  5 - PROBAR TEMPERATURA (20 min).bat   Prueba a 2560x1600 (CPU+GPU). APROBADA / FALLO.
+  Ajustes.ps1                           Valores de los perfiles (editable con Bloc de notas).
+  perfil_actual.txt                     Se crea solo: ultimo perfil aplicado.
+  Resultados\                           Registros de todas las pruebas + RESUMEN_PRUEBAS.txt
+  Respaldo original\                    Plan de energia y estado de GPU de fabrica.
+
+MODO MANUAL (desde 17-11-2026 - SIN inicio automatico)
+  - Se elimino la tarea "AjusteTemperatura" y C:\ProgramData\AjustesTemperatura
+    para que nada pise lo que actives a mano.
+  - El limite de CPU queda guardado aunque reinicies (todos los planes de energia).
+  - El limite de GPU SE PIERDE al reiniciar, suspender a veces o actualizar el driver
+    NVIDIA: ejecuta 0, 1 o 1b antes de jugar. Usa la opcion 4 para revisar.
+
+PERFILES (VALIDADOS 16/17-11-2026: 26 pruebas, 0 errores)
+                 CPU P / E        GPU       FPS*   GPU C   Hot Spot
+  MAX FPS        4000 / 3000 MHz  1425 MHz   82    73.8    80.4    APROBADO
+  FRESCO         4000 / 3000 MHz  1350 MHz   77    69.4    75.4    APROBADO
+  Fabrica        5800 / 4100 MHz  ~1720      98    84.9    93.5    FALLO
+  * FPS FurMark a 2560x1600 sin limite. En juegos los numeros son otros, pero la
+    proporcion se mantiene (MAX FPS ~ -16% vs fabrica, FRESCO ~ -21%).
+
+TODOS LOS RESULTADOS (2560x1600, FPS sin limite, con base refrigerante)
+  SOLO GPU (juego que carga la GPU - lo normal a 1600p), CPU 4000/3000:
+    GPU 1350 ............... 77 FPS | GPU 69.4 C | hot 75.4 C | 64 W   APROBADA
+    GPU 1350 (CPU 3000/2400) 78 FPS | GPU 70.7 C | hot 76.8 C | 65 W   APROBADA
+    GPU 1425 ............... 82 FPS | GPU 73.8 C | hot 80.4 C | 69 W   APROBADA
+    GPU 1500 ............... 86 FPS | GPU 75.7 C | hot 82.6 C | 76 W   (0.7 C de mas)
+    GPU 1650 ............... 94 FPS | GPU 79.6 C | hot 87.3 C | 92 W   FALLO
+    GPU 1500 + VRAM 7001 ... 71 FPS | GPU 71.4 C | hot 77.6 C | 62 W   (no conviene)
+    GPU 1500 + VRAM 5920 ... 70 FPS | GPU 68.4 C | hot 74.3 C | 59 W   (no conviene)
+    Fabrica (sin limite CPU) 98 FPS | GPU 84.9 C | hot 93.5 C | 101 W  FALLO
+    GPU 1350 sin limite CPU  77 FPS | GPU 75.8 C | hot 82.4 C | 64 W
+  JUEGO PESADO (Prime95 4 hilos + GPU, peor caso sintetico):
+    GPU 1350 (20 min) ...... 78 FPS | GPU 77.4 C | hot 84.0 C | CPU 81 C
+    GPU 1425 ............... 82 FPS | GPU 78.1 C | hot 85.1 C | CPU 80 C
+    GPU 1500 ............... 86 FPS | GPU 81.9 C | hot 89.3 C | CPU 84 C
+    Fabrica ................ 87 FPS | GPU 83.1 C | hot 90.6 C | CPU 85 C
+  CPU+GPU AL 100% (Prime95 8 hilos + GPU):
+    Fabrica 85 FPS / GPU 85.8 C | GPU 1500 (15 min) 86 FPS / 83.8 C
+    GPU 1350 77 FPS / 77.4 C | GPU 1200 68 FPS / 75.9 C | GPU 1050 60 FPS / 76.0 C
+  SOLO CPU (Prime95 8 hilos):
+    Fabrica / 4000 / 3600 / 3000 MHz -> 85 W, 88-91 C (la laptop limita a 85 W)
+    2600/2000 MHz -> 68 W, 82 C
+
+CONCLUSIONES
+  - Limitar la CPU a 4000/3000 enfria la GPU ~6 C al jugar (comparten disipador).
+    Bajarla mas (3000/2400) no enfria mas la GPU.
+  - Bajar la GPU de 1350 a 1200/1050 no enfria mas: solo quita FPS.
+  - Bajar la memoria VRAM quita mas FPS que bajar el nucleo: no conviene.
+  - Con CPU y GPU a la vez la laptop reparte ~80 W a la GPU y 35 W a la CPU:
+    por eso en ese caso 1500 MHz rinde igual que fabrica.
+  - CPU a 91 C con 85 W (solo CPU) y 66-70 C en reposo: indica limpieza de
+    ventiladores + pasta termica pendiente. Eso bajaria 10-15 C todo.
+  - Prime95 es mucho mas duro que un juego real.
+
+LO QUE MAS ENFRIA EL TECLADO (ademas de estos ajustes)
+  - Limitar FPS (ver abajo): es lo que mas reduce consumo y calor.
+  - Base refrigerante (ya probado: ~7 C menos en la GPU).
+  - Limpieza de ventiladores / pasta termica.
+
+ANTES DE JUGAR (si no la laptop se autolimita)
+  1. PredatorSense: modo Rendimiento o Turbo, ventiladores en Automatico/Maximo.
+  2. Cargador ORIGINAL (230/280 W) conectado.
+  3. PredatorSense: modo GPU "Discreta" (MUX) si esta disponible: +5-15% FPS.
+
+EN EL PANEL DE CONTROL NVIDIA / JUEGOS (manual)
+  - Velocidad maxima de fotogramas = Hz de la pantalla - 3 (ej. 240 Hz -> 237 FPS).
+  - Modo de baja latencia: Activado. G-SYNC: Activado.
+  - En juegos: DLSS Calidad a 2560x1600 (mas FPS, menos carga).

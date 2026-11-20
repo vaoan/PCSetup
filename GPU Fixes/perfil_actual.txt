@@ -1,0 +1,1 @@
+Juego90 (CPU 4000/3000 MHz, GPU 1600 MHz, tope 90 FPS)  -  2026-11-17 17:05

@@ -31,3 +31,6 @@ cloudflared/reports-*/
 cloudflared/console-loaded.png
 cloudflared/console-presets.png
 .playwright-mcp/
+
+# NVIDIA App IndexedDB backup: holds NVIDIA account ids/telemetry, repo is public
+GPU Fixes/Respaldo original/NVIDIA_App_IndexedDB_*/

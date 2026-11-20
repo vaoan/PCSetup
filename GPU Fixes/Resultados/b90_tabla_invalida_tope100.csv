@@ -1,0 +1,3 @@
+﻿"id","cpuP","cpuE","gpuL","cpu","cpuAvg","cpuW","pmhz","emhz","gpu","hot","gpuW","gmhz","util","ram","fps","p1","fmin","tCpu","tGpu","tVent","err","ev","motivo","fpsOk","estable","sinThrottle","throttle"
+"PRUEBA","4400","3400","1800","79","79","45","1228.5","1231.5","80.8","90.3","102.4","1800","96.5","10.5","98.8","98","98","2","0","0","0","0","","True","True","False","2"
+"G0","4400","3400","0","85","82.9","45","1303.9","1210.7","87.2","97.1","105.1","1770.8","96.6","10.7","98.5","94","89","19","2","15","0","0","CORTE DE EMERGENCIA POR TEMPERATURA","True","False","False","36"

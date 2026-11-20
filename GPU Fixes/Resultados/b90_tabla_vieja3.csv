@@ -1,0 +1,2 @@
+﻿"id","cpuP","cpuE","gpuL","cpu","cpuAvg","cpuW","pmhz","emhz","gpu","hot","gpuW","gmhz","util","ram","fps","p1","fmin","tCpu","tGpu","tVent","err","ev","motivo","fpsOk","estable","sinThrottle","throttle"
+"CPU0","0","0","0","85","82.9","45","1356.9","1167.6","87.8","98.1","102.3","1955","80.8","14.3","87.7","61","61","21","3","20","0","0","CORTE DE EMERGENCIA POR TEMPERATURA","False","False","False","44"

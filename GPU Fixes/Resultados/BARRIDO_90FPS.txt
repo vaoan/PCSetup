@@ -1,0 +1,147 @@
+﻿14:27:18  === PRUEBA RAPIDA DEL SCRIPT (2 min) ===
+14:27:18  INICIO PRUEBA | CPU 4000/3000 | GPU fabrica (2 min)
+14:29:22  FIN PRUEBA | CPU 4000/3000 | GPU fabrica: FPS 98.5 (1% 91, min 91) | CPU max 77C prom 77C 45W 1915MHz | GPU max 80C hot 88.5C 104.8W 1770MHz util 98% | RAM 10.7 GB | err 0 ev 0  => FPS True TEMP False ESTABLE True
+
+
+id      : PRUEBA
+cpuP    : 4000
+cpuE    : 3000
+gpuL    : 0
+cpu     : 77
+cpuAvg  : 77
+cpuW    : 45
+pmhz    : 1915
+gpu     : 80
+hot     : 88.5
+gpuW    : 104.8
+gmhz    : 1770
+util    : 98
+ram     : 10.7
+fps     : 98.5
+p1      : 91
+fmin    : 91
+err     : 0
+ev      : 0
+motivo  : 
+fpsOk   : True
+estable : True
+tempOk  : False
+
+
+
+
+14:29:22  === FIN DEL BARRIDO ===
+14:29:35  === BARRIDO 2560x1600 | carga: FurMark tope 100 FPS + Prime95 12 hilos 4 GB RAM | exige >= 90 FPS | 10 min por prueba ===
+14:29:35  Reiniciando PredatorSense
+14:30:03  INICIO G0 | CPU 4000/3000 | GPU fabrica (10 min)
+14:32:00  FIN G0 | CPU 4000/3000 | GPU fabrica: FPS 98.8 (1% 94, min 94) | CPU max 81C prom 76.2C 51.6W 2279.1MHz | GPU max 83.1C hot 92C 98.3W 1811.7MHz util 91.9% | RAM 11.1 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 81 C) => FPS True TEMP False ESTABLE False
+14:33:20  Reiniciando PredatorSense
+14:33:48  INICIO G0-rep | CPU 4000/3000 | GPU fabrica (10 min)
+14:35:50  FIN G0-rep | CPU 4000/3000 | GPU fabrica: FPS 99.1 (1% 98, min 98) | CPU max 80C prom 80C 45W 1915MHz | GPU max 82.3C hot 90.6C 104W 1800MHz util 97% | RAM 10.2 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 80 C) => FPS True TEMP False ESTABLE False
+14:37:11  INICIO G2100 | CPU 4000/3000 | GPU 2100 MHz (10 min)
+14:39:36  FIN G2100 | CPU 4000/3000 | GPU 2100 MHz: FPS 99.1 (1% 93, min 93) | CPU max 82C prom 80.6C 45W 1915MHz | GPU max 85.3C hot 93.7C 104.6W 1800MHz util 95.8% | RAM 10.2 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 82 C) => FPS True TEMP False ESTABLE False
+14:41:07  INICIO G1950 | CPU 4000/3000 | GPU 1950 MHz (10 min)
+14:42:19  FIN G1950 | CPU 4000/3000 | GPU 1950 MHz: FPS 0 (1% 0, min 0) | CPU max 79C prom 73.4C 60.2W 2739.8MHz | GPU max 80.3C hot 89.5C 91.4W 1650MHz util 88.9% | RAM 10.2 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 79 C) => FPS False TEMP False ESTABLE False
+14:43:29  Reiniciando PredatorSense
+14:43:57  INICIO G1950-rep | CPU 4000/3000 | GPU 1950 MHz (10 min)
+14:45:35  FIN G1950-rep | CPU 4000/3000 | GPU 1950 MHz: FPS 99 (1% 99, min 99) | CPU max 79C prom 72.7C 54.7W 2412.4MHz | GPU max 81.2C hot 90.6C 95.2W 1803MHz util 90.1% | RAM 10.3 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 79 C) => FPS True TEMP False ESTABLE False
+14:46:56  INICIO G1800 | CPU 4000/3000 | GPU 1800 MHz (10 min)
+14:48:58  FIN G1800 | CPU 4000/3000 | GPU 1800 MHz: FPS 98.9 (1% 98, min 98) | CPU max 81C prom 81C 45W 1915MHz | GPU max 83.5C hot 92.7C 103.6W 1770MHz util 100% | RAM 10.2 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 81 C) => FPS True TEMP False ESTABLE False
+14:50:18  Reiniciando PredatorSense
+14:50:46  INICIO G1800-rep | CPU 4000/3000 | GPU 1800 MHz (10 min)
+14:52:36  FIN G1800-rep | CPU 4000/3000 | GPU 1800 MHz: FPS 97.9 (1% 94, min 94) | CPU max 80C prom 73.5C 52.8W 2324.2MHz | GPU max 82C hot 92C 95.6W 1694.1MHz util 91% | RAM 10.5 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 80 C) => FPS True TEMP False ESTABLE False
+14:53:56  INICIO G1700 | CPU 4000/3000 | GPU 1700 MHz (10 min)
+14:55:23  FIN G1700 | CPU 4000/3000 | GPU 1700 MHz: FPS 0 (1% 0, min 0) | CPU max 77C prom 71.5C 54.2W 2450.2MHz | GPU max 78.4C hot 86.9C 84.9W 1695MHz util 91.9% | RAM 10.4 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+14:56:33  Reiniciando PredatorSense
+14:57:01  INICIO G1700-rep | CPU 4000/3000 | GPU 1700 MHz (10 min)
+14:58:39  FIN G1700-rep | CPU 4000/3000 | GPU 1700 MHz: FPS 93.5 (1% 93, min 93) | CPU max 77C prom 70.6C 53.7W 2372MHz | GPU max 78.1C hot 86.3C 85.2W 1596MHz util 93.3% | RAM 10.4 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS True TEMP False ESTABLE False
+14:59:50  INICIO G1600 | CPU 4000/3000 | GPU 1600 MHz (10 min)
+15:01:47  FIN G1600 | CPU 4000/3000 | GPU 1600 MHz: FPS 90 (1% 88, min 88) | CPU max 79C prom 72.8C 57.7W 2497.7MHz | GPU max 77.1C hot 85.1C 77.8W 1513.3MHz util 93.9% | RAM 11.3 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:03:07  Reiniciando PredatorSense
+15:03:35  INICIO G1600-rep | CPU 4000/3000 | GPU 1600 MHz (10 min)
+15:05:26  FIN G1600-rep | CPU 4000/3000 | GPU 1600 MHz: FPS 89.5 (1% 84, min 84) | CPU max 79C prom 72.2C 60.9W 2662.4MHz | GPU max 77.2C hot 85.2C 76.5W 1508.8MHz util 92.4% | RAM 10.6 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:06:37  GPU 1600 MHz ya no sostiene 90 FPS: no se baja mas
+15:06:37  FASE 1 elegida: GPU 1600 MHz
+15:06:37  INICIO C0 | CPU fabrica | GPU 1600 MHz (10 min)
+15:08:40  FIN C0 | CPU fabrica | GPU 1600 MHz: FPS 89.9 (1% 88, min 88) | CPU max 77C prom 77C 45W 2016MHz | GPU max 77.4C hot 85.2C 83.2W 1590MHz util 100% | RAM 10.3 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:09:50  Reiniciando PredatorSense
+15:10:18  INICIO C0-rep | CPU fabrica | GPU 1600 MHz (10 min)
+15:12:03  FIN C0-rep | CPU fabrica | GPU 1600 MHz: FPS 88.9 (1% 87, min 87) | CPU max 77C prom 72.1C 61.4W 2683.9MHz | GPU max 77.2C hot 84.8C 76.6W 1503.8MHz util 93.4% | RAM 10.6 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:13:14  INICIO C4600 | CPU 4600/3600 | GPU 1600 MHz (10 min)
+15:14:46  FIN C4600 | CPU 4600/3600 | GPU 1600 MHz: FPS 0 (1% 0, min 0) | CPU max 77C prom 72.3C 63.6W 2728.9MHz | GPU max 76.9C hot 84.8C 75.7W 1491.4MHz util 91.1% | RAM 10.5 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:15:56  Reiniciando PredatorSense
+15:16:24  INICIO C4600-rep | CPU 4600/3600 | GPU 1600 MHz (10 min)
+15:18:46  FIN C4600-rep | CPU 4600/3600 | GPU 1600 MHz: FPS 90.1 (1% 88, min 88) | CPU max 77C prom 77C 45W 1940.2MHz | GPU max 78.1C hot 86.1C 83.7W 1590MHz util 99.5% | RAM 10.4 GB | err 0 ev 0 VENTILADORES PULSANDO (CPU 77 C) => FPS False TEMP False ESTABLE False
+15:36:10  === PRUEBA RAPIDA (2 min): comprobar que la CPU llega a sus GHz con la carga tipo juego ===
+15:36:10  INICIO PRUEBA | CPU 4400/3400 MHz | GPU 1800 MHz (2 min)
+15:36:58  FIN PRUEBA | CPU 4400/3400 MHz | GPU 1800 MHz: FPS 0 (1% 0, min 0) | CPU max 78C prom 69.7C 102.6W P 3502.9MHz E 2269.9MHz | GPU max 69.3C hot 76.8C 62.1W 1800MHz util 56.4% | RAM 10.5 GB | THROTTLE cpu45W 1 gpuFreno 0 vent 0 (de 7 muestras) | err 0 ev 0 PRIME95 SE CERRO => FPS False SIN-THROTTLE True ESTABLE False
+15:36:58  ERROR DEL BARRIDO: Cannot append CSV content to the following file: C:\Users\PC-COSITO\Desktop\Ajustes Temperatura CPU-GPU\Resultados\b90_tabla.csv. The appended object does not have a property that corresponds to the following column: tempOk. To continue with mismatched properties, add the -Force parameter, and then retry the command.
+15:36:58  === FIN ===
+15:37:45  === PRUEBA RAPIDA (2 min): comprobar que la CPU llega a sus GHz con la carga tipo juego ===
+15:37:45  INICIO PRUEBA | CPU 4400/3400 MHz | GPU 1800 MHz (2 min)
+15:39:54  FIN PRUEBA | CPU 4400/3400 MHz | GPU 1800 MHz: FPS 98.8 (1% 98, min 98) | CPU max 79C prom 79C 45W P 1228.5MHz E 1231.5MHz | GPU max 80.8C hot 90.3C 102.4W 1800MHz util 96.5% | RAM 10.5 GB | THROTTLE cpu45W 2 gpuFreno 0 vent 0 (de 2 muestras) | err 0 ev 0  => FPS True SIN-THROTTLE False ESTABLE True
+15:39:54  === FIN ===
+15:40:15  === BARRIDO 2560x1600 | FurMark tope 100 + Prime95 32 hilos AVX 4 GB RAM | elige lo MAS ALTO sin throttling y >= 90 FPS | 10 min por prueba ===
+15:40:15  Reiniciando PredatorSense
+15:40:43  INICIO G0 | CPU 4400/3400 MHz | GPU fabrica (10 min)
+15:44:32  FIN G0 | CPU 4400/3400 MHz | GPU fabrica: FPS 98.5 (1% 94, min 89) | CPU max 85C prom 82.9C 45W P 1303.9MHz E 1210.7MHz | GPU max 87.2C hot 97.1C 105.1W 1770.8MHz util 96.6% | RAM 10.7 GB | THROTTLE cpu45W 19 gpuFreno 2 vent 15 (de 19 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS True SIN-THROTTLE False ESTABLE False
+15:46:12  INICIO G2100 | CPU 4400/3400 MHz | GPU 2100 MHz (10 min)
+15:50:22  === 4 CONFIGURACIONES | FurMark SIN tope (GPU 100%) + Prime95 32 hilos AVX + RAM libre - 1,5 GB + PredatorSense abierto | 10 min c/u ===
+15:50:22  Reiniciando PredatorSense
+15:50:54  INICIO 1-Fabrica | CPU fabrica | GPU fabrica (10 min)
+15:52:30  === SOLO CPU | GPU fabrica | FurMark SIN tope + Prime95 32 hilos AVX + RAM libre - 1,5 GB + PredatorSense abierto | 10 min c/u ===
+15:52:30  Reiniciando PredatorSense
+15:53:04  INICIO CPU0 | CPU fabrica | GPU fabrica (10 min)
+15:57:06  FIN CPU0 | CPU fabrica | GPU fabrica: FPS 87.7 (1% 61, min 61) | CPU max 85C prom 82.9C 45W P 1356.9MHz E 1167.6MHz | GPU max 87.8C hot 98.1C 102.3W 1955MHz util 80.8% | RAM 14.3 GB | THROTTLE cpu45W 21 gpuFreno 3 vent 20 (de 21 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS False SIN-THROTTLE False ESTABLE False
+16:00:08  === SOLO CPU | GPU fabrica | FurMark SIN tope + Prime95 32 hilos AVX + RAM libre - 1,5 GB + PredatorSense abierto | 10 min c/u ===
+16:00:08  Reiniciando PredatorSense
+16:00:40  INICIO CPU4600 | CPU 4600/3600 MHz | GPU fabrica (10 min)
+16:04:26  FIN CPU4600 | CPU 4600/3600 MHz | GPU fabrica: FPS 99.6 (1% 96, min 94) | CPU max 85C prom 82.6C 45W P 1405MHz E 1303.6MHz | GPU max 87C hot 97C 104.4W 1785.8MHz util 98.7% | RAM 14.8 GB | THROTTLE cpu45W 18 gpuFreno 2 vent 17 (de 18 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS True SIN-THROTTLE False ESTABLE False
+16:06:28    -> CPU 4600/3600 MHz: temp<=80 False | sin throttling False | sin perdida FPS (fabrica 99.6) True | estable False => no cumple
+16:06:28  INICIO CPU4200 | CPU 4200/3200 MHz | GPU fabrica (10 min)
+16:11:21  FIN CPU4200 | CPU 4200/3200 MHz | GPU fabrica: FPS 96.6 (1% 64, min 63) | CPU max 87C prom 84.9C 45W P 1288.7MHz E 1245.3MHz | GPU max 87.4C hot 97.8C 99.5W 1746.5MHz util 95.9% | RAM 14.8 GB | THROTTLE cpu45W 30 gpuFreno 23 vent 26 (de 30 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS False SIN-THROTTLE False ESTABLE False
+16:13:25    -> CPU 4200/3200 MHz: temp<=80 False | sin throttling False | sin perdida FPS (fabrica 99.6) False | estable False => no cumple
+16:13:25    Ya pierde FPS: no se baja mas
+
+id       fps p1 fmin cpu cpuAvg cpuW   pmhz   emhz  gpu
+--       --- -- ---- --- ------ ----   ----   ----  ---
+CPU4600 99.6 96   94  85   82.6   45   1405 1303.6   87
+CPU4200 96.6 64   63  87   84.9   45 1288.7 1245.3 87.4
+
+
+
+16:13:25  NINGUNA CPU cumplio todo; topes restaurados a 0/0
+16:13:25  === FIN ===
+16:18:31  === PRUEBA UNICA | FurMark SIN tope + Prime95 32 hilos AVX + RAM libre - 1,5 GB + PredatorSense abierto | 10 min ===
+16:18:31  Reiniciando PredatorSense
+16:19:02  INICIO CPU4000-GPU0 | CPU 4000/3000 MHz | GPU fabrica (10 min)
+16:25:51  FIN CPU4000-GPU0 | CPU 4000/3000 MHz | GPU fabrica: FPS 98.8 (1% 91, min 85) | CPU max 86C prom 83C 45W P 1301.9MHz E 1296.4MHz | GPU max 88C hot 97.2C 103.1W 1755.3MHz util 98.1% | RAM 14.5 GB | THROTTLE cpu45W 49 gpuFreno 14 vent 33 (de 49 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS True SIN-THROTTLE False ESTABLE False
+16:27:56    -> temp CPU<=80 False | sin throttling False | FPS>=90 True | estable False
+16:27:56  === FIN ===
+16:29:51  === SOLO GPU | CPU fija 4000/3000 MHz | FurMark SIN tope + Prime95 32 hilos AVX + RAM libre - 1,5 GB + PredatorSense abierto | 10 min c/u ===
+16:29:51  Reiniciando PredatorSense
+16:30:24  INICIO GPU1950 | CPU 4000/3000 MHz | GPU 1950 MHz (10 min)
+16:35:56  FIN GPU1950 | CPU 4000/3000 MHz | GPU 1950 MHz: FPS 97.4 (1% 64, min 64) | CPU max 86C prom 83.5C 45W P 1228.2MHz E 1228MHz | GPU max 87.4C hot 97.2C 102.1W 1775.3MHz util 95% | RAM 14.9 GB | THROTTLE cpu45W 34 gpuFreno 11 vent 30 (de 34 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS False SIN-THROTTLE False ESTABLE False
+16:38:00    -> GPU 1950 MHz: estable (sin corte/errores) False | sin throttling False | FPS>=90 False => no cumple
+16:38:01  INICIO GPU1800 | CPU 4000/3000 MHz | GPU 1800 MHz (10 min)
+16:40:32  FIN GPU1800 | CPU 4000/3000 MHz | GPU 1800 MHz: FPS 99.1 (1% 95, min 95) | CPU max 85C prom 84.4C 45W P 1219.6MHz E 1252.6MHz | GPU max 87.2C hot 97C 104.3W 1770MHz util 99% | RAM 14.6 GB | THROTTLE cpu45W 5 gpuFreno 0 vent 5 (de 5 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS True SIN-THROTTLE False ESTABLE False
+16:42:32    -> GPU 1800 MHz: estable (sin corte/errores) False | sin throttling False | FPS>=90 True => no cumple
+16:42:33  INICIO GPU1700 | CPU 4000/3000 MHz | GPU 1700 MHz (10 min)
+16:49:40  FIN GPU1700 | CPU 4000/3000 MHz | GPU 1700 MHz: FPS 95.4 (1% 89, min 85) | CPU max 86C prom 84.1C 45W P 1230.9MHz E 1236.7MHz | GPU max 87C hot 97C 95.4W 1688.7MHz util 98.6% | RAM 14.6 GB | THROTTLE cpu45W 50 gpuFreno 12 vent 39 (de 50 muestras) | err 0 ev 0 CORTE DE EMERGENCIA POR TEMPERATURA => FPS False SIN-THROTTLE False ESTABLE False
+16:51:44    -> GPU 1700 MHz: estable (sin corte/errores) False | sin throttling False | FPS>=90 False => no cumple
+16:51:45  INICIO GPU1600 | CPU 4000/3000 MHz | GPU 1600 MHz (10 min)
+17:01:51  FIN GPU1600 | CPU 4000/3000 MHz | GPU 1600 MHz: FPS 90.2 (1% 87, min 85) | CPU max 84C prom 81.2C 45W P 1200.7MHz E 1232MHz | GPU max 82.9C hot 91.8C 83.9W 1590MHz util 99% | RAM 14.6 GB | THROTTLE cpu45W 79 gpuFreno 0 vent 58 (de 79 muestras) | err 0 ev 0  => FPS False SIN-THROTTLE False ESTABLE True
+17:03:56    -> GPU 1600 MHz: estable (sin corte/errores) True | sin throttling False | FPS>=90 False => no cumple
+17:03:56    Ya no da 90 FPS: no se baja mas
+
+id       fps p1 fmin cpu cpuAvg cpuW   pmhz   emhz  gpu
+--       --- -- ---- --- ------ ----   ----   ----  ---
+GPU1950 97.4 64   64  86   83.5   45 1228.2   1228 87.4
+GPU1800 99.1 95   95  85   84.4   45 1219.6 1252.6 87.2
+GPU1700 95.4 89   85  86   84.1   45 1230.9 1236.7   87
+GPU1600 90.2 87   85  84   81.2   45 1200.7   1232 82.9
+
+
+
+17:03:57  NINGUNA GPU estable con 90 FPS; GPU queda de fabrica
+17:03:57  === FIN ===
