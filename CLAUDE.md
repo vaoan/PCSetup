@@ -1680,6 +1680,14 @@ XIVProfiles copies from `Me`), `XIVProfiles\New-PortableShortcut.ps1`, `optional
 > reliable (focus lock, virtualized list, the Win11 menu not exposing the item) - tried 2026-11-19
 > and abandoned rather than send keystrokes that could land in the user's foreground app. A person
 > re-pins; the backup makes it a one-time job.
+>
+> **`restore` now saves the live layout first** (`start2.bin` + the `Programs` shortcuts, to
+> `%LOCALAPPDATA%\PCSetup\start-menu-before-restore\<stamp>`), before any shortcut is replaced. On
+> 2026-11-19 a restore of the October `.bin` replaced the newer layout (15 FFXIV pins) with an older
+> one (2 of them) and nothing was left to return to. Pins whose `.lnk` still points at
+> `Z:\Users\Heiner\...` work through the junctions `Z:\Users\Heiner\Documents\Juegos` and
+> `...\PCSetup\optional` (to `Z:\Users\PC-COSITO\Documents\...`) until they are re-pinned on the
+> portable shortcuts and `backup` is taken.
 | `optional/open-rufus-latest.bat` | Opens the latest Rufus |
 
 ### optional/setup-makeplace-ffxiv.bat
