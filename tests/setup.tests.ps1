@@ -1061,6 +1061,14 @@ Describe "run log and resume" {
         $r | Should -Match "Invoke-Git @\('-C', \`$dest, 'submodule', 'update', '--init', '--recursive'\)"
         Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw | Should -Match "Id = 'Microsoft\.DotNet\.SDK\.10'"
     }
+    # Forks: origin = the original repository (README-FORK.md, ForkWatch's Remote), "fork" = ours.
+    It "restore-ffxiv-profiles gives forks origin = upstream and keeps recognising them by any remote" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Match 'remote rename origin fork'
+        $r | Should -Match 'remote add origin \$e\.upstream'
+        $r | Should -Match 'foreach \(\$rn in @\(& git -C \$dest remote'
+        $r.IndexOf('remote rename origin fork') | Should -BeLessThan $r.IndexOf('& $setRepoKey -Repo $dest')
+    }
     # 2026-11-20: Docker's WSL VM (~4 GB from logon) + FFXIV ran the PC out of virtual memory.
     It "2-setup-windows keeps Docker out of autostart and lets Windows manage the page file, after the installs" {
         $bat = Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw

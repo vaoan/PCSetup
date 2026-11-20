@@ -124,8 +124,11 @@ function Restore-PluginRepos {
         }
         $isClone = $false
         if (Test-Path -LiteralPath (Join-Path $dest '.git')) {
-            $origin = (& git -C $dest remote get-url origin 2>$null)
-            $isClone = ($origin -and ($origin -replace '\.git$', '') -ieq ($e.url -replace '\.git$', ''))
+            # Any remote: a fork's own repo is "fork" once origin points at the original (below).
+            foreach ($rn in @(& git -C $dest remote 2>$null)) {
+                $ru = (& git -C $dest remote get-url $rn 2>$null)
+                if ($ru -and ($ru -replace '\.git$', '') -ieq ($e.url -replace '\.git$', '')) { $isClone = $true }
+            }
         }
         if ($isClone) {
             # Full clones (these are worked on): a fast-forward only, local work is never touched.
@@ -146,6 +149,20 @@ function Restore-PluginRepos {
             if ($code -ne 0) { Write-Host "    FAILED: clone exit $code" -ForegroundColor Red; $null = $failures.Add($e.folder); continue }
         }
         if ($public) { Write-Host '    OK (public, no key)' -ForegroundColor Green; continue }
+        # A fork (repos.json "upstream"): the layout its README-FORK.md and ForkWatch expect - origin is the
+        # original repository, "fork" is ours (the branch keeps pushing there). Cloned plainly, origin was ours,
+        # so ForkWatch compared against our stale copy of upstream's branch, and ICE's Main-Branch was not there
+        # at all ("origin/Main-Branch is not in the repository", 2026-11-20).
+        if ($e.upstream) {
+            $o = (& git -C $dest remote get-url origin 2>$null)
+            if (($o -replace '\.git$', '') -ine ([string]$e.upstream -replace '\.git$', '')) {
+                $remotes = @(& git -C $dest remote 2>$null)
+                if ($remotes -notcontains 'fork') { & git -C $dest remote rename origin fork 2>$null }
+                if (@(& git -C $dest remote 2>$null) -contains 'origin') { & git -C $dest remote set-url origin $e.upstream } else { & git -C $dest remote add origin $e.upstream }
+            }
+            $code = Invoke-Git @('-C', $dest, 'fetch', '--quiet', '--tags', 'origin')
+            if ($code -ne 0) { Write-Host "    upstream fetch failed (exit $code)" -ForegroundColor Yellow }
+        }
         # ECommons, PunishLib, the own shared libraries...: without them nothing builds (CS0246, 2026-11-20).
         # The -c credential helper reaches the submodule clones too, so private ones use the same key.
         if (Test-Path -LiteralPath (Join-Path $dest '.gitmodules')) {

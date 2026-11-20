@@ -1669,6 +1669,15 @@ repos. Missing or refused plugins are reported, not fatal (2026-11-20: 7 in no r
 with 500 by the official server). `ConvertFrom-RepoJson` exists because 5.1 rejects repo lists Dalamud
 reads (BOM, trailing commas, others -> PowerShell 7), and 5.1 returns a non-text response as `byte[]`.
 
+**Forks keep the layout their `README-FORK.md` and ForkWatch expect:** `origin` = the original repository,
+`fork` = ours (the branch tracks and pushes `fork`). A `repos.json` entry with `upstream` gets that after the
+clone (rename origin -> fork, add origin, fetch); a plain clone left origin = ours, so ForkWatch compared
+against our stale copy and ICE failed with "origin/Main-Branch is not in the repository". A folder counts as
+the clone when ANY remote is the entry's URL.
+
+> Testing a restore by moving a repo out: never across drives (Z: -> C:). `Move-Item` is then copy + delete,
+> fails on git's read-only objects half way, and leaves a half-empty folder the restore then moves aside.
+
 The dead Dalamud repos (accounts deleted on GitHub) were removed from Me's `ThirdRepoList`, and the
 private plugin repo is read from its secret gist (the raw repo URL 404s: the repo is private). A dev plugin DLL that is still missing is filled from the
 prebuilt `Juegos\FFXIV\[Plugins\]<repo>\plugins\<Name>\latest.zip`.
