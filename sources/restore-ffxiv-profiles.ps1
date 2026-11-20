@@ -212,6 +212,102 @@ function Restore-DevPluginDlls {
     Write-Host "  dev plugins: $($count.Placed) DLL(s) placed, $($count.Repointed) path(s) re-pointed at $ffxiv"
 }
 
+# installedPlugins is not in the XIVLauncher backup (binaries), so after a format Me had none of its ~150
+# plugins (2026-11-20). Dalamud's collections still name each one with its WorkingPluginId: every plugin in
+# DefaultProfile / SavedProfiles that is not a dev plugin is installed the way Dalamud installs it - the
+# repo's zip in installedPlugins\<Name>\<version>\ plus its LocalPluginManifest (<Name>.json) carrying the
+# same WorkingPluginId, so the collections recognise it. Official repo first, then the enabled third-party
+# repos in config order; the testing build when the plugin is opted into testing and it is newer.
+# A plugin no repo has any more, or a download the server refuses, is reported, not fatal.
+# Dalamud (Newtonsoft) reads repo lists that Windows PowerShell 5.1's ConvertFrom-Json refuses: a BOM
+# (Koenari), trailing commas (AshPluggyRepo), "Invalid JSON primitive" (yomishino). BOM and trailing commas are
+# cleaned here; anything else goes through PowerShell 7 (step 2 installs it), which reads them all.
+function ConvertFrom-RepoJson {
+    param([string]$Text)
+    $Text = $Text.TrimStart([char]0xFEFF)
+    try { return ($Text | ConvertFrom-Json) } catch { }
+    $clean = [regex]::Replace($Text, ',(\s*[\]}])', '$1')
+    try { return ($clean | ConvertFrom-Json) } catch { }
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        $file = [IO.Path]::GetTempFileName()
+        try {
+            [IO.File]::WriteAllText($file, $Text, (New-Object Text.UTF8Encoding($false)))
+            $out = & $pwsh.Source -NoProfile -NonInteractive -Command "Get-Content -LiteralPath '$file' -Raw | ConvertFrom-Json | ConvertTo-Json -Depth 20 -Compress"
+            if ($LASTEXITCODE -eq 0 -and $out) { return (($out -join "`n") | ConvertFrom-Json) }
+        } finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+    }
+    throw 'unreadable repo list'
+}
+
+function Restore-DalamudPlugins {
+    $xl = Join-Path $ffxiv 'Profiles\Me\XIVLauncher'
+    $cfgPath = Join-Path $xl 'dalamudConfig.json'
+    if (-not (Test-Path -LiteralPath $cfgPath)) { return }
+    Write-Host ""
+    Write-Host "== Dalamud plugins of Me's collections" -ForegroundColor Cyan
+    $ProgressPreference = 'SilentlyContinue'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json
+    $dev = @($cfg.DevPluginLoadLocations.'$values' | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Path) })
+    $optIn = @($cfg.PluginTestingOptIns.'$values' | ForEach-Object { $_.InternalName })
+    $want = [ordered]@{}
+    foreach ($prof in @($cfg.DefaultProfile) + @($cfg.SavedProfiles.'$values')) {
+        foreach ($pl in @($prof.Plugins.'$values')) {
+            if ($pl -and $pl.InternalName -and -not $want.Contains($pl.InternalName) -and $dev -notcontains $pl.InternalName) { $want[$pl.InternalName] = $pl.WorkingPluginId }
+        }
+    }
+    $sources = @('https://kamori.goats.dev/Plugin/PluginMaster') + @($cfg.ThirdRepoList.'$values' | Where-Object { $_.IsEnabled } | ForEach-Object { $_.Url })
+    $index = @{}
+    foreach ($s in $sources) {
+        try {
+            $resp = Invoke-WebRequest -Uri $s -UseBasicParsing -TimeoutSec 60 -Headers @{ 'User-Agent' = 'Dalamud' }
+            # 5.1 hands a non-text content type (playersync.io) back as byte[]: decode it, never [string] it.
+            $body = if ($resp.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }
+            $items = ConvertFrom-RepoJson $body
+        }
+        catch { Write-Host "    repo unreachable: $s" -ForegroundColor Yellow; continue }
+        foreach ($m in @($items)) { if ($m.InternalName -and -not $index.ContainsKey($m.InternalName)) { $index[$m.InternalName] = @{ Repo = $s; M = $m } } }
+    }
+    $dest = Join-Path $xl 'installedPlugins'
+    $tmp = Join-Path $env:TEMP 'pcsetup-dalamud-plugins'
+    $null = New-Item -ItemType Directory -Force -Path $dest, $tmp
+    $installed = 0; $present = 0; $notFound = @(); $failed = @()
+    foreach ($name in $want.Keys) {
+        if (-not $index.ContainsKey($name)) { $notFound += $name; continue }
+        $m = $index[$name].M; $repo = $index[$name].Repo
+        $testing = $false
+        if (($optIn -contains $name) -and $m.TestingAssemblyVersion -and $m.DownloadLinkTesting) {
+            try { $testing = ([version]$m.TestingAssemblyVersion -gt [version]$m.AssemblyVersion) } catch { }
+        }
+        if (-not $m.DownloadLinkInstall -and $m.DownloadLinkTesting) { $testing = $true }
+        if ($testing) { $ver = $m.TestingAssemblyVersion; $url = $m.DownloadLinkTesting } else { $ver = $m.AssemblyVersion; $url = $m.DownloadLinkInstall }
+        $dir = Join-Path (Join-Path $dest $name) $ver
+        if (Test-Path -LiteralPath (Join-Path $dir "$name.json")) { $present++; continue }
+        $zip = Join-Path $tmp "$name.zip"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 300 -Headers @{ 'User-Agent' = 'Dalamud' }
+            $null = New-Item -ItemType Directory -Force -Path $dir
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $local = [ordered]@{}
+            foreach ($prop in $m.PSObject.Properties) { $local[$prop.Name] = $prop.Value }
+            $local['AssemblyVersion'] = $ver
+            $local['InstalledFromUrl'] = if ($repo -like '*kamori.goats.dev*') { 'OFFICIAL' } else { $repo }
+            $local['WorkingPluginId'] = $want[$name]
+            $local['Disabled'] = $false
+            $local['Testing'] = $testing
+            $local['ScheduledForDeletion'] = $false
+            [IO.File]::WriteAllText((Join-Path $dir "$name.json"), ($local | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+            $installed++
+        }
+        catch { $failed += "$name ($($_.Exception.Message))" }
+        finally { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }
+    }
+    Write-Host "  plugins: $installed installed, $present already there, $($notFound.Count) in no repo, $($failed.Count) failed" -ForegroundColor Green
+    if ($notFound.Count) { Write-Host "    in no repo any more: $($notFound -join ', ')" -ForegroundColor Yellow }
+    foreach ($f in $failed) { Write-Host "    failed: $f" -ForegroundColor Yellow }
+}
+
 $failures = New-Object System.Collections.ArrayList
 try {
     foreach ($r in $repos) {
@@ -262,7 +358,7 @@ try {
             Write-Host ("  OK in {0} s ({1:N2} GB)" -f $secs, ((Get-ChildItem -LiteralPath $dest -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB)) -ForegroundColor Green
         }
     }
-    if ($doPlugins) { Restore-PluginRepos }
+    if ($doPlugins) { Restore-PluginRepos; Restore-DalamudPlugins }
 }
 finally {
     Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue

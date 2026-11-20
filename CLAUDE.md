@@ -1657,7 +1657,20 @@ is re-pointed at this account's Documents - not only `DevPluginLoadLocations[].P
 its settings), and ForkWatch's `RepoPath`s. Submodules (ECommons, PunishLib, the own shared libraries)
 are initialised recursively with the same key - a plain clone left them empty and every plugin
 failed with CS0246. Building them needs the .NET 10 SDK (step 2 installs `Microsoft.DotNet.SDK.10`)
-and the plugin repos' `build.ps1` find Dalamud at `..\..\Profiles\Me\XIVLauncher\addon\Hooks\dev`. A dev plugin DLL that is still missing is filled from the
+and the plugin repos' `build.ps1` find Dalamud at `..\..\Profiles\Me\XIVLauncher\addon\Hooks\dev`.
+
+**Then Me's installed (non-dev) plugins** (`Restore-DalamudPlugins`): `installedPlugins\` is not in the
+XIVLauncher backup, so after the 2026-11-20 format Me had none of its ~150 plugins. The list comes from
+Dalamud's collections (`DefaultProfile` + `SavedProfiles`, each plugin with its `WorkingPluginId`); each is
+installed as Dalamud does it - the zip in `installedPlugins\<Name>\<version>\` plus a `<Name>.json`
+LocalPluginManifest (`InstalledFromUrl` = `OFFICIAL` or the repo URL, the collection's `WorkingPluginId`,
+`Testing` when opted in and the testing build is newer). Official repo first, then the enabled third-party
+repos. Missing or refused plugins are reported, not fatal (2026-11-20: 7 in no repo any more, 4 refused
+with 500 by the official server). `ConvertFrom-RepoJson` exists because 5.1 rejects repo lists Dalamud
+reads (BOM, trailing commas, others -> PowerShell 7), and 5.1 returns a non-text response as `byte[]`.
+
+The dead Dalamud repos (accounts deleted on GitHub) were removed from Me's `ThirdRepoList`, and the
+private plugin repo is read from its secret gist (the raw repo URL 404s: the repo is private). A dev plugin DLL that is still missing is filled from the
 prebuilt `Juegos\FFXIV\[Plugins\]<repo>\plugins\<Name>\latest.zip`.
 
 > **Never write the plugin account or repo names in this public repo.** They live only in the

@@ -1045,7 +1045,7 @@ Describe "run log and resume" {
         $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
         $r | Should -Match "Name = 'ffxiv-secrets'"
         $r | Should -Match "Join-Path \`$secretsDir 'repos\.json'"
-        $r | Should -Match 'if \(\$doPlugins\) \{ Restore-PluginRepos \}'
+        $r | Should -Match 'if \(\$doPlugins\) \{ Restore-PluginRepos;'
         $r | Should -Not -Match 'github\.com/(?!vaoan/)[\w-]+/'
         $r | Should -Not -Match 'Write-Host[^\r\n]*\$keys\['
         # Set-RepoKey prints the account and e-mail: kept out of the log.
@@ -1060,6 +1060,21 @@ Describe "run log and resume" {
         # Without the submodules (ECommons...) no plugin builds.
         $r | Should -Match "Invoke-Git @\('-C', \`$dest, 'submodule', 'update', '--init', '--recursive'\)"
         Get-Content (Join-Path $PSScriptRoot "..\2-setup-windows.bat") -Raw | Should -Match "Id = 'Microsoft\.DotNet\.SDK\.10'"
+    }
+    # installedPlugins is not backed up: after the format Me had none of its ~150 plugins.
+    It "restore-ffxiv-profiles reinstalls the collections' plugins with their collection ids" {
+        $r = Get-Content (Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1") -Raw
+        $r | Should -Match 'if \(\$doPlugins\) \{ Restore-PluginRepos; Restore-DalamudPlugins \}'
+        $r | Should -Match "\`$local\['WorkingPluginId'\] = \`$want\[\`$name\]"
+        $r | Should -Match '\$dev -notcontains \$pl\.InternalName'
+        $r | Should -Match "'OFFICIAL'"
+    }
+    It "ConvertFrom-RepoJson reads the repo lists Windows PowerShell 5.1 refuses" {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "..\sources\restore-ffxiv-profiles.ps1"), [ref]$null, [ref]$null)
+        $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertFrom-RepoJson' }, $true)
+        . ([scriptblock]::Create($fn.Extent.Text))
+        @(ConvertFrom-RepoJson ([char]0xFEFF + '[{"InternalName":"A"}]'))[0].InternalName | Should -Be 'A'
+        @(ConvertFrom-RepoJson "[`n {`"InternalName`": `"B`",`n },`n]").InternalName | Should -Be 'B'
     }
     # Dev plugin settings are keyed by DLL path and ForkWatch stores repo paths: all must follow the move.
     It "restore-ffxiv-profiles re-points every old Juegos\FFXIV path, keys included" {
